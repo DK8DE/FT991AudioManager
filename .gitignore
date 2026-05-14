@@ -1,0 +1,44 @@
+# Byte-Compiled / Caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distributionen / Packaging
+build/
+dist/
+*.egg-info/
+*.egg
+*.spec
+
+# Virtuelle Umgebungen
+.venv/
+.venv*/
+venv/
+env/
+
+# PyInstaller-Artefakte des Build-Skripts
+.venv-build/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# Betriebssystem
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# User-spezifische Einstellungen — wird beim ersten Start neu angelegt.
+# presets.json bleibt versioniert (= die mitgelieferten Default-Profile).
+data/settings.json
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
