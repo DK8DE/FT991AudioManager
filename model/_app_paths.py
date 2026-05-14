@@ -34,3 +34,29 @@ def app_data_dir() -> Path:
     # ``__file__`` liegt in ``model/_app_paths.py`` — zwei Ebenen hoch
     # landen wir im Projekt-Root.
     return Path(__file__).resolve().parent.parent / "data"
+
+
+def resource_dir() -> Path:
+    """Liefert den Wurzelpfad für **mitgelieferte, nicht änderbare** Assets.
+
+    Anders als :func:`app_data_dir` (User-Daten neben der EXE) zeigt
+    diese Funktion auf den Speicherort der mit PyInstaller mitgepackten
+    Resourcen wie ``logo.ico``/``logo.svg``:
+
+    - Gefrorener Build: ``sys._MEIPASS`` (von PyInstaller gesetzt;
+      sowohl bei ``onefile`` als auch bei ``onedir`` — bei onedir
+      verweist es auf das ``_internal/``-Verzeichnis neben der EXE).
+    - Source-Layout: ``<Projekt-Root>/``
+
+    Resourcen werden über ``--add-data`` ins Bundle aufgenommen
+    (siehe ``build.ps1``).
+    """
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+        # Fallback (sollte unter PyInstaller eigentlich nicht passieren):
+        # neben der EXE liegen Onedir-Ressourcen üblicherweise im
+        # ``_internal``-Ordner.
+        return Path(sys.executable).resolve().parent / "_internal"
+    return Path(__file__).resolve().parent.parent

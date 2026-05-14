@@ -45,6 +45,7 @@ from cat import (
 from mapping.rx_mapping import RxMode, format_frequency_hz
 from model import AppSettings, PresetStore
 
+from .app_icon import app_icon
 from .log_widget import LogWindow
 from .meter_widget import MeterWidget
 from .profile_widget import ProfileWidget
@@ -59,6 +60,10 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: AppSettings, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("FT-991A Audio-Profilmanager")
+        # Doppelt setzen ist Absicht: QApplication.setWindowIcon() reicht
+        # auf Windows/macOS, aber manche Linux-Window-Manager (X11) lesen
+        # das Icon nur vom konkreten Toplevel.
+        self.setWindowIcon(app_icon())
         self.resize(1100, 720)
 
         self._settings = settings
@@ -552,9 +557,17 @@ class MainWindow(QMainWindow):
             "Über",
             (
                 "<b>FT-991A Audio-Profilmanager</b><br>"
-                "Version 0.5 — Erweiterte Werte<br><br>"
+                "<br>"
                 "Komfortable Steuerung der TX-Audio-Einstellungen<br>"
-                "des Yaesu FT-991 / FT-991A über CAT."
+                "des Yaesu FT-991 / FT-991A über CAT.<br>"
+                "<br>"
+                "<b>Autor:</b> Jörg Körner (DK8DE)<br>"
+                "<b>Lizenz:</b> "
+                "<a href=\"https://www.apache.org/licenses/LICENSE-2.0\">"
+                "Apache License 2.0</a><br>"
+                "<br>"
+                "<a href=\"https://github.com/DK8DE/FT991AudioManager\">"
+                "github.com/DK8DE/FT991AudioManager</a>"
             ),
         )
 

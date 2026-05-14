@@ -107,15 +107,23 @@ Push-Location $Here
 try {
     # ------------------------------------------------------------------
     # Clean-Up vor dem Build
+    #
+    # Wir loeschen `dist\<AppName>` und `build\` **immer** vor dem
+    # PyInstaller-Lauf. PyInstaller stolpert in der COLLECT-Phase
+    # gelegentlich ueber halb-bereinigte Vorzustaende -- besonders, wenn
+    # Defender o.ae. dazwischengefunkt hat. Mit `-Clean` raeumen wir
+    # zusaetzlich noch die `.spec`-Datei weg, damit eine wirklich
+    # frische Build-Konfiguration generiert wird.
     # ------------------------------------------------------------------
-    if ($Clean) {
-        foreach ($p in @("dist", "build")) {
-            $full = Join-Path $Here $p
-            if (Test-Path $full) {
-                Write-Step "Loesche $p"
-                Remove-Item -Recurse -Force $full
-            }
+    $DistAppDir = Join-Path (Join-Path $Here "dist") $AppName
+    $BuildDir = Join-Path $Here "build"
+    foreach ($p in @($DistAppDir, $BuildDir)) {
+        if (Test-Path $p) {
+            Write-Step "Loesche $p"
+            Remove-Item -Recurse -Force $p
         }
+    }
+    if ($Clean) {
         $spec = Join-Path $Here "$AppName.spec"
         if (Test-Path $spec) {
             Write-Step "Loesche $AppName.spec"
@@ -170,15 +178,27 @@ try {
     }
 
     Write-Step "Baue $AppName (onedir, $WindowFlag)"
+    $IconIco = Join-Path $Here "logo.ico"
+    $IconSvg = Join-Path $Here "logo.svg"
+    if (-not (Test-Path $IconIco)) {
+        throw "logo.ico nicht gefunden unter $IconIco"
+    }
     $PyInstallerArgs = @(
         "-m", "PyInstaller",
         "--noconfirm",
         "--clean",
         $WindowFlag,
         "--name", $AppName,
+        "--icon", $IconIco,
         "--paths", $Here,
         "--hidden-import", "serial.tools.list_ports",
         "--collect-submodules", "PySide6",
+        # Beide Icon-Dateien ins Bundle aufnehmen: logo.ico fuer Windows,
+        # logo.svg fuer plattformuebergreifende Verwendung. Auf Windows
+        # ist der --add-data-Separator ein Semikolon, das Ziel "." legt
+        # die Datei in den Bundle-Root (= sys._MEIPASS).
+        "--add-data", "$IconIco;.",
+        "--add-data", "$IconSvg;.",
         "--distpath", (Join-Path $Here "dist"),
         "--workpath", (Join-Path $Here "build"),
         "--specpath", $Here,
@@ -194,6 +214,25 @@ try {
     $OutDir = Join-Path $Here "dist\$AppName"
     $ExePath = Join-Path $OutDir "$AppName.exe"
     if (-not (Test-Path $ExePath)) {
+        # Diagnose-Hilfe: Wenn die PyInstaller-EXE im build\-Tree
+        # noch existiert, aber im dist\-Tree fehlt, ist das fast immer
+        # ein Antivirus-Eingriff (typischerweise Windows Defender, der
+        # den PyInstaller-Bootloader runw.exe falsch-positiv erkennt).
+        $BuildExe = Join-Path $Here ("build\" + $AppName + "\" + $AppName + ".exe")
+        if (Test-Path $BuildExe) {
+            $msg = @(
+                "Build lief durch, aber EXE fehlt unter '$ExePath'.",
+                "Im build\-Tree existiert die EXE noch ($BuildExe) -- das ist",
+                "ein klassisches Anzeichen, dass dein Antivirus die EXE beim",
+                "Kopieren nach dist\ entfernt hat (PyInstaller-Bootloader wird",
+                "haeufig falsch-positiv erkannt).",
+                "",
+                "Loesung: In einer Administrator-PowerShell einmalig",
+                "  Add-MpPreference -ExclusionPath '$Here'",
+                "ausfuehren und dann den Build erneut starten."
+            ) -join [System.Environment]::NewLine
+            throw $msg
+        }
         throw "Build abgeschlossen, aber EXE nicht gefunden unter '$ExePath'."
     }
 

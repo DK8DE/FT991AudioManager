@@ -16,12 +16,16 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication
 
     from gui import MainWindow
+    from gui.app_icon import app_icon
     from gui.theme import apply_theme
     from model import AppSettings
 
     app = QApplication(sys.argv)
     app.setApplicationName("FT-991A Audio-Profilmanager")
     app.setOrganizationName("FT991-Audio-Manager")
+    # App-Icon zentral setzen: vererbt sich auf alle Top-Level-Fenster
+    # (Title-Bar + Windows-Taskbar / macOS-Dock / Linux-Panel).
+    app.setWindowIcon(app_icon())
 
     settings = AppSettings.load()
     apply_theme(app, dark=settings.ui.force_dark_mode)
