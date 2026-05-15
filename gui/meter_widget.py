@@ -1476,29 +1476,16 @@ class _SymmetricTxBwBar(QWidget):
 
 
 class TxBandwidthPanel(QWidget):
-    """Überschrift, Hz-Anzeige, symmetrischer Balken, P2-Slider (0…21).
-
-    Hz-Balken und Zahl **sofort** beim Ziehen; ans Funkgerät wird erst
-    **geschrieben, wenn die Maus losgelassen** wird (kein CAT während
-    des Zugs). Mausrad/Tastatur liefern kein ``sliderReleased`` — dafür
-    ein kurzes Bündeln nach Ende der Eingabe (Timer).
-    """
+    """Überschrift, Hz-Anzeige, symmetrischer Balken, P2-Slider (0…21)."""
 
     p2_changed = Signal(int)
-
-    #: Fallback nach Wheel/Tastatur: ein Schreiben nach letzter Änderung.
-    _SH_IDLE_FALLBACK_MS = 160
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._mode: Optional[RxMode] = None
         self._applying_remote = False
-        self._slider_drag = False
-        self._last_emitted_p2: Optional[int] = None
-
-        self._idle_fallback_timer = QTimer(self)
-        self._idle_fallback_timer.setSingleShot(True)
-        self._idle_fallback_timer.timeout.connect(self._emit_sh_width_if_changed)
+        #: Maus/Touch auf dem Schieberegler gedrückt — CAT erst bei Loslassen.
+        self._slider_pointer_down = False
 
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
@@ -1530,30 +1517,26 @@ class TxBandwidthPanel(QWidget):
         self._slider.setPageStep(1)
         self._slider.setToolTip(
             "SH WIDTH — CAT-Befehl SH0nn; (nn = P2 00…21, zwei Ziffern).\n"
-            "Beim Ziehen: Anzeige sofort; ans Funkgerät erst beim Loslassen.\n"
+            "Am Funkgerät wird erst beim Loslassen nach einem Zug geschrieben "
+            "(kein CAT-Spam beim Ziehen).\n"
             "Die Hz-Anzeige hängt vom Funk-Modus ab (siehe CAT-Handbuch)."
         )
-        self._slider.valueChanged.connect(self._on_slider_value)
         self._slider.sliderPressed.connect(self._on_slider_pressed)
         self._slider.sliderReleased.connect(self._on_slider_released)
+        self._slider.valueChanged.connect(self._on_slider_value)
         v.addWidget(self._slider)
 
     def _on_slider_pressed(self) -> None:
-        self._slider_drag = True
+        if not self._applying_remote:
+            self._slider_pointer_down = True
 
     def _on_slider_released(self) -> None:
-        self._slider_drag = False
-        self._idle_fallback_timer.stop()
-        self._emit_sh_width_if_changed()
-
-    def _emit_sh_width_if_changed(self) -> None:
-        if self._applying_remote:
+        was_dragging = self._slider_pointer_down
+        self._slider_pointer_down = False
+        if self._applying_remote or not was_dragging:
             return
-        p2 = sh_snap_p2_to_supported(int(self._slider.value()), self._mode)
-        if self._last_emitted_p2 == p2:
-            return
-        self._last_emitted_p2 = p2
-        self.p2_changed.emit(p2)
+        snapped = sh_snap_p2_to_supported(self._slider.value(), self._mode)
+        self.p2_changed.emit(snapped)
 
     def _on_slider_value(self, val: int) -> None:
         snapped = sh_snap_p2_to_supported(int(val), self._mode)
@@ -1565,9 +1548,10 @@ class TxBandwidthPanel(QWidget):
                 self._slider.blockSignals(False)
             val = snapped
         self._refresh_face()
-        if self._applying_remote or self._slider_drag:
-            return
-        self._idle_fallback_timer.start(self._SH_IDLE_FALLBACK_MS)
+        # Während Maus/Touch gehalten wird: nur Anzeige — ein SH-Write kommt
+        # in _on_slider_released. Tastatur/Mausrad: sofort (kein Press-Event).
+        if not self._applying_remote and not self._slider_pointer_down:
+            self.p2_changed.emit(int(val))
 
     def _refresh_face(self) -> None:
         p2 = int(self._slider.value())
@@ -1580,7 +1564,6 @@ class TxBandwidthPanel(QWidget):
             self._bar.set_display_hz(hz)
 
     def set_rx_mode(self, mode: Optional[RxMode]) -> None:
-        self._idle_fallback_timer.stop()
         self._mode = mode
         snapped = sh_snap_p2_to_supported(self._slider.value(), mode)
         if snapped != int(self._slider.value()):
@@ -1591,13 +1574,10 @@ class TxBandwidthPanel(QWidget):
             finally:
                 self._slider.blockSignals(False)
                 self._applying_remote = False
-        self._last_emitted_p2 = int(self._slider.value())
         self._refresh_face()
 
     def set_p2(self, p2: int, *, remote: bool) -> None:
-        self._idle_fallback_timer.stop()
         p2 = sh_snap_p2_to_supported(int(p2), self._mode)
-        self._last_emitted_p2 = p2
         self._applying_remote = True
         try:
             self._slider.blockSignals(True)

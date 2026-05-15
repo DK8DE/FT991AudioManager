@@ -45,3 +45,4 @@ data/memory_backups/
 .pytest_cache/
 .coverage
 htmlcov/
+data/memory_backups/memory_backup_20260515_143705.json
