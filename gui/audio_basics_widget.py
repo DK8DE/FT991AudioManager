@@ -4,7 +4,7 @@ Enthält:
 
 - MIC Gain Slider (0..100)             — immer sichtbar
 - Parametric MIC EQ Checkbox           — immer sichtbar
-- Speech Processor Checkbox + Level    — nur SSB
+- Speech Processor Checkbox + Level    — nur SSB (gegen Normal-EQ verriegelt)
 - SSB-TX-Bandbreite (EX112)            — nur SSB
 
 Die SSB-spezifischen Zeilen liegen in eigenen Container-Widgets, damit
@@ -55,9 +55,12 @@ class AudioBasicsWidget(QGroupBox):
     """GroupBox mit den TX-Audio-Grundwerten."""
 
     changed = Signal()
+    #: Nach programmatischem :meth:`set_values` (z. B. Profil laden).
+    mic_gain_synced = Signal(int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__("Grundwerte", parent)
+        self._mutual_updating = False
         self._build_ui()
         self._apply_processor_enabled_state()
         self.apply_mode_relevance("SSB")
@@ -81,26 +84,34 @@ class AudioBasicsWidget(QGroupBox):
 
         universal.addWidget(QLabel("MIC Gain:"), 0, 0)
         self.mic_gain_slider = QSlider(Qt.Horizontal)
-        self.mic_gain_slider.setRange(MIC_GAIN_MIN, MIC_GAIN_MAX)
+        self.mic_gain_slider.setMinimum(MIC_GAIN_MIN)
+        self.mic_gain_slider.setMaximum(MIC_GAIN_MAX)
         self.mic_gain_slider.setSingleStep(1)
         self.mic_gain_slider.setPageStep(5)
         self.mic_gain_slider.setValue(MIC_GAIN_DEFAULT)
+        self.mic_gain_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.mic_gain_slider.setTickInterval(10)
         self.mic_gain_slider.setMinimumWidth(220)
+        self.mic_gain_slider.setToolTip(
+            "MIC Gain (CAT MG), Bereich 0–100 (dreistellig am Gerät)."
+        )
         universal.addWidget(self.mic_gain_slider, 0, 1)
         self.mic_gain_label = QLabel(str(MIC_GAIN_DEFAULT))
-        self.mic_gain_label.setMinimumWidth(36)
+        self.mic_gain_label.setMinimumWidth(28)
         self.mic_gain_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.mic_gain_label.setToolTip("Anzeige 0–100")
         universal.addWidget(self.mic_gain_label, 0, 2)
-        self.mic_gain_slider.valueChanged.connect(self._on_mic_gain_changed)
+        self.mic_gain_slider.valueChanged.connect(self._on_mic_gain_slider_changed)
 
-        self.mic_eq_check = QCheckBox("Normal-EQ verwenden (wenn Processor aus)")
+        self.mic_eq_check = QCheckBox("Normal-EQ verwenden (ohne Speech Processor)")
         self.mic_eq_check.setToolTip(
-            "Steuert das Menü PR1 — entspricht „Parametric MIC EQ ein/aus“ "
-            "im FT-991A. Wirkt nur, solange der Speech Processor aus ist; "
-            "ist er an, kommt der Processor-EQ zum Einsatz."
+            "Steuert das Menü PR1 — „Parametric MIC EQ ein/aus“. "
+            "Am FT-991 wirkt nur einer der beiden Pfade: Normal-EQ **oder** "
+            "Speech Processor (dann Processor-EQ). Die beiden Haken schließen "
+            "sich gegenseitig aus."
         )
         self.mic_eq_check.setChecked(True)
-        self.mic_eq_check.toggled.connect(self._emit_changed)
+        self.mic_eq_check.toggled.connect(self._on_mic_eq_toggled)
         universal.addWidget(self.mic_eq_check, 1, 0, 1, 3)
 
         universal.setColumnStretch(1, 1)
@@ -115,7 +126,8 @@ class AudioBasicsWidget(QGroupBox):
 
         self.processor_check = QCheckBox("Speech Processor einschalten")
         self.processor_check.setToolTip(
-            "Wirkt nur in SSB — wird in anderen Modes ausgeblendet."
+            "Wirkt nur in SSB. Ist er an, wird der Normal-EQ abgeschaltet — "
+            "beides gleichzeitig ist am Gerät nicht sinnvoll."
         )
         self.processor_check.toggled.connect(self._on_processor_toggled)
         processor_layout.addWidget(self.processor_check, 0, 0, 1, 3)
@@ -156,15 +168,36 @@ class AudioBasicsWidget(QGroupBox):
     # Signal-Handling
     # ------------------------------------------------------------------
 
-    def _on_mic_gain_changed(self, value: int) -> None:
-        self.mic_gain_label.setText(str(value))
+    def _on_mic_gain_slider_changed(self, value: int) -> None:
+        self.mic_gain_label.setText(str(int(value)))
         self._emit_changed()
 
     def _on_processor_level_changed(self, value: int) -> None:
         self.processor_level_label.setText(str(value))
         self._emit_changed()
 
-    def _on_processor_toggled(self, _on: bool) -> None:
+    def _on_mic_eq_toggled(self, checked: bool) -> None:
+        if self._mutual_updating:
+            return
+        if checked and self.processor_check.isChecked():
+            self._mutual_updating = True
+            try:
+                self.processor_check.setChecked(False)
+            finally:
+                self._mutual_updating = False
+            self._apply_processor_enabled_state()
+        self._emit_changed()
+
+    def _on_processor_toggled(self, on: bool) -> None:
+        if self._mutual_updating:
+            self._apply_processor_enabled_state()
+            return
+        if on and self.mic_eq_check.isChecked():
+            self._mutual_updating = True
+            try:
+                self.mic_eq_check.setChecked(False)
+            finally:
+                self._mutual_updating = False
         self._apply_processor_enabled_state()
         self._emit_changed()
 
@@ -195,10 +228,21 @@ class AudioBasicsWidget(QGroupBox):
             ssb_tx_bpf=str(self.ssb_bpf_combo.currentData() or SSB_BPF_DEFAULT_KEY),
         )
 
+    def set_mic_gain_value(self, value: int, *, emit_sync: bool = True) -> None:
+        """MIC Gain setzen (0–100); optional ohne ``mic_gain_synced``."""
+        v = max(MIC_GAIN_MIN, min(MIC_GAIN_MAX, int(value)))
+        self.mic_gain_slider.blockSignals(True)
+        try:
+            self.mic_gain_slider.setValue(v)
+            self.mic_gain_label.setText(str(v))
+        finally:
+            self.mic_gain_slider.blockSignals(False)
+        if emit_sync:
+            self.mic_gain_synced.emit(v)
+
     def set_values(self, values: AudioBasicsValues) -> None:
         # Während wir programmatisch setzen, keine ``changed``-Signale.
         widgets = (
-            self.mic_gain_slider,
             self.mic_eq_check,
             self.processor_check,
             self.processor_level_slider,
@@ -207,10 +251,13 @@ class AudioBasicsWidget(QGroupBox):
         for w in widgets:
             w.blockSignals(True)
         try:
-            self.mic_gain_slider.setValue(int(values.mic_gain))
-            self.mic_gain_label.setText(str(int(values.mic_gain)))
-            self.mic_eq_check.setChecked(bool(values.mic_eq_enabled))
-            self.processor_check.setChecked(bool(values.speech_processor_enabled))
+            self.set_mic_gain_value(int(values.mic_gain), emit_sync=False)
+            mic_on = bool(values.mic_eq_enabled)
+            sp_on = bool(values.speech_processor_enabled)
+            if mic_on and sp_on:
+                mic_on = False
+            self.mic_eq_check.setChecked(mic_on)
+            self.processor_check.setChecked(sp_on)
             self.processor_level_slider.setValue(int(values.speech_processor_level))
             self.processor_level_label.setText(str(int(values.speech_processor_level)))
             idx = self.ssb_bpf_combo.findData(values.ssb_tx_bpf)
@@ -224,3 +271,4 @@ class AudioBasicsWidget(QGroupBox):
             for w in widgets:
                 w.blockSignals(False)
         self._apply_processor_enabled_state()
+        self.mic_gain_synced.emit(int(self.mic_gain_slider.value()))

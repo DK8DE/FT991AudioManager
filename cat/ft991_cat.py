@@ -11,6 +11,7 @@ Diese Klasse kapselt die Kommandos aus dem CAT-Manual. Implementiert sind:
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 
@@ -39,6 +40,27 @@ from mapping.meter_mapping import (
     parse_sm_response,
     parse_tx_response,
 )
+from mapping.memory_editor_codec import (
+    build_mw_command,
+    build_mt_command,
+    editor_channel_from_mt_response,
+    should_write_cleared,
+    validate_channel_range,
+)
+from mapping.memory_mapping import (
+    MemoryChannel,
+    format_mc_query,
+    format_mc_set,
+    format_mt_query,
+    parse_mc_response,
+    parse_mt_or_empty,
+)
+from model.memory_editor_channel import MemoryEditorChannel
+from mapping.sh_width_mapping import (
+    format_sh_width_query,
+    format_sh_width_set,
+    parse_sh_width_response,
+)
 from mapping.rx_mapping import (
     AgcMode,
     RxMode,
@@ -51,6 +73,7 @@ from mapping.rx_mapping import (
     format_frequency_query,
     format_mode_query,
     format_mode_set,
+    mode_group_for,
     format_nb_level_query,
     format_nb_level_set,
     format_nb_query,
@@ -61,6 +84,7 @@ from mapping.rx_mapping import (
     format_nr_set,
     format_rf_gain_query,
     format_squelch_query,
+    format_squelch_set,
     parse_af_gain_response,
     parse_agc_response,
     parse_auto_notch_response,
@@ -93,13 +117,34 @@ from mapping.eq_mapping import (
 )
 from model.eq_band import EQBand, EQSettings
 
-from .cat_errors import CatError, CatProtocolError, CatTimeoutError
+from .cat_errors import (
+    CatCommandUnsupportedError,
+    CatError,
+    CatNotConnectedError,
+    CatProtocolError,
+    CatTimeoutError,
+)
 from .cat_log import CatLog
 from .serial_cat import SerialCAT
 
 
-FT991A_RADIO_ID = "0570"
-"""Die ``ID;``-Antwort des FT-991 und FT-991A ist ``ID0570;``."""
+FT991_RADIO_IDS: tuple[str, ...] = ("0570", "0670")
+"""Bekannte ``ID;``-Antworten von FT-991 und FT-991A.
+
+Yaesu hat im Laufe der Firmware-Versionen unterschiedliche Werte
+ausgeliefert:
+
+* ``ID0570;`` -- klassische Antwort, im offiziellen CAT-Manual
+  dokumentiert (FT-991 und fruehere FT-991A-Firmware).
+* ``ID0670;`` -- neuere FT-991A-Firmware-Stände meldet sich so.
+
+Beide Werte werden vom Programm akzeptiert.
+"""
+
+FT991A_RADIO_ID = FT991_RADIO_IDS[0]
+"""Primaere ID fuer UI-Texte (Fallback-Anzeige). Aus Rueckwaerts-
+Kompatibilitaet beibehalten. Fuer Vergleichszwecke bitte
+:data:`FT991_RADIO_IDS` benutzen."""
 
 _ID_PATTERN = re.compile(r"^ID(\d{4});$")
 _TX_PATTERN = re.compile(r"^TX(\d);$")
@@ -116,11 +161,28 @@ class RadioIdentity:
 
     @property
     def is_ft991(self) -> bool:
-        return self.radio_id == FT991A_RADIO_ID
+        return self.radio_id in FT991_RADIO_IDS
 
 
 class TxLockError(CatError):
     """Wird ausgelöst, wenn ein Schreibvorgang während TX verhindert wurde."""
+
+
+def _normalize_off_bands_for_cat(eq: EQSettings) -> EQSettings:
+    """Stellt ausgeschaltete Bänder auf Freq OFF / Level 0 / BW-Default.
+
+    Laut Manual ist Frequenz-Index ``00`` OFF; Level und Q sollten neutral
+    sein, damit Diff-Writes nicht nur die Frequenz, sondern bei Bedarf auch
+    EX-Level/BW an das Gerät anpassen (z. B. nach Profilen mit Freq OFF
+    aber altem Level).
+    """
+
+    def band(b: EQBand) -> EQBand:
+        if b.is_off():
+            return EQBand(freq="OFF", level=0, bw=5)
+        return b
+
+    return EQSettings(eq1=band(eq.eq1), eq2=band(eq.eq2), eq3=band(eq.eq3))
 
 
 class FT991CAT:
@@ -141,7 +203,18 @@ class FT991CAT:
         log = self.get_log()
         if log is not None:
             log.log_info("=== ID-Abfrage ===")
-        response = self._cat.send_command("ID;")
+        try:
+            response = self._cat.send_command("ID;")
+        except CatCommandUnsupportedError:
+            # ``?;`` auf ``ID;`` ist kein Crash-Grund -- es bedeutet
+            # einfach, dass am Port ein Geraet haengt, das den Yaesu-
+            # CAT-Befehl ``ID;`` nicht versteht. Wir reichen das als
+            # "keine gueltige FT-991-Identitaet" nach oben.
+            if log is not None:
+                log.log_warn(
+                    "ID-Abfrage liefert '?;' -- vermutlich kein Yaesu-HF-Geraet"
+                )
+            return RadioIdentity(raw="?;", radio_id=None)
         match = _ID_PATTERN.match(response)
         if not match:
             if log is not None:
@@ -153,6 +226,39 @@ class FT991CAT:
 
     def test_connection(self) -> RadioIdentity:
         return self.get_radio_id()
+
+    # ------------------------------------------------------------------
+    # Init: Auto-Information ausschalten
+    # ------------------------------------------------------------------
+
+    def disable_auto_information(self) -> None:
+        """Schaltet die proaktiven ``AI``-Frames des Funkgeraets aus.
+
+        Wenn ``AI`` aktiv ist (``AI1;``), sendet das FT-991/991A bei
+        jeder Bedienung am Front-Panel unaufgefordert einen CAT-Frame
+        (z. B. ``NB01;`` beim Druck auf die NB-Taste). Diese Frames
+        verschieben unsere RX-Status-Abfragen aus dem Tritt und fuehren
+        zu Off-by-N-Mismatches in :func:`SerialCAT.send_command`.
+
+        Daher senden wir nach jedem erfolgreichen Connect einmal
+        ``AI0;``. Wir lesen bewusst keine Antwort -- der Befehl ist ein
+        Write und Yaesu sendet darauf normalerweise nichts zurueck.
+        Schlaegt das Senden fehl (Gerat zickt), loggen wir und machen
+        weiter. Der Stale-Discard-Filter in der seriellen Schicht
+        faengt verbleibende AI-Frames ohnehin auf.
+        """
+        log = self.get_log()
+        if log is not None:
+            log.log_info("=== Auto-Information ausschalten (AI0;) ===")
+        try:
+            self._cat.send_command("AI0;", read_response=False)
+        except CatNotConnectedError:
+            # Verbindungsverlust nach oben durchreichen, damit das Main-
+            # Window in den "nicht verbunden"-Zustand wechseln kann.
+            raise
+        except CatError as exc:
+            if log is not None:
+                log.log_warn(f"AI0; konnte nicht gesendet werden: {exc}")
 
     # ------------------------------------------------------------------
     # TX-Status
@@ -179,6 +285,18 @@ class FT991CAT:
             raise TxLockError(
                 "Das Funkgerät sendet gerade — Schreibvorgang wurde abgebrochen."
             )
+
+    # ------------------------------------------------------------------
+    # VFO
+    # ------------------------------------------------------------------
+
+    def swap_vfo_a_and_b(self) -> None:
+        """Tauscht VFO-A und VFO-B (CAT ``SV;``, „SWAP VFO“ im Referenz-Handbuch).
+
+        Hinweis: ``AB;`` kopiert laut Handbuch VFO-A nach VFO-B, tauscht aber nicht.
+        """
+        self.ensure_rx()
+        self._cat.send_command("SV;", read_response=False)
 
     # ------------------------------------------------------------------
     # Generisches EX-Menü
@@ -349,6 +467,8 @@ class FT991CAT:
             log.log_info(
                 f"=== {menu_kind} schreiben ({mode}, EX{menus.band1_freq}..EX{menus.band3_bw}) ==="
             )
+
+        eq = _normalize_off_bands_for_cat(eq)
 
         # Slot-Reihenfolge laut Manual: Freq, Level, BW.
         plan = [
@@ -616,6 +736,13 @@ class FT991CAT:
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
 
+    def write_squelch(self, level: int) -> None:
+        """Setzt den Squelch-Pegel (``SQ0nnn;``, 0..100)."""
+        self._cat.send_command(
+            format_squelch_set(level),
+            read_response=False,
+        )
+
     def read_af_gain(self) -> int:
         """Liest den AF-Gain / Lautstärke (``AG0nnn;``, 0..255)."""
         response = self._cat.send_command(format_af_gain_query())
@@ -680,6 +807,14 @@ class FT991CAT:
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
 
+    def read_tx_bandwidth_sh(self) -> int:
+        """Liest Sendebandbreite / SH WIDTH (``SH0;`` → P2 0..21)."""
+        response = self._cat.send_command(format_sh_width_query())
+        try:
+            return parse_sh_width_response(response)
+        except ValueError as exc:
+            raise CatProtocolError(str(exc)) from exc
+
     # ------------------------------------------------------------------
     # Setter für DSP-Schalter & -Pegel
     #
@@ -709,6 +844,20 @@ class FT991CAT:
         """Schaltet den Digital Notch Filter (``BC0n;``)."""
         self._cat.send_command(format_auto_notch_set(on), read_response=False)
 
+    def write_tx_bandwidth_sh(self, p2: int) -> None:
+        """Setzt SH WIDTH / Sendebandbreiten-Index (``SH0nn;``, nn zweistellig)."""
+        cmd = format_sh_width_set(p2)
+        try:
+            self._cat.send_command(cmd, read_response=True, expected_prefix="SH0")
+        except CatTimeoutError:
+            # Firmware ohne Echo auf SH-Write — Kommando wurde dennoch gesendet.
+            return
+        except CatCommandUnsupportedError as exc:
+            raise CatProtocolError(
+                "SH WIDTH: dieser P2-Wert wird vom Funkgerät in der "
+                "aktuellen Betriebsart nicht akzeptiert (CAT '?;')"
+            ) from exc
+
     def write_agc(self, mode: AgcMode) -> None:
         """Setzt den AGC-Modus (``GT0n;``).
 
@@ -725,20 +874,80 @@ class FT991CAT:
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
 
-    def set_rx_mode(self, mode: RxMode, *, tx_lock: bool = True) -> None:
+    def set_rx_mode(
+        self,
+        mode: RxMode,
+        *,
+        tx_lock: bool = True,
+        verify: bool = True,
+        max_retries: int = 2,
+        verify_delay_s: float = 0.15,
+    ) -> bool:
         """Setzt die Betriebsart des Radios (``MD0X;``).
 
         Bei aktivem TX wird ein :class:`TxLockError` ausgelöst — Mode-
         Wechsel während Sendebetrieb sind unsicher.
+
+        Wenn ``verify=True`` (Default), liest die Methode nach jedem
+        Schreibversuch den aktuellen Mode zurück und prüft, ob das
+        Funkgerät umgeschaltet hat. Beim FT-991A kommt es in der Praxis
+        vor, dass ein ``MD04;``-Befehl ignoriert wird (z. B. weil der
+        Empfangspuffer des Geräts gerade mit Polling-Antworten beschäftigt
+        ist). In dem Fall versuchen wir den Schreibvorgang bis zu
+        ``max_retries`` weitere Male.
+
+        Returns:
+            ``True`` wenn der Mode (laut Verifikation) erfolgreich gesetzt
+            wurde oder ``verify=False`` ist; ``False`` wenn alle Versuche
+            nicht zum gewünschten Mode geführt haben.
         """
         if tx_lock:
             self.ensure_rx()
         command = format_mode_set(mode)
         log = self.get_log()
+        target_group = mode_group_for(mode)
+
+        attempts = max(1, max_retries + 1)
+        for attempt in range(attempts):
+            if log is not None:
+                suffix = f" (Versuch {attempt + 1}/{attempts})" if attempt > 0 else ""
+                log.log_info(f"Set RX-Mode: {mode.value} → {command}{suffix}")
+            self._cat.send_command(command, read_response=False)
+            if not verify:
+                return True
+            # Dem Funkgerät einen Moment Zeit geben, die neue Betriebsart
+            # intern zu übernehmen, bevor wir verifizieren.
+            time.sleep(verify_delay_s)
+            try:
+                current = self.read_rx_mode()
+            except CatError as exc:
+                if log is not None:
+                    log.log_warn(
+                        f"Set RX-Mode Verifikation fehlgeschlagen: {exc}"
+                    )
+                # Wenn wir den Mode nicht lesen können, brechen wir
+                # ab — weitere Retries würden vermutlich auch fehlschlagen.
+                return False
+            # Wir akzeptieren jeden Mode, der zur erwarteten Profil-Mode-
+            # Gruppe gehört. Beispiel: ``MD04;`` setzt FM, aber das Radio
+            # könnte intern bereits FM-N (B) anzeigen.
+            if mode_group_for(current) == target_group:
+                if log is not None and attempt > 0:
+                    log.log_info(
+                        f"Set RX-Mode: erfolgreich nach Versuch {attempt + 1}"
+                    )
+                return True
+            if log is not None:
+                log.log_warn(
+                    f"Set RX-Mode: Funkgerät meldet {current.value} statt "
+                    f"{mode.value}"
+                )
         if log is not None:
-            log.log_info(f"Set RX-Mode: {mode.value} → {command}")
-        # MD-Schreibvorgang erwartet keine Antwort.
-        self._cat.send_command(command, read_response=False)
+            log.log_error(
+                f"Set RX-Mode: {mode.value} konnte nach {attempts} Versuchen "
+                "nicht gesetzt werden — das Funkgerät bleibt im alten Mode."
+            )
+        return False
 
     def read_frequency(self) -> int:
         """Liest die VFO-A-Frequenz in Hz (``FAnnnnnnnnn;``)."""
@@ -755,6 +964,170 @@ class FT991CAT:
             return parse_frequency_b_response(response)
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
+
+    def write_frequency(self, hz: int) -> None:
+        """Setzt VFO-A-Frequenz in Hz (``FAnnnnnnnnn;``)."""
+        self.ensure_rx()
+        v = max(0, min(999_999_999, int(hz)))
+        self._cat.send_command(f"FA{v:09d};", read_response=False)
+
+    def write_frequency_b(self, hz: int) -> None:
+        """Setzt VFO-B-Frequenz in Hz (``FBnnnnnnnnn;``)."""
+        self.ensure_rx()
+        v = max(0, min(999_999_999, int(hz)))
+        self._cat.send_command(f"FB{v:09d};", read_response=False)
+
+    # ------------------------------------------------------------------
+    # Speicherkanaele (MT/MC/VM)
+    # ------------------------------------------------------------------
+
+    def read_memory_channel_tag(self, channel: int) -> Optional[MemoryChannel]:
+        """Liest Frequenz/Mode/Tag eines Speicherkanals (``MTnnn;``).
+
+        FT-991/A-Eigenheit: Die Antwort echo't *nicht* die angefragte
+        Channel-Nr, sondern den aktuell aktiven Memory-Kanal. Inhalt
+        (Frequenz/Mode/Tag) gehoert aber zum angefragten Kanal. Wir
+        akzeptieren deshalb jeden ``MT…;``-Frame als Antwort und ersetzen
+        die Channel-Nr beim Konstruieren des :class:`MemoryChannel` mit
+        dem angefragten Wert.
+
+        Returns:
+            ``MemoryChannel`` mit Inhalt — oder ``None``, wenn der Slot
+            leer ist (``frequency_hz == 0`` UND Tag leer).
+
+        Wirft :class:`CatProtocolError` bei nicht-parsebarer Antwort und
+        :class:`CatCommandUnsupportedError` (`?;`-Antwort) wenn das
+        Funkgeraet den Befehl ablehnt — typischerweise wenn der Kanal
+        ausserhalb des unterstuetzten Bereichs liegt.
+        """
+        response = self._cat.send_command(
+            format_mt_query(channel),
+            expected_prefix="MT",
+        )
+        try:
+            parsed = parse_mt_or_empty(response)
+        except ValueError as exc:
+            raise CatProtocolError(str(exc)) from exc
+        if parsed is None:
+            return None
+        # Channel-Echo aus der Antwort ignorieren — wir wissen, was wir
+        # gefragt haben, und der Inhalt gehoert sicher dazu.
+        if parsed.channel != channel:
+            return MemoryChannel(
+                channel=channel,
+                frequency_hz=parsed.frequency_hz,
+                mode=parsed.mode,
+                tag=parsed.tag,
+            )
+        return parsed
+
+    def read_active_memory_channel(self) -> Optional[int]:
+        """Liest den aktuell aktiven Speicherkanal (``MC;``).
+
+        Returns:
+            Kanalnummer, oder ``None``, wenn das Funkgeraet im VFO-Modus
+            ist (Antwort ``?;`` -> :class:`CatCommandUnsupportedError`).
+        """
+        try:
+            response = self._cat.send_command(format_mc_query())
+        except CatCommandUnsupportedError:
+            return None
+        try:
+            return parse_mc_response(response)
+        except ValueError as exc:
+            raise CatProtocolError(str(exc)) from exc
+
+    def select_memory_channel(self, channel: int) -> None:
+        """Setzt den aktiven Speicherkanal (``MCnnn;``) und aktiviert
+        damit den Memory-Modus.
+
+        Kein TX-Lock — Memory-Wechsel ist kein Audio-Schreibvorgang.
+        """
+        log = self.get_log()
+        if log is not None:
+            log.log_info(
+                f"Select Memory: {channel:03d} -> {format_mc_set(channel)}"
+            )
+        self._cat.send_command(format_mc_set(channel), read_response=False)
+
+    def read_memory_editor_channel(self, channel: int) -> MemoryEditorChannel:
+        """Liest einen Speicherkanal fuer den Editor (``MTnnn;``, Rohdaten)."""
+        validate_channel_range(channel)
+        response = self._cat.send_command(
+            format_mt_query(channel),
+            expected_prefix="MT",
+        )
+        try:
+            return editor_channel_from_mt_response(
+                response,
+                requested_channel=channel,
+            )
+        except ValueError as exc:
+            raise CatProtocolError(str(exc)) from exc
+
+    def write_memory_editor_channel(
+        self,
+        channel: MemoryEditorChannel,
+        *,
+        verify: bool = False,
+    ) -> None:
+        """Schreibt einen Speicherkanal per ``MW…;`` und ``MT…;``."""
+        validate_channel_range(channel.number)
+        mw_command = build_mw_command(channel)
+        command = build_mt_command(channel)
+        log = self.get_log()
+        if log is not None:
+            log.log_info(f"Write Memory #{channel.number:03d}: {mw_command[:20]}…")
+        # MW schreibt die eigentlichen Speicher-Daten. Gerade leere Slots
+        # werden vom FT-991/A per MT allein nicht zuverlässig gelöscht.
+        self._cat.send_command(
+            mw_command,
+            read_response=False,
+        )
+        if should_write_cleared(channel):
+            channel.raw_cat_response = mw_command
+            channel.raw_mt_body = command[2:-1]
+            channel.changed = False
+            return
+
+        if log is not None:
+            log.log_info(f"Write Memory Tag #{channel.number:03d}: {command[:20]}…")
+        # MT schreibt zusätzlich den Tag/Namen.
+        self._cat.send_command(
+            command,
+            read_response=False,
+        )
+        channel.raw_cat_response = command
+        channel.raw_mt_body = command[2:-1]
+        channel.changed = False
+
+    def switch_to_vfo_mode(self) -> bool:
+        """Schaltet das Funkgeraet aus dem Memory-Modus zurueck in den
+        VFO-Modus.
+
+        Es gibt im offiziellen FT-991/991A-CAT-Manual keinen direkten
+        „Exit-Memory"-Befehl. Wir nutzen den Trick, dass ein
+        ``FA<freq>;``-Schreibvorgang den VFO-A unkonditional aktiviert:
+        wir lesen die aktuelle VFO-A-Frequenz und schreiben sie
+        unveraendert zurueck. Das ist transparent fuer den Anwender und
+        funktioniert seit FW 1.0 zuverlaessig.
+
+        Returns:
+            ``True`` wenn der Wechsel ausgefuehrt werden konnte,
+            ``False`` bei CAT-Fehler (Read/Write).
+        """
+        log = self.get_log()
+        try:
+            freq = self.read_frequency()
+            command = f"FA{freq:09d};"
+            self._cat.send_command(command, read_response=False)
+            if log is not None:
+                log.log_info(f"VFO-Modus erzwungen via {command}")
+            return True
+        except CatError as exc:
+            if log is not None:
+                log.log_warn(f"VFO-Wechsel gescheitert: {exc}")
+            return False
 
     # ------------------------------------------------------------------
     # Erweiterte Einstellungen (Version 0.5)

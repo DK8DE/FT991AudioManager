@@ -35,12 +35,21 @@ class _FakeSerialCAT(SerialCAT):
 
 
 class IdParsingTest(unittest.TestCase):
-    def test_ft991a_id(self) -> None:
+    def test_ft991a_id_classic(self) -> None:
+        # Klassische ID-Antwort laut Yaesu-CAT-Manual.
         fake = _FakeSerialCAT("ID0570;")
         ft = FT991CAT(fake)
         identity = ft.get_radio_id()
         self.assertIsInstance(identity, RadioIdentity)
         self.assertEqual(identity.radio_id, FT991A_RADIO_ID)
+        self.assertTrue(identity.is_ft991)
+
+    def test_ft991a_id_newer_firmware(self) -> None:
+        # Neuere FT-991A-Firmware meldet sich mit ID0670;.
+        fake = _FakeSerialCAT("ID0670;")
+        ft = FT991CAT(fake)
+        identity = ft.get_radio_id()
+        self.assertEqual(identity.radio_id, "0670")
         self.assertTrue(identity.is_ft991)
 
     def test_unknown_id(self) -> None:

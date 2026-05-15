@@ -234,6 +234,15 @@ _MODE_GROUPS = {
 # Umkehrung des MD-Code-Mappings (RxMode → CAT-Hex-Code).
 MODE_TO_CODE: Dict[RxMode, str] = {v: k for k, v in _MD_CODE_TO_MODE.items()}
 
+#: Alle FT-991A-Betriebsarten in MD-Reihenfolge (1..E) für Dropdowns.
+_MD_ORDER = "123456789ABCDE"
+ALL_OPERATING_MODES: Tuple[RxMode, ...] = tuple(
+    _MD_CODE_TO_MODE[c] for c in _MD_ORDER
+)
+
+#: Legacy-Profil-Gruppen (JSON vor Einzelmodi) → Standard-Betriebsart.
+LEGACY_PROFILE_MODE_GROUPS = frozenset({"SSB", "AM", "FM", "DATA", "C4FM"})
+
 
 #: Standardmodus pro Profil-Mode-Gruppe — wird verwendet, wenn die GUI die
 #: Mode-Gruppe wechselt und dem Radio einen passenden Operating-Mode setzen
@@ -245,7 +254,52 @@ DEFAULT_MODE_FOR_GROUP: Dict[str, RxMode] = {
     "FM": RxMode.FM,
     "DATA": RxMode.DATA_USB,
     "C4FM": RxMode.C4FM,
+    "CW": RxMode.CW_U,
+    "RTTY": RxMode.RTTY_USB,
 }
+
+
+def rx_mode_from_selection(text: str, *, default: RxMode = RxMode.USB) -> RxMode:
+    """Dropdown- oder Profil-Text → :class:`RxMode`.
+
+    Akzeptiert konkrete Modus-Labels (``USB``, ``FM-N``, …) sowie Legacy-
+    Gruppennamen (``SSB``, ``DATA``, …).
+    """
+    key = text.strip().upper()
+    if key in LEGACY_PROFILE_MODE_GROUPS:
+        return DEFAULT_MODE_FOR_GROUP[key]
+    for mode in ALL_OPERATING_MODES:
+        if mode.value.upper() == key:
+            return mode
+    return default
+
+
+def normalize_profile_mode_group(text: str) -> str:
+    """Profil-Feld → konkretes Modus-Label für Dropdown und JSON."""
+    return rx_mode_from_selection(text).value
+
+
+def coarse_mode_group_for(text: str) -> str:
+    """Liefert die grobe Profil-Gruppe (SSB/AM/FM/…) für Extended-UI."""
+    return mode_group_for(rx_mode_from_selection(text))
+
+
+#: Modusgruppen ohne diese RX-DSP-Slider in der GUI (FT-991: analoges FM / C4FM):
+#: NB (Noise Blanker), DNR, DNF — am Gerät wirkungslos bzw. nicht sinnvoll nutzbar.
+_MODE_GROUPS_WITHOUT_DNR_DNF: frozenset[str] = frozenset({"FM", "C4FM"})
+
+
+def mode_group_supports_dnr_dnf(mode_group: str) -> bool:
+    """True, wenn NB-, DNR- und DNF-Slider für diese Modusgruppe angezeigt werden."""
+    return mode_group.strip().upper() not in _MODE_GROUPS_WITHOUT_DNR_DNF
+
+
+def is_valid_profile_mode_group(text: str) -> bool:
+    """Prüft, ob ``text`` ein bekannter Modus oder eine Legacy-Gruppe ist."""
+    key = text.strip().upper()
+    if key in LEGACY_PROFILE_MODE_GROUPS:
+        return True
+    return any(mode.value.upper() == key for mode in ALL_OPERATING_MODES)
 
 
 def format_mode_set(mode: RxMode) -> str:
@@ -317,6 +371,11 @@ def _parse_three_digit_value(response: str, prefix: str, max_value: int) -> int:
 
 def format_squelch_query() -> str:
     return "SQ0;"
+
+
+def format_squelch_set(level: int) -> str:
+    """Setzt den Squelch-Pegel (``SQ0nnn;``, 0..100)."""
+    return f"SQ0{_clamp(level, 0, 100):03d};"
 
 
 def parse_squelch_response(response: str) -> int:

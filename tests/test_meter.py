@@ -105,10 +105,11 @@ class MeterMappingTest(unittest.TestCase):
         self.assertEqual(classify_value(MeterKind.SWR, 200), "danger")
 
     def test_units_and_ticks(self) -> None:
-        # ALC/COMP/PO werden in Prozent angezeigt
+        # ALC/COMP/POWER: Watt bzw. Prozent
         self.assertEqual(METER_INFO[MeterKind.ALC].unit, "%")
         self.assertEqual(METER_INFO[MeterKind.COMP].unit, "%")
-        self.assertEqual(METER_INFO[MeterKind.PO].unit, "%")
+        self.assertEqual(METER_INFO[MeterKind.PO].unit, "")
+        self.assertEqual(METER_INFO[MeterKind.PO].label, "POWER")
         # SWR in :1
         self.assertEqual(METER_INFO[MeterKind.SWR].unit, ":1")
         # Jedes Meter hat eine nicht-leere Skalen-Tabelle
@@ -122,8 +123,16 @@ class MeterMappingTest(unittest.TestCase):
         self.assertEqual(format_meter_value(MeterKind.ALC, 0), "0%")
         self.assertEqual(format_meter_value(MeterKind.ALC, 128), "50%")
         self.assertEqual(format_meter_value(MeterKind.ALC, 255), "100%")
-        self.assertEqual(format_meter_value(MeterKind.PO, 64), "25%")
         self.assertEqual(format_meter_value(MeterKind.COMP, 191), "75%")
+        self.assertEqual(format_meter_value(MeterKind.PO, 121), "100 W")
+        self.assertEqual(format_meter_value(MeterKind.PO, 61), "50 W")
+
+    def test_po_watts_per_band(self) -> None:
+        from mapping.meter_mapping import format_po_watts
+
+        self.assertEqual(format_po_watts(121, vhf_uhf=False), "100 W")
+        self.assertEqual(format_po_watts(149, vhf_uhf=True), "50 W")
+        self.assertEqual(format_po_watts(140, vhf_uhf=True), "47 W")
 
     def test_format_swr(self) -> None:
         # ``raw == 0`` zeigen wir bewusst als "—" — ein RM6;-Roh von 0
@@ -225,6 +234,69 @@ class ReadMeterCatTest(unittest.TestCase):
         ft = FT991CAT(radio)
         with self.assertRaises(CatProtocolError):
             ft.read_meter(MeterKind.ALC)
+
+
+class PollTxRobustnessTest(unittest.TestCase):
+    """``MeterPoller._poll_tx`` muss auch dann ein ``tx_sample`` emittieren,
+    wenn ein einzelner ``RMn;``-Read schief geht. Sonst bleiben die TX-
+    Balken in der GUI dunkel und die TX-LED zeigt RX, obwohl das Radio
+    sendet -- das war der reale Fehler beim FT-991A unter DSP-Last."""
+
+    def _make_poller(self, radio):
+        from gui.meter_widget import MeterPoller
+        return MeterPoller(radio, tx_interval_ms=50, rx_interval_ms=50)
+
+    def test_single_meter_failure_does_not_block_sample(self) -> None:
+        radio = _MeterFakeRadio()
+        radio.transmitting = True
+        original_send = radio.send_command
+
+        def maybe_fail(cmd: str, *, read_response: bool = True):
+            # COMP zickt -- z. B. CatProtocolError nach Stale-Frame-Limit.
+            if cmd == "RM3;":
+                raise CatProtocolError("simulierter TX-Meter-Fehler")
+            return original_send(cmd, read_response=read_response)
+
+        radio.send_command = maybe_fail  # type: ignore[method-assign]
+
+        poller = self._make_poller(radio)
+        collected: List[object] = []
+        poller.tx_sample.connect(lambda sample: collected.append(sample))
+        ft = FT991CAT(radio)
+        delay = poller._poll_tx(ft)
+
+        self.assertEqual(len(collected), 1)
+        sample = collected[0]
+        self.assertTrue(sample.transmitting)
+        # 3 von 4 Meter da, COMP fehlt -- GUI behaelt den letzten Wert.
+        self.assertNotIn(MeterKind.COMP, sample.values)
+        self.assertIn(MeterKind.ALC, sample.values)
+        self.assertIn(MeterKind.PO, sample.values)
+        self.assertIn(MeterKind.SWR, sample.values)
+        self.assertEqual(delay, poller._tx_interval_ms)
+
+    def test_all_meters_failure_still_emits_tx_state(self) -> None:
+        # Selbst wenn ALLE Meter scheitern, muss das TX-Sample raus, damit
+        # die GUI weiss, dass das Radio sendet (LED auf rot schalten).
+        radio = _MeterFakeRadio()
+        radio.transmitting = True
+
+        def always_fail(cmd: str, *, read_response: bool = True):
+            if cmd.startswith("RM"):
+                raise CatProtocolError("alle Meter zicken")
+            return _MeterFakeRadio.send_command(radio, cmd, read_response=read_response)
+
+        radio.send_command = always_fail  # type: ignore[method-assign]
+
+        poller = self._make_poller(radio)
+        collected: List[object] = []
+        poller.tx_sample.connect(lambda sample: collected.append(sample))
+        ft = FT991CAT(radio)
+        poller._poll_tx(ft)
+
+        self.assertEqual(len(collected), 1)
+        self.assertTrue(collected[0].transmitting)
+        self.assertEqual(collected[0].values, {})
 
 
 # ----------------------------------------------------------------------

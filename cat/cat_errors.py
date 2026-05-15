@@ -31,3 +31,18 @@ class CatTimeoutError(CatError):
 
 class CatProtocolError(CatError):
     """Antwort vom Funkgerät entspricht nicht dem erwarteten Format."""
+
+
+class CatCommandUnsupportedError(CatProtocolError):
+    """Das Funkgerät hat ``?;`` zurückgeliefert.
+
+    Yaesu nutzt ``?;`` als generische "command not recognized"-Antwort.
+    Wir trennen das von anderen Protokollfehlern, damit hoehere Schichten
+    den Befehl gezielt fuer die laufende Sitzung deaktivieren koennen --
+    z. B. der FT-991 ohne A versteht ``NR0;`` und ``BC0;`` nicht; ohne
+    diese Trennung wuerde der Slow-Path bei jedem Tick erneut versuchen
+    und das CAT-Log mit WARN-Meldungen fluten.
+
+    Unterklasse von :class:`CatProtocolError`, sodass bestehende
+    ``except CatProtocolError``-Pfade weiterhin greifen.
+    """

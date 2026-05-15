@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from cat import (
     CatError,
     CatTimeoutError,
+    FT991_RADIO_IDS,
     FT991A_RADIO_ID,
     FT991CAT,
     PortInfo,
@@ -324,8 +325,9 @@ class ConnectionWidget(QFrame):
                     f"FT-991/FT-991A erkannt.\nAntwort: {identity.raw}",
                 )
         elif identity.radio_id is not None:
+            expected_str = " oder ".join(f"ID{rid};" for rid in FT991_RADIO_IDS)
             self._set_status(
-                f"Antwort {identity.raw.strip()} — kein FT-991(A), erwartet ID{FT991A_RADIO_ID};"
+                f"Antwort {identity.raw.strip()} — kein FT-991(A), erwartet {expected_str}"
             )
             if not silent:
                 QMessageBox.warning(
@@ -334,7 +336,7 @@ class ConnectionWidget(QFrame):
                     (
                         f"Das Gerät hat geantwortet, ist aber kein FT-991(A).\n\n"
                         f"Antwort: {identity.raw}\n"
-                        f"Erwartet: ID{FT991A_RADIO_ID};"
+                        f"Erwartet: {expected_str}"
                     ),
                 )
         else:

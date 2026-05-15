@@ -126,31 +126,54 @@ class FlushAutoWriteTest(unittest.TestCase):
 
 
 class NotifyRadioModeTest(unittest.TestCase):
-    """notify_radio_mode() folgt dem Radio nur bei echten Group-Wechseln."""
+    """notify_radio_mode() folgt dem Radio nur bei echten Modus-Wechseln."""
 
     def setUp(self) -> None:
         self.widget = _make_widget(connected=True)
         # Auto-Read aus dem Mode-Wechsel-Pfad abfangen.
         self.widget._dispatch_action = MagicMock()
 
-    def test_ignores_modes_outside_valid_groups(self) -> None:
+    def test_switches_combo_for_cw_mode(self) -> None:
         from mapping.rx_mapping import RxMode
-        # CW gehört zu Gruppe „CW" — keine valide Profilgruppe → nichts tun.
-        self.widget._last_radio_mode_group = "SSB"
+        self.widget._last_radio_mode = RxMode.USB
         self.widget.notify_radio_mode(RxMode.CW_U)
-        # Mode-Combo unverändert
-        self.assertEqual(self.widget.mode_combo.currentText(), "SSB")
+        self.assertEqual(self.widget.mode_combo.currentText(), "CW-U")
 
-    def test_switches_combo_on_mode_group_change(self) -> None:
+    def test_switches_combo_on_mode_change(self) -> None:
         from mapping.rx_mapping import RxMode
-        # Initial SSB → User wechselt am Radio nach AM.
-        self.widget._last_radio_mode_group = "SSB"
+        self.widget._last_radio_mode = RxMode.USB
         self.widget.notify_radio_mode(RxMode.AM)
         self.assertEqual(self.widget.mode_combo.currentText(), "AM")
-        # Wiederholtes AM-Sample löst keine erneute Aktion aus
         self.widget._dispatch_action.reset_mock()
         self.widget.notify_radio_mode(RxMode.AM_N)
-        self.widget._dispatch_action.assert_not_called()
+        self.assertEqual(self.widget.mode_combo.currentText(), "AM-N")
+        self.widget._dispatch_action.assert_called_once()
+        kind, _payload = self.widget._dispatch_action.call_args.args
+        self.assertEqual(kind, "read")
+
+    def test_user_lock_suppresses_pong_after_manual_switch(self) -> None:
+        """Verzögertes Polling mit altem Modus darf die Combo nicht zurücksetzen."""
+        from mapping.rx_mapping import RxMode
+        import time as _time
+        self.widget._last_radio_mode = RxMode.FM
+        self.widget._user_mode_lock_until = _time.monotonic() + 4.0
+        idx_fm = self.widget.mode_combo.findText("FM")
+        self.widget.mode_combo.setCurrentIndex(idx_fm)
+        self.widget._dispatch_action.reset_mock()
+        self.widget.notify_radio_mode(RxMode.USB)
+        self.assertEqual(self.widget.mode_combo.currentText(), "FM")
+        self.assertEqual(self.widget._last_radio_mode, RxMode.FM)
+
+    def test_user_lock_expires_and_combo_follows_radio(self) -> None:
+        from mapping.rx_mapping import RxMode
+        import time as _time
+        self.widget._last_radio_mode = RxMode.FM
+        self.widget._user_mode_lock_until = _time.monotonic() - 0.1
+        idx_fm = self.widget.mode_combo.findText("FM")
+        self.widget.mode_combo.setCurrentIndex(idx_fm)
+        self.widget._dispatch_action.reset_mock()
+        self.widget.notify_radio_mode(RxMode.USB)
+        self.assertEqual(self.widget.mode_combo.currentText(), "USB")
 
 
 class OnModeChangedTest(unittest.TestCase):
@@ -166,25 +189,26 @@ class OnModeChangedTest(unittest.TestCase):
         self.assertGreaterEqual(idx, 0)
         self.widget.mode_combo.setCurrentIndex(idx)
 
-    def test_user_switches_to_different_group_triggers_mode_set(self) -> None:
+    def test_user_switches_to_different_mode_triggers_mode_set(self) -> None:
         from mapping.rx_mapping import RxMode
-        # Radio ist gerade auf SSB
-        self.widget._last_radio_mode_group = "SSB"
-        # Combo steht initial auf "SSB"; auf "AM" wechseln
-        self.assertEqual(self.widget.mode_combo.currentText(), "SSB")
+        import time as _time
+        self.widget._last_radio_mode = RxMode.USB
+        self.widget._user_mode_lock_until = 0.0
+        self._switch_combo_to("USB")
+        before = _time.monotonic()
         self._switch_combo_to("AM")
         self.widget._dispatch_action.assert_called_once()
         kind, payload = self.widget._dispatch_action.call_args.args
         self.assertEqual(kind, "set_mode_and_read")
         self.assertEqual(payload, RxMode.AM)
-        # _last_radio_mode_group wird optimistisch auf "AM" gestellt,
-        # damit Polling-Samples (alte Werte) keinen Pong-Effekt auslösen.
-        self.assertEqual(self.widget._last_radio_mode_group, "AM")
+        self.assertEqual(self.widget._last_radio_mode, RxMode.AM)
+        self.assertGreaterEqual(
+            self.widget._user_mode_lock_until - before, 3.5
+        )
 
-    def test_user_picks_same_group_as_radio_only_reads(self) -> None:
-        # Radio steht auf AM, Combo ist gerade von außen auf AM gewechselt
-        # worden — beim "redundanten" Combo-Click reicht ein Read.
-        self.widget._last_radio_mode_group = "AM"
+    def test_user_picks_same_mode_as_radio_only_reads(self) -> None:
+        from mapping.rx_mapping import RxMode
+        self.widget._last_radio_mode = RxMode.AM
         self._switch_combo_to("AM")
         # Möglicherweise wurde gar nichts gedispatcht, wenn der Index sich
         # nicht änderte. In jedem Fall darf KEIN „set_mode_and_read"

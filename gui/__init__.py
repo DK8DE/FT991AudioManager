@@ -3,6 +3,7 @@
 from .audio_basics_widget import AudioBasicsValues, AudioBasicsWidget
 from .connection_widget import ConnectionWidget
 from .eq_editor_widget import EQEditorWidget
+from .equalizer_window import EqualizerWindow
 from .extended_widget import ExtendedSettingsWidget
 from .log_widget import LogDockWidget, LogPanel, LogWindow
 from .main_window import MainWindow
@@ -17,6 +18,7 @@ __all__ = [
     "ConnectionSettingsDialog",
     "ConnectionWidget",
     "EQEditorWidget",
+    "EqualizerWindow",
     "ExtendedSettingsWidget",
     "LogDockWidget",
     "LogPanel",

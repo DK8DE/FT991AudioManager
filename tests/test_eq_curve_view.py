@@ -168,6 +168,19 @@ class CanvasInteractionTest(unittest.TestCase):
         self.canvas._toggle_off(1)
         self.assertEqual(self.canvas.bands()[1].freq, EQ_MID_FREQS[1])
 
+    def test_toggle_off_resets_level_and_bw_to_defaults(self) -> None:
+        """Rechtsklick OFF: neutraler CAT-Zustand (Freq OFF, 0 dB, BW-Default)."""
+        self.canvas.set_bands([
+            EQBand(freq=300, level=7, bw=8),
+            EQBand(freq=1000, level=-2, bw=3),
+            EQBand(freq=2400, level=1, bw=9),
+        ])
+        self.canvas._toggle_off(1)
+        b = self.canvas.bands()[1]
+        self.assertEqual(b.freq, "OFF")
+        self.assertEqual(b.level, 0)
+        self.assertEqual(b.bw, 5)
+
     def test_drag_center_updates_level_and_freq(self) -> None:
         """Setzt den MID-Punkt manuell auf eine Position und prüft Snap."""
         self._set_initial()

@@ -130,9 +130,9 @@ class AudioProfileSerializationTest(unittest.TestCase):
         self.assertEqual(decoded.processor_eq.eq3.level, 5)
         self.assertEqual(decoded.advanced.get("ssb_hcut_freq"), 3000)
 
-    def test_invalid_mode_group_falls_back_to_ssb(self) -> None:
+    def test_invalid_mode_group_falls_back_to_usb(self) -> None:
         decoded = AudioProfile.from_dict({"name": "x", "mode_group": "WTF"})
-        self.assertEqual(decoded.mode_group, "SSB")
+        self.assertEqual(decoded.mode_group, "USB")
 
 
 if __name__ == "__main__":  # pragma: no cover

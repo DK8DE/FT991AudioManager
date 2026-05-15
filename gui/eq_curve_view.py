@@ -127,6 +127,14 @@ def _first_enabled_freq(band_index: int) -> int:
     return 1000  # Fallback (sollte nie greifen)
 
 
+def _format_edge_frequency_label(hz: float) -> str:
+    """Kompakte Hz-Anzeige für BW-Kanten (klein unter dem Strich)."""
+    h = int(round(max(1.0, float(hz))))
+    if h >= 1000:
+        return f"{h / 1000:.1f} kHz"
+    return f"{h} Hz"
+
+
 # ----------------------------------------------------------------------
 # Interner Drag-Zustand
 # ----------------------------------------------------------------------
@@ -342,9 +350,9 @@ class _EqCurveCanvas(QWidget):
                 freq=new_freq, level=int(band.level), bw=int(band.bw)
             )
         else:
-            self._bands[band_index] = EQBand(
-                freq="OFF", level=int(band.level), bw=int(band.bw)
-            )
+            # OFF am Gerät: Freq-Index 00 plus neutrale Level/BW (+00 / Q5),
+            # damit der CAT-Diff alle betroffenen EX-Slots zuverlässig schreibt.
+            self._bands[band_index] = EQBand(freq="OFF", level=0, bw=5)
         self.bands_changed.emit(list(self._bands))
         self.update()
 
@@ -385,13 +393,21 @@ class _EqCurveCanvas(QWidget):
             painter.drawLine(plot_x, int(y), plot_x + plot_w, int(y))
 
         # Bandbreiten-Boxen (hellblau) — hinter der Kurve
+        edge_label_font = QFont(self.font())
+        edge_label_font.setPointSizeF(
+            max(6.5, edge_label_font.pointSizeF() * 0.62 + 1.0)
+        )
+        fm_edge = QFontMetrics(edge_label_font)
+
         for idx, band in enumerate(self._bands):
             if band.freq == "OFF":
                 continue
             f0 = float(band.freq)
             half = _half_width_oct_for_bw(int(band.bw))
-            left_x = self._x_for_freq(max(_F_MIN, f0 * (2 ** -half)), plot_x, plot_w)
-            right_x = self._x_for_freq(min(_F_MAX, f0 * (2 ** half)), plot_x, plot_w)
+            f_left_hz = f0 * (2 ** -half)
+            f_right_hz = f0 * (2 ** half)
+            left_x = self._x_for_freq(max(_F_MIN, f_left_hz), plot_x, plot_w)
+            right_x = self._x_for_freq(min(_F_MAX, f_right_hz), plot_x, plot_w)
             box_x = int(min(left_x, right_x))
             box_w = max(1, int(abs(right_x - left_x)))
             painter.setPen(Qt.NoPen)
@@ -404,6 +420,28 @@ class _EqCurveCanvas(QWidget):
             painter.drawLine(int(left_x), plot_y, int(left_x), plot_y + plot_h)
             painter.setPen(QPen(_BW_EDGE_HOVER if hovered_right else _BW_EDGE, 2))
             painter.drawLine(int(right_x), plot_y, int(right_x), plot_y + plot_h)
+
+            # Eckfrequenzen **innen** im blauen Balken (nicht zentriert auf dem
+            # Strich — sonst überdeckt die Füllung die Zahlen).
+            painter.setFont(edge_label_font)
+            painter.setPen(_LABEL_COLOR)
+            txt_l = _format_edge_frequency_label(f_left_hz)
+            txt_r = _format_edge_frequency_label(f_right_hz)
+            w_l = fm_edge.horizontalAdvance(txt_l)
+            w_r = fm_edge.horizontalAdvance(txt_r)
+            row_gap = fm_edge.height() + 2
+            baseline = plot_y + plot_h - fm_edge.descent() - 2 - idx * row_gap
+            inner_pad = 4
+            x_l_text = int(left_x) + inner_pad
+            x_r_text = int(right_x) - w_r - inner_pad
+            y_l = baseline
+            y_r = baseline
+            # Zu schmal oder Texte würden sich in der Mitte treffen → vertikal trennen
+            if x_r_text < x_l_text + w_l + inner_pad:
+                y_l = baseline - row_gap
+
+            painter.drawText(x_l_text, y_l, txt_l)
+            painter.drawText(x_r_text, y_r, txt_r)
 
         # 0-dB-Linie
         zero_y = self._y_for_db(0.0, plot_y, plot_h)

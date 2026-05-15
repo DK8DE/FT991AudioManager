@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import unittest
+from typing import Optional
+from unittest.mock import patch
 
 from cat import TxLockError
 from cat.ft991_cat import FT991CAT
@@ -16,12 +18,28 @@ from mapping.rx_mapping import (
 
 
 class _FakeSerialCAT(SerialCAT):
-    """Mini-Fake: hält Mode-State + TX-State und merkt sich Kommandos."""
+    """Mini-Fake: hält Mode-State + TX-State und merkt sich Kommandos.
 
-    def __init__(self, *, transmitting: bool = False) -> None:
+    Standardmäßig spielt der Fake bei Schreibversuchen die neue Betriebsart
+    sofort in den eigenen State zurück, damit die Verifikation in
+    ``set_rx_mode`` ein konsistentes Bild sieht. Tests, die den Fall
+    "Funkgerät reagiert nicht" simulieren wollen, setzen
+    ``stubborn_mode_code`` auf einen festen MD-Code.
+    """
+
+    def __init__(
+        self,
+        *,
+        transmitting: bool = False,
+        stubborn_mode_code: Optional[str] = None,
+    ) -> None:
         super().__init__()
         self.transmitting = transmitting
         self.commands: list[str] = []
+        self.stubborn_mode_code = stubborn_mode_code
+        # Aktueller Mode-Code für die Verifikations-Antwort. Wird beim
+        # Schreiben von ``MD0X;`` aktualisiert (sofern nicht stubborn).
+        self._current_mode_code = "2"  # default USB
 
     def is_connected(self) -> bool:  # type: ignore[override]
         return True
@@ -32,6 +50,15 @@ class _FakeSerialCAT(SerialCAT):
             return "TX1;" if self.transmitting else "TX0;"
         if command == "ID;":
             return "ID0570;"
+        if command.startswith("MD0") and len(command) == 5:
+            # MD0X; — Schreibvorgang. Mode-Code übernehmen, sofern wir
+            # nicht den "uneinsichtigen" Fake-Modus simulieren.
+            if self.stubborn_mode_code is None:
+                self._current_mode_code = command[3]
+            return ""
+        if command == "MD0;":
+            code = self.stubborn_mode_code or self._current_mode_code
+            return f"MD0{code};"
         return ""
 
 
@@ -54,24 +81,34 @@ class FormatModeSetTest(unittest.TestCase):
 
 
 class SetRxModeTest(unittest.TestCase):
+    def _no_sleep(self):
+        # time.sleep in der Verifikationsschleife darf in Tests nicht
+        # wirklich blockieren.
+        return patch("cat.ft991_cat.time.sleep", lambda *_a, **_k: None)
+
     def test_sends_md_command_when_not_transmitting(self) -> None:
         cat = _FakeSerialCAT(transmitting=False)
         ft = FT991CAT(cat)
-        ft.set_rx_mode(RxMode.AM)
+        with self._no_sleep():
+            result = ft.set_rx_mode(RxMode.AM)
         # erst TX-Check, dann MD0X
         self.assertIn("TX;", cat.commands)
         self.assertIn("MD05;", cat.commands)
+        # Verifikation muss erfolgreich gewesen sein — der Fake folgt dem Set.
+        self.assertTrue(result)
 
     def test_uses_correct_code_for_usb(self) -> None:
         cat = _FakeSerialCAT(transmitting=False)
         ft = FT991CAT(cat)
-        ft.set_rx_mode(RxMode.USB)
+        with self._no_sleep():
+            ft.set_rx_mode(RxMode.USB)
         self.assertIn("MD02;", cat.commands)
 
     def test_uses_correct_code_for_data_usb(self) -> None:
         cat = _FakeSerialCAT(transmitting=False)
         ft = FT991CAT(cat)
-        ft.set_rx_mode(RxMode.DATA_USB)
+        with self._no_sleep():
+            ft.set_rx_mode(RxMode.DATA_USB)
         self.assertIn("MD0C;", cat.commands)
 
     def test_raises_tx_lock_when_transmitting(self) -> None:
@@ -86,8 +123,44 @@ class SetRxModeTest(unittest.TestCase):
         """Mit ``tx_lock=False`` schreiben wir auch während TX (Sonderfall)."""
         cat = _FakeSerialCAT(transmitting=True)
         ft = FT991CAT(cat)
-        ft.set_rx_mode(RxMode.AM, tx_lock=False)
+        with self._no_sleep():
+            ft.set_rx_mode(RxMode.AM, tx_lock=False)
         self.assertIn("MD05;", cat.commands)
+
+    def test_verify_false_skips_readback(self) -> None:
+        """Mit ``verify=False`` darf kein MD0; Read passieren."""
+        cat = _FakeSerialCAT(transmitting=False)
+        ft = FT991CAT(cat)
+        ft.set_rx_mode(RxMode.FM, verify=False)
+        self.assertIn("MD04;", cat.commands)
+        self.assertNotIn("MD0;", cat.commands)
+
+    def test_verify_retries_when_radio_ignores_set(self) -> None:
+        """FT-991A schluckt manchmal MD-Set — wir retryen 2 mal."""
+        # Radio reagiert NICHT auf MD-Set (stubborn auf "2" = USB).
+        cat = _FakeSerialCAT(transmitting=False, stubborn_mode_code="2")
+        ft = FT991CAT(cat)
+        with self._no_sleep():
+            result = ft.set_rx_mode(RxMode.FM)
+        # 1 initialer Versuch + 2 Retries = 3 × MD04;
+        md_writes = [c for c in cat.commands if c == "MD04;"]
+        self.assertEqual(len(md_writes), 3)
+        # Zwischen jedem Versuch ein MD0; Read (= 3 Verifikationen).
+        md_reads = [c for c in cat.commands if c == "MD0;"]
+        self.assertEqual(len(md_reads), 3)
+        self.assertFalse(result)
+
+    def test_verify_accepts_same_group_mode(self) -> None:
+        """Radio meldet LSB statt USB — beide gehören zur Gruppe SSB → OK."""
+        cat = _FakeSerialCAT(transmitting=False, stubborn_mode_code="1")  # LSB
+        ft = FT991CAT(cat)
+        with self._no_sleep():
+            result = ft.set_rx_mode(RxMode.USB)
+        # Schreibversuch wird nur einmal gemacht, da die Verifikation
+        # bereits beim ersten Read ein "passender Mode" (LSB ∈ SSB) sieht.
+        md_writes = [c for c in cat.commands if c == "MD02;"]
+        self.assertEqual(len(md_writes), 1)
+        self.assertTrue(result)
 
 
 class WorkerTargetModeTest(unittest.TestCase):

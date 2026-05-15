@@ -2,13 +2,17 @@
 
 Zeigt:
 
-* **S-Meter** + **DSP-Slider (NB / DNF / DNR / AGC)** in einer Zeile —
+* **S-Meter** + **DSP-Slider (SQL / NB / DNR / AGC / MIC / DNF)** in einer Zeile —
   bei NB/DNR ändert der Slider-Zug den Pegel und die LED toggelt on/off.
-  Bei DNF nur on/off. AGC ist ein diskreter Slider mit den vier
+  Bei DNF nur on/off. **MIC Gain** wird wie die anderen Slow-Path-Werte
+  zyklisch mit ``MG;`` vom Funkgerät gelesen, Verstellung am TRX erscheint
+  in der GUI. AGC ist ein diskreter Slider mit den vier
   Stufen AUTO/FAST/MID/SLOW (kein OFF, weil das im Alltag nicht
   gebraucht wird).
 * **AF/RF-Gain** als Mini-Balken.
-* **TX-Bars** (ALC/COMP/PO/SWR) hochkant unten — bei RX gedimmt.
+* **Sendebandbreite (SH WIDTH)** unter AF/RF — symmetrischer Hz-Balken
+  (50…3200 Hz Skala) und P2-Slider; nur in SSB/CW/DATA/RTTY sichtbar.
+* **TX-Bars** (ALC/COMP/POWER/SWR) hochkant unten — bei RX gedimmt.
 
 Polling läuft auf einem :class:`QThread`. Im RX-Modus wird zyklisch das
 S-Meter und der TX-Status abgefragt; die DSP-Stati und Pegel werden auf
@@ -42,6 +46,7 @@ from PySide6.QtGui import (
     QPainter,
     QPaintEvent,
     QPen,
+    QResizeEvent,
 )
 from PySide6.QtWidgets import (
     QFrame,
@@ -57,7 +62,11 @@ from PySide6.QtWidgets import (
 )
 
 from cat import SerialCAT
-from cat.cat_errors import CatConnectionLostError, CatError
+from cat.cat_errors import (
+    CatCommandUnsupportedError,
+    CatConnectionLostError,
+    CatError,
+)
 from cat.ft991_cat import FT991CAT
 from mapping.meter_mapping import (
     METER_INFO,
@@ -67,6 +76,7 @@ from mapping.meter_mapping import (
     SMETER_TICKS,
     format_meter_value,
     meter_choices,
+    po_use_50w_scale,
 )
 from mapping.rx_mapping import (
     AGC_LABELS,
@@ -76,6 +86,16 @@ from mapping.rx_mapping import (
     RxMode,
     agc_mode_to_slider_pos,
     format_frequency_hz,
+    mode_group_supports_dnr_dnf,
+)
+from mapping.sh_width_mapping import (
+    SH_P2_MAX,
+    SH_P2_MIN,
+    VISUAL_HZ_MAX,
+    VISUAL_HZ_MIN,
+    sh_bandwidth_visible_for_mode,
+    sh_display_hz,
+    sh_snap_p2_to_supported,
 )
 
 
@@ -113,6 +133,10 @@ class RxStatusSample:
     noise_blanker: Optional[Tuple[bool, int]] = None
     noise_reduction: Optional[Tuple[bool, int]] = None
     auto_notch: Optional[bool] = None
+    #: MIC Gain (CAT ``MG;``) — nur im Slow-Path, z. B. nach Verstellung am Gerät.
+    mic_gain: Optional[int] = None
+    #: Sendebandbreite / SH WIDTH (``SH0;``) — P2 0..21, nur Slow-Path.
+    tx_bandwidth_sh: Optional[int] = None
     mode: Optional[RxMode] = None
     frequency_hz: Optional[int] = None
     frequency_b_hz: Optional[int] = None
@@ -167,6 +191,12 @@ class MeterPoller(QObject):
         self._last_tx: Optional[bool] = None
         self._rx_tick = 0           # Zähler für Slow-Path
         self._force_full_rx = True  # Beim Start einmal alle RX-Werte lesen
+        # Set der RX-Slow-Path-Reads, die das Geraet nicht versteht
+        # (Antwort ``?;``). Wird beim Verbinden geleert und waehrend
+        # der Sitzung nur ergaenzt -- der FT-991 ohne A kennt z. B.
+        # weder ``NR0;`` noch ``BC0;``. Reads in diesem Set werden in
+        # zukuenftigen Ticks lautlos uebersprungen.
+        self._disabled_reads: set[str] = set()
 
     @staticmethod
     def _clamp(ms: int) -> int:
@@ -195,6 +225,9 @@ class MeterPoller(QObject):
         self._last_tx = None
         self._rx_tick = 0
         self._force_full_rx = True
+        # Neu verbinden = neue Lerngrundlage: vielleicht haengt jetzt ein
+        # FT-991A statt eines FT-991 dran, der die Befehle doch versteht.
+        self._disabled_reads.clear()
         self.running_changed.emit(True)
         QTimer.singleShot(0, self._tick)
 
@@ -251,10 +284,37 @@ class MeterPoller(QObject):
 
         Beim Übergang RX→TX setzen wir den Slow-Path-Zähler zurück, damit
         nach dem nächsten RX die DSP-Werte schnell wieder aktuell sind.
+
+        **Fehler-Toleranz pro Meter:** Wirft ein einzelner ``RMn;``-Read
+        einen :class:`CatError` (z. B. Timeout direkt nach dem PTT,
+        verworfene Stale-Frames bei aktivem AI-Modus, transientes
+        Protokoll-Problem unter DSP-Last), wird **dieser** Meter
+        einfach uebersprungen. Wir wollen dem User trotzdem ALC/PO/SWR
+        zeigen, wenn nur COMP zickt. Frueher hat ein einziger Fehler
+        die ganze Schleife abgebrochen, sodass *gar kein* tx_sample
+        emittiert wurde und die GUI im RX-Modus haengen blieb -- die
+        Bars blieben leer und die TX-LED schaltete nicht auf rot.
+        ``CatConnectionLostError`` reichen wir aber durch, denn ohne
+        Port koennen wir wirklich nichts mehr lesen.
         """
+        log = self._cat.get_log()
         values: Dict[MeterKind, int] = {}
         for kind in (MeterKind.COMP, MeterKind.ALC, MeterKind.PO, MeterKind.SWR):
-            values[kind] = ft.read_meter(kind)
+            try:
+                values[kind] = ft.read_meter(kind)
+            except CatConnectionLostError:
+                raise
+            except CatError as exc:
+                if log is not None:
+                    log.log_warn(
+                        f"TX-Meter {kind.name} uebersprungen: {exc}"
+                    )
+                # Wir lassen den Wert im Dict aus -- die GUI behaelt
+                # den letzten bekannten Wert fuer diesen Bar.
+                continue
+        # Auch wenn nicht alle 4 Meter gelesen werden konnten: das
+        # Sample muss raus, damit die GUI weiss, dass das Radio sendet
+        # (TX-LED rot, Bars aktiv eingefaerbt).
         self.tx_sample.emit(TxMeterSample(transmitting=True, values=values))
         # Beim nächsten RX direkt einen vollen Slow-Path-Read machen.
         self._force_full_rx = True
@@ -284,31 +344,50 @@ class MeterPoller(QObject):
             return self._rx_interval_ms
 
         # Slow-Path: alle paar Sekunden volle DSP-/Pegel-Werte holen.
-        # Jeder Read kann CatProtocolError werfen — wir nehmen einzelne
+        # Jeder Read kann CatProtocolError werfen -- wir nehmen einzelne
         # Fehler in Kauf, damit ein einziger zickender Wert nicht den
         # ganzen Slow-Path lahmlegt. Ungelesene Werte bleiben einfach
-        # None und die GUI behält den letzten Stand.
-        def _safe(func):
+        # None und die GUI behaelt den letzten Stand.
+        #
+        # Sonderfall ``CatCommandUnsupportedError`` (Geraet antwortet mit
+        # ``?;``): der FT-991 ohne A kennt z. B. weder ``NR0;`` noch
+        # ``BC0;``. Wir loggen das EINMAL als INFO und merken uns den
+        # Befehl in ``self._disabled_reads``, damit kuenftige Ticks ihn
+        # ohne weiteren CAT-Roundtrip auslassen.
+        def _safe(name: str, func):
+            if name in self._disabled_reads:
+                return None
             try:
                 return func()
+            except CatCommandUnsupportedError as exc:
+                self._disabled_reads.add(name)
+                log = self._cat.get_log()
+                if log is not None:
+                    log.log_info(
+                        f"RX-Status: '{name}' wird vom Funkgeraet nicht "
+                        f"unterstuetzt ({exc}) -- ueberspringe kuenftig."
+                    )
+                return None
             except CatError as exc:
                 log = self._cat.get_log()
                 if log is not None:
-                    log.log_warn(f"RX-Status übersprungen: {exc}")
+                    log.log_warn(f"RX-Status uebersprungen: {exc}")
                 return None
 
-        squelch = _safe(ft.read_squelch)
-        af_gain = _safe(ft.read_af_gain)
-        rf_gain = _safe(ft.read_rf_gain)
-        agc = _safe(ft.read_agc)
-        nb_on = _safe(ft.read_noise_blanker)
-        nb_level = _safe(ft.read_noise_blanker_level)
-        nr_on = _safe(ft.read_noise_reduction)
-        nr_level = _safe(ft.read_noise_reduction_level)
-        auto_notch = _safe(ft.read_auto_notch)
-        mode = _safe(ft.read_rx_mode)
-        freq_a = _safe(ft.read_frequency)
-        freq_b = _safe(ft.read_frequency_b)
+        squelch = _safe("squelch", ft.read_squelch)
+        af_gain = _safe("af_gain", ft.read_af_gain)
+        rf_gain = _safe("rf_gain", ft.read_rf_gain)
+        agc = _safe("agc", ft.read_agc)
+        nb_on = _safe("nb_on", ft.read_noise_blanker)
+        nb_level = _safe("nb_level", ft.read_noise_blanker_level)
+        nr_on = _safe("nr_on", ft.read_noise_reduction)
+        nr_level = _safe("nr_level", ft.read_noise_reduction_level)
+        auto_notch = _safe("auto_notch", ft.read_auto_notch)
+        mode = _safe("mode", ft.read_rx_mode)
+        freq_a = _safe("freq_a", ft.read_frequency)
+        freq_b = _safe("freq_b", ft.read_frequency_b)
+        mic_gain = _safe("mic_gain", ft.get_mic_gain)
+        tx_bw = _safe("sh_width", ft.read_tx_bandwidth_sh)
 
         sample = RxStatusSample(
             smeter=smeter,
@@ -319,6 +398,8 @@ class MeterPoller(QObject):
             noise_blanker=(nb_on, nb_level) if (nb_on is not None and nb_level is not None) else None,
             noise_reduction=(nr_on, nr_level) if (nr_on is not None and nr_level is not None) else None,
             auto_notch=auto_notch,
+            mic_gain=mic_gain,
+            tx_bandwidth_sh=tx_bw,
             mode=mode,
             frequency_hz=freq_a,
             frequency_b_hz=freq_b,
@@ -477,6 +558,7 @@ class DspSlider(QFrame):
         supports_level: bool,
         level_min: int = 0,
         level_max: int = 10,
+        tick_interval: Optional[int] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
@@ -526,6 +608,10 @@ class DspSlider(QFrame):
             self._slider.setPageStep(1)
             self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
             self._slider.valueChanged.connect(self._on_slider_changed)
+            if tick_interval is not None and tick_interval > 0:
+                # Skalenstriche neben dem vertikalen Slider
+                self._slider.setTickPosition(QSlider.TickPosition.TicksRight)
+                self._slider.setTickInterval(int(tick_interval))
             slider_row = QHBoxLayout()
             slider_row.setContentsMargins(0, 0, 0, 0)
             slider_row.addStretch(1)
@@ -749,6 +835,166 @@ class AgcSlider(QFrame):
 
 
 # ----------------------------------------------------------------------
+# SqlSlider — kontinuierlicher vertikaler Slider (0..100)
+# ----------------------------------------------------------------------
+
+
+class SqlSlider(QFrame):
+    """Vertikaler Slider für SQL (Squelch) 0..100."""
+
+    value_chosen = Signal(int)
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._applying_remote = False
+
+        self.setFrameShape(QFrame.NoFrame)
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(2, 2, 2, 2)
+        v.setSpacing(3)
+
+        title = QLabel("SQL")
+        title.setAlignment(Qt.AlignCenter)
+        tf = title.font()
+        tf.setBold(True)
+        tf.setPointSizeF(tf.pointSizeF() * 0.85)
+        title.setFont(tf)
+        v.addWidget(title)
+
+        spacer = QWidget()
+        spacer.setFixedHeight(18)
+        v.addWidget(spacer)
+
+        self._slider = QSlider(Qt.Vertical)
+        self._slider.setRange(0, 100)
+        self._slider.setValue(0)
+        self._slider.setMinimumHeight(130)
+        self._slider.setSingleStep(1)
+        self._slider.setPageStep(10)
+        self._slider.setTickPosition(QSlider.TicksRight)
+        self._slider.setTickInterval(10)
+        self._slider.setInvertedAppearance(False)
+        self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._slider.valueChanged.connect(self._on_slider_changed)
+
+        slider_row = QHBoxLayout()
+        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.addStretch(1)
+        slider_row.addWidget(self._slider)
+        slider_row.addStretch(1)
+        v.addLayout(slider_row, stretch=1)
+
+        self._value_label = QLabel("0")
+        self._value_label.setAlignment(Qt.AlignCenter)
+        vf = self._value_label.font()
+        vf.setPointSizeF(vf.pointSizeF() * 0.85)
+        self._value_label.setFont(vf)
+        v.addWidget(self._value_label)
+
+    def _on_slider_changed(self, value: int) -> None:
+        val = max(0, min(100, int(value)))
+        self._value_label.setText(str(val))
+        if self._applying_remote:
+            return
+        self.value_chosen.emit(val)
+
+    def set_value(self, value: Optional[int]) -> None:
+        if value is None:
+            self._value_label.setText("—")
+            return
+        val = max(0, min(100, int(value)))
+        self._applying_remote = True
+        try:
+            if val != self._slider.value():
+                self._slider.setValue(val)
+            self._value_label.setText(str(val))
+        finally:
+            self._applying_remote = False
+
+
+# ----------------------------------------------------------------------
+# MicGainSlider — vertikaler Slider MIC Gain (0..100), CAT MG
+# ----------------------------------------------------------------------
+
+
+class MicGainSlider(QFrame):
+    """Vertikaler Slider für MIC Gain (MG) 0..100 — in der DSP-Reihe."""
+
+    value_chosen = Signal(int)
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._applying_remote = False
+
+        self.setFrameShape(QFrame.NoFrame)
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(2, 2, 2, 2)
+        v.setSpacing(3)
+
+        title = QLabel("MIC")
+        title.setAlignment(Qt.AlignCenter)
+        tf = title.font()
+        tf.setBold(True)
+        tf.setPointSizeF(tf.pointSizeF() * 0.85)
+        title.setFont(tf)
+        v.addWidget(title)
+
+        spacer = QWidget()
+        spacer.setFixedHeight(18)
+        v.addWidget(spacer)
+
+        self._slider = QSlider(Qt.Vertical)
+        self._slider.setRange(0, 100)
+        self._slider.setValue(50)
+        self._slider.setMinimumHeight(130)
+        self._slider.setSingleStep(1)
+        self._slider.setPageStep(5)
+        self._slider.setTickPosition(QSlider.TicksRight)
+        self._slider.setTickInterval(10)
+        self._slider.setInvertedAppearance(False)
+        self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._slider.setToolTip("MIC Gain (MG) 0–100")
+        self._slider.valueChanged.connect(self._on_slider_changed)
+
+        slider_row = QHBoxLayout()
+        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.addStretch(1)
+        slider_row.addWidget(self._slider)
+        slider_row.addStretch(1)
+        v.addLayout(slider_row, stretch=1)
+
+        self._value_label = QLabel("50")
+        self._value_label.setAlignment(Qt.AlignCenter)
+        vf = self._value_label.font()
+        vf.setPointSizeF(vf.pointSizeF() * 0.85)
+        self._value_label.setFont(vf)
+        self._value_label.setToolTip("Anzeige 0–100 (keine Direkteingabe)")
+        v.addWidget(self._value_label)
+
+    def _on_slider_changed(self, value: int) -> None:
+        val = max(0, min(100, int(value)))
+        self._value_label.setText(str(val))
+        if self._applying_remote:
+            return
+        self.value_chosen.emit(val)
+
+    def set_value(self, value: Optional[int]) -> None:
+        if value is None:
+            self._value_label.setText("—")
+            return
+        val = max(0, min(100, int(value)))
+        self._applying_remote = True
+        try:
+            if val != self._slider.value():
+                self._slider.setValue(val)
+            self._value_label.setText(str(val))
+        finally:
+            self._applying_remote = False
+
+
+# ----------------------------------------------------------------------
 # ScaledMeterBar — gemeinsame Implementierung für S-Meter und TX-Meter
 # ----------------------------------------------------------------------
 
@@ -823,10 +1069,13 @@ class ScaledMeterBar(QWidget):
         header_font_scale: float = 1.0,
         value_font_scale: float = 0.9,
         tick_font_scale: float = 0.78,
+        flex_horizontal: bool = False,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
+        self._flex_horizontal = bool(flex_horizontal)
         self._raw_max = raw_max
+        self._fill_ref: Optional[int] = None  # PO: 121/149 statt 255 für Balken/Skala
         self._ticks: List[tuple] = list(ticks or [])
         self._warn = max(0.0, min(1.0, warn))
         self._danger = max(self._warn, min(1.0, danger))
@@ -866,6 +1115,14 @@ class ScaledMeterBar(QWidget):
         self._canvas.setMinimumHeight(bar_min_height)
         self._canvas.setMinimumWidth(scale_width + bar_width + 6)
         self._canvas.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        if self._flex_horizontal:
+            self._canvas.setMinimumWidth(52)
+            csp = self._canvas.sizePolicy()
+            csp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            self._canvas.setSizePolicy(csp)
+            sp = self.sizePolicy()
+            sp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            self.setSizePolicy(sp)
 
         self._value_label = QLabel("—")
         self._value_label.setAlignment(Qt.AlignCenter)
@@ -874,6 +1131,22 @@ class ScaledMeterBar(QWidget):
         self._value_label.setFont(vf)
         self._unit_text = unit_text
         outer.addWidget(self._value_label)
+        if self._flex_horizontal:
+            self._apply_flex_geometry()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self._flex_horizontal:
+            self._apply_flex_geometry()
+
+    def _apply_flex_geometry(self) -> None:
+        """Teilt die Canvas-Breite dynamisch zwischen Skala und Balken."""
+        cw = self._canvas.width()
+        if cw < 48:
+            return
+        self._scale_width = max(20, int(cw * 0.36))
+        self._bar_width = max(8, cw - self._scale_width - 10)
+        self._canvas.update()
 
     # ------------------------------------------------------------------
     # API
@@ -898,6 +1171,30 @@ class ScaledMeterBar(QWidget):
         # VHF/UHF, wenn die KW-Skala nicht passt — der Anwender kann so
         # ablesen, welcher Roh-Wert vom Radio tatsächlich kommt.
         self.setToolTip(f"Roh: {clamped} / {self._raw_max}\nSkala: {text}")
+        self._canvas.update()
+
+    def configure_po_band(self, *, vhf_uhf: bool) -> None:
+        """POWER-Balken: 100 W bei Rohwert 121 (KW) bzw. 50 W bei 149 (≥50 MHz)."""
+        from mapping.meter_mapping import (
+            PO_CAT_RAW_FULL_HF,
+            PO_CAT_RAW_FULL_VHF,
+            format_po_watts,
+            po_power_ticks_hf,
+            po_power_ticks_vhf,
+        )
+
+        if vhf_uhf:
+            self._fill_ref = PO_CAT_RAW_FULL_VHF
+            self._ticks = list(po_power_ticks_vhf())
+            self._value_formatter = lambda r, vf=True: format_po_watts(r, vhf_uhf=vf)
+        else:
+            self._fill_ref = PO_CAT_RAW_FULL_HF
+            self._ticks = list(po_power_ticks_hf())
+            self._value_formatter = lambda r, vf=False: format_po_watts(r, vhf_uhf=vf)
+        last = self._value
+        self._value = None
+        if last is not None:
+            self.set_value(last)
         self._canvas.update()
 
     def set_unavailable(self, reason: str) -> None:
@@ -986,9 +1283,11 @@ class _ScaledBarCanvas(QWidget):
         painter.setBrush(QColor("#1b1b1b"))
         painter.drawRoundedRect(bar_x, bar_top, bar_w, bar_height, 3, 3)
 
+        denom = p._fill_ref if p._fill_ref is not None else p._raw_max
+
         # Gefüllter Bereich (Farbverlauf gemäss warn/danger)
         if p._value is not None and p._value > 0:
-            frac = p._value / p._raw_max if p._raw_max > 0 else 0.0
+            frac = min(1.0, p._value / denom) if denom > 0 else 0.0
             filled_top = int(bar_bottom - frac * bar_height)
             grad = _bar_gradient_for(p._warn, p._danger, enabled=p._enabled)
             # Gradient-Koordinaten auf Pixel ummappen, damit die Stops mit
@@ -1018,9 +1317,9 @@ class _ScaledBarCanvas(QWidget):
         painter.setFont(scale_font)
         fm = QFontMetrics(scale_font)
         for raw_tick, tick_label in p._ticks:
-            if p._raw_max <= 0:
+            if denom <= 0:
                 continue
-            tick_frac = max(0.0, min(1.0, raw_tick / p._raw_max))
+            tick_frac = max(0.0, min(1.0, raw_tick / denom))
             ty = int(bar_bottom - tick_frac * bar_height)
             painter.drawLine(bar_x - 3, ty, bar_x - 1, ty)
             text_rect_y = ty - fm.ascent() // 2 - 1
@@ -1030,7 +1329,7 @@ class _ScaledBarCanvas(QWidget):
             )
 
 
-def make_smeter_bar() -> ScaledMeterBar:
+def make_smeter_bar(*, flex_horizontal: bool = False) -> ScaledMeterBar:
     return ScaledMeterBar(
         label_text="",
         raw_max=SMETER_RAW_MAX,
@@ -1044,10 +1343,13 @@ def make_smeter_bar() -> ScaledMeterBar:
         bar_min_height=170,
         value_font_scale=0.9,
         tick_font_scale=0.78,
+        flex_horizontal=flex_horizontal,
     )
 
 
-def make_tx_meter_bar(kind: MeterKind) -> ScaledMeterBar:
+def make_tx_meter_bar(
+    kind: MeterKind, *, flex_horizontal: bool = False
+) -> ScaledMeterBar:
     info: MeterInfo = METER_INFO[kind]
     return ScaledMeterBar(
         label_text=info.label,
@@ -1064,6 +1366,7 @@ def make_tx_meter_bar(kind: MeterKind) -> ScaledMeterBar:
         header_font_scale=0.88,
         value_font_scale=0.82,
         tick_font_scale=0.72,
+        flex_horizontal=flex_horizontal,
     )
 
 
@@ -1132,6 +1435,180 @@ class MiniLevelBar(QWidget):
 
 
 # ----------------------------------------------------------------------
+# TX-Bandbreite (CAT SH WIDTH) — symmetrischer Balken + P2-Slider
+# ----------------------------------------------------------------------
+
+
+class _SymmetricTxBwBar(QWidget):
+    """Zeigt die Bandbreite als Balken, der aus der **Mitte** wächst (50…3200 Hz Skala)."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._hz_disp = float(VISUAL_HZ_MIN)
+        self.setMinimumHeight(22)
+        self.setMaximumHeight(28)
+
+    def set_display_hz(self, hz: Optional[int]) -> None:
+        if hz is None:
+            self._hz_disp = float(VISUAL_HZ_MIN)
+        else:
+            self._hz_disp = float(
+                max(VISUAL_HZ_MIN, min(VISUAL_HZ_MAX, int(hz)))
+            )
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        w = max(1, self.width())
+        h = max(1, self.height())
+        painter.fillRect(0, 0, w, h, QColor("#1e1e1e"))
+        cx = w / 2.0
+        span = max(4.0, (w / 2.0) - 5.0)
+        t = (self._hz_disp - VISUAL_HZ_MIN) / float(VISUAL_HZ_MAX - VISUAL_HZ_MIN)
+        half = max(2.0, t * span)
+        painter.setPen(QPen(QColor("#4a4a4a"), 1))
+        painter.drawLine(int(cx), 4, int(cx), h - 4)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(70, 140, 200, 140))
+        painter.drawRect(int(cx - half), 4, int(2 * half), h - 8)
+
+
+class TxBandwidthPanel(QWidget):
+    """Überschrift, Hz-Anzeige, symmetrischer Balken, P2-Slider (0…21).
+
+    Hz-Balken und Zahl **sofort** beim Ziehen; ans Funkgerät wird erst
+    **geschrieben, wenn die Maus losgelassen** wird (kein CAT während
+    des Zugs). Mausrad/Tastatur liefern kein ``sliderReleased`` — dafür
+    ein kurzes Bündeln nach Ende der Eingabe (Timer).
+    """
+
+    p2_changed = Signal(int)
+
+    #: Fallback nach Wheel/Tastatur: ein Schreiben nach letzter Änderung.
+    _SH_IDLE_FALLBACK_MS = 160
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._mode: Optional[RxMode] = None
+        self._applying_remote = False
+        self._slider_drag = False
+        self._last_emitted_p2: Optional[int] = None
+
+        self._idle_fallback_timer = QTimer(self)
+        self._idle_fallback_timer.setSingleShot(True)
+        self._idle_fallback_timer.timeout.connect(self._emit_sh_width_if_changed)
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(5)
+
+        head = QHBoxLayout()
+        head.setSpacing(6)
+        title = QLabel("Sendebandbreite (TX)")
+        tf = title.font()
+        tf.setBold(True)
+        tf.setPointSizeF(tf.pointSizeF() * 0.85)
+        title.setFont(tf)
+        head.addWidget(title)
+        head.addStretch(1)
+        self._hz_label = QLabel("—")
+        self._hz_label.setStyleSheet("color: #c8c8c8;")
+        hf = self._hz_label.font()
+        hf.setPointSizeF(hf.pointSizeF() * 0.95)
+        self._hz_label.setFont(hf)
+        head.addWidget(self._hz_label)
+        v.addLayout(head)
+
+        self._bar = _SymmetricTxBwBar()
+        v.addWidget(self._bar)
+
+        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider.setRange(SH_P2_MIN, SH_P2_MAX)
+        self._slider.setSingleStep(1)
+        self._slider.setPageStep(1)
+        self._slider.setToolTip(
+            "SH WIDTH — CAT-Befehl SH0nn; (nn = P2 00…21, zwei Ziffern).\n"
+            "Beim Ziehen: Anzeige sofort; ans Funkgerät erst beim Loslassen.\n"
+            "Die Hz-Anzeige hängt vom Funk-Modus ab (siehe CAT-Handbuch)."
+        )
+        self._slider.valueChanged.connect(self._on_slider_value)
+        self._slider.sliderPressed.connect(self._on_slider_pressed)
+        self._slider.sliderReleased.connect(self._on_slider_released)
+        v.addWidget(self._slider)
+
+    def _on_slider_pressed(self) -> None:
+        self._slider_drag = True
+
+    def _on_slider_released(self) -> None:
+        self._slider_drag = False
+        self._idle_fallback_timer.stop()
+        self._emit_sh_width_if_changed()
+
+    def _emit_sh_width_if_changed(self) -> None:
+        if self._applying_remote:
+            return
+        p2 = sh_snap_p2_to_supported(int(self._slider.value()), self._mode)
+        if self._last_emitted_p2 == p2:
+            return
+        self._last_emitted_p2 = p2
+        self.p2_changed.emit(p2)
+
+    def _on_slider_value(self, val: int) -> None:
+        snapped = sh_snap_p2_to_supported(int(val), self._mode)
+        if snapped != int(val):
+            self._slider.blockSignals(True)
+            try:
+                self._slider.setValue(snapped)
+            finally:
+                self._slider.blockSignals(False)
+            val = snapped
+        self._refresh_face()
+        if self._applying_remote or self._slider_drag:
+            return
+        self._idle_fallback_timer.start(self._SH_IDLE_FALLBACK_MS)
+
+    def _refresh_face(self) -> None:
+        p2 = int(self._slider.value())
+        hz = sh_display_hz(self._mode, p2)
+        if hz is None:
+            self._hz_label.setText(f"P2={p2:02d}")
+            self._bar.set_display_hz(VISUAL_HZ_MIN)
+        else:
+            self._hz_label.setText(f"{hz} Hz")
+            self._bar.set_display_hz(hz)
+
+    def set_rx_mode(self, mode: Optional[RxMode]) -> None:
+        self._idle_fallback_timer.stop()
+        self._mode = mode
+        snapped = sh_snap_p2_to_supported(self._slider.value(), mode)
+        if snapped != int(self._slider.value()):
+            self._applying_remote = True
+            try:
+                self._slider.blockSignals(True)
+                self._slider.setValue(snapped)
+            finally:
+                self._slider.blockSignals(False)
+                self._applying_remote = False
+        self._last_emitted_p2 = int(self._slider.value())
+        self._refresh_face()
+
+    def set_p2(self, p2: int, *, remote: bool) -> None:
+        self._idle_fallback_timer.stop()
+        p2 = sh_snap_p2_to_supported(int(p2), self._mode)
+        self._last_emitted_p2 = p2
+        self._applying_remote = True
+        try:
+            self._slider.blockSignals(True)
+            self._slider.setValue(p2)
+        finally:
+            self._slider.blockSignals(False)
+            self._applying_remote = False
+        self._refresh_face()
+
+
+# ----------------------------------------------------------------------
 # Meter-Widget (Tab-Inhalt)
 # ----------------------------------------------------------------------
 
@@ -1141,10 +1618,11 @@ class MeterWidget(QWidget):
 
     tx_status_changed = Signal(bool)
     connection_lost = Signal()
-    #: ``(mode, frequency_a_hz, frequency_b_hz)`` — wird vom Header beobachtet.
-    #: Frequenzen können ``0`` sein, wenn der Wert beim Slow-Path-Read nicht
-    #: gelesen werden konnte (Sample lässt das Feld dann auf ``None``).
+    #: ``(mode, frequency_a_hz, frequency_b_hz)`` — VFO/Modes vom Poller fürs Header/Profil.
     rx_info_changed = Signal(object, int, int)
+    #: Wird ausgestellt, wenn der Slow-Path einen anderen MIC-Gain als zuletzt
+    #: bekannt vom Funkgerät gelesen hat (Drehknopf am TRX).
+    mic_gain_synced_from_radio = Signal(int)
 
     SIDEBAR_MIN_WIDTH = 290
     SIDEBAR_MAX_WIDTH = 380
@@ -1154,9 +1632,12 @@ class MeterWidget(QWidget):
         serial_cat: SerialCAT,
         tx_interval_ms: int = DEFAULT_INTERVAL_TX_MS,
         rx_interval_ms: int = DEFAULT_INTERVAL_RX_MS,
+        *,
+        integrated_main_layout: bool = False,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
+        self._integrated_main_layout = bool(integrated_main_layout)
         self._cat = serial_cat
         # Hochlevel-Wrapper für DSP-Writes (NB / DNR / DNF). Wird beim
         # Schreiben benutzt; ``SerialCAT`` ist über RLock threadsafe,
@@ -1174,9 +1655,24 @@ class MeterWidget(QWidget):
         #: die SWR-Anzeige auf VHF/UHF zu unterdrücken (siehe
         #: :meth:`_apply_swr_value`).
         self._last_vfo_a_hz: Optional[int] = None
+        #: POWER-Meter: letzte gewählte Skala (50 W vs. 100 W) nach VFO-A.
+        self._po_band_vhf: Optional[bool] = None
+        #: Zuletzt per Signal ``mic_gain_synced_from_radio`` gemeldeter Wert —
+        #: verhindert Spam bei jedem RX-Sample mit unverändertem ``MG;``.
+        self._last_rx_mic_gain: Optional[int] = None
+        #: Letzter Modus für SH-WIDTH-Anzeige (SSB/CW/DATA/RTTY vs. FM …).
+        self._last_mode_for_bw: Optional[RxMode] = None
 
-        self.setMinimumWidth(self.SIDEBAR_MIN_WIDTH)
-        self.setMaximumWidth(self.SIDEBAR_MAX_WIDTH)
+        if self._integrated_main_layout:
+            self.setMinimumWidth(0)
+            self.setMaximumWidth(16777215)
+            sp = self.sizePolicy()
+            sp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            sp.setVerticalPolicy(QSizePolicy.Policy.Expanding)
+            self.setSizePolicy(sp)
+        else:
+            self.setMinimumWidth(self.SIDEBAR_MIN_WIDTH)
+            self.setMaximumWidth(self.SIDEBAR_MAX_WIDTH)
         self._build_ui()
         self._connect_dsp_signals()
 
@@ -1187,34 +1683,44 @@ class MeterWidget(QWidget):
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 8, 8, 8)
-        outer.setSpacing(6)
+        outer.setSpacing(8)
 
-        # --- Kopf: TX-LED + Klartext ------------------------------------
-        head_frame = QFrame()
-        head_frame.setFrameShape(QFrame.StyledPanel)
-        head_layout = QHBoxLayout(head_frame)
-        head_layout.setContentsMargins(6, 4, 6, 4)
-        head_layout.setSpacing(6)
-        outer.addWidget(head_frame)
+        # --- Kopf: TX-LED + Klartext (Seitenleiste) bzw. nur die Widgets
+        # (integriert — das Hauptfenster setzt sie oben rechts neben VFO).
+        if self._integrated_main_layout:
+            self.tx_led = TxIndicator(self)
+            self.tx_label = QLabel("RX", self)
+            tf = self.tx_label.font()
+            tf.setBold(True)
+            self.tx_label.setFont(tf)
+            self.tx_label.setMinimumWidth(34)
+        else:
+            head_frame = QFrame()
+            head_frame.setFrameShape(QFrame.StyledPanel)
+            head_layout = QHBoxLayout(head_frame)
+            head_layout.setContentsMargins(6, 4, 6, 4)
+            head_layout.setSpacing(6)
+            outer.addWidget(head_frame)
 
-        head_layout.addStretch(1)
-        self.tx_led = TxIndicator()
-        head_layout.addWidget(self.tx_led)
-        self.tx_label = QLabel("RX")
-        font = self.tx_label.font()
-        font.setBold(True)
-        self.tx_label.setFont(font)
-        self.tx_label.setMinimumWidth(34)
-        head_layout.addWidget(self.tx_label)
-        head_layout.addStretch(1)
+            head_layout.addStretch(1)
+            self.tx_led = TxIndicator()
+            head_layout.addWidget(self.tx_led)
+            self.tx_label = QLabel("RX")
+            font = self.tx_label.font()
+            font.setBold(True)
+            self.tx_label.setFont(font)
+            self.tx_label.setMinimumWidth(34)
+            head_layout.addWidget(self.tx_label)
+            head_layout.addStretch(1)
 
-        # --- S-Meter (links) + DSP-Slider (rechts daneben) --------------
-        # Yaesu-Terminologie: Digital Noise Reduction (NR-Kommando) und
-        # Digital Notch Filter (BC-Kommando = Auto-Notch). Die drei
-        # Slider sind interaktiv — Klick auf die LED schaltet on/off,
-        # Slider-Zug ändert den Pegel.
+        # --- S-Meter + DSP-Slider ---------------------------------------
         smeter_frame = QFrame()
         smeter_frame.setFrameShape(QFrame.StyledPanel)
+        if self._integrated_main_layout:
+            sfp = smeter_frame.sizePolicy()
+            sfp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            sfp.setVerticalPolicy(QSizePolicy.Policy.Expanding)
+            smeter_frame.setSizePolicy(sfp)
         smeter_v = QVBoxLayout(smeter_frame)
         smeter_v.setContentsMargins(6, 6, 6, 6)
         smeter_v.setSpacing(3)
@@ -1222,13 +1728,9 @@ class MeterWidget(QWidget):
         smeter_row = QHBoxLayout()
         smeter_row.setContentsMargins(0, 0, 0, 0)
         smeter_row.setSpacing(6)
-        smeter_row.addStretch(1)
+        if not self._integrated_main_layout:
+            smeter_row.addStretch(1)
 
-        # Eigene Spalte für das S-Meter, damit der "S-Meter"-Header genau
-        # über dem Balken sitzt (und nicht — wie bei einem gemeinsamen
-        # zentrierten Label oberhalb der Reihe — irgendwo zwischen
-        # Balken und Slidern landet). Die vier DSP-Spalten bringen ihren
-        # Header selber mit, alles steht so auf einer Linie.
         smeter_column = QVBoxLayout()
         smeter_column.setContentsMargins(0, 0, 0, 0)
         smeter_column.setSpacing(3)
@@ -1238,28 +1740,55 @@ class MeterWidget(QWidget):
         sf.setBold(True)
         smeter_title.setFont(sf)
         smeter_column.addWidget(smeter_title)
-        self.smeter_bar = make_smeter_bar()
+        self.smeter_bar = make_smeter_bar(
+            flex_horizontal=self._integrated_main_layout,
+        )
         smeter_column.addWidget(self.smeter_bar, stretch=1, alignment=Qt.AlignHCenter)
-        smeter_row.addLayout(smeter_column, stretch=0)
+        if self._integrated_main_layout:
+            # Etwas mehr horizontaler Anteil als ein einzelner Slider — Balken
+            # bleibt zentriert, Leerraum verteilt sich gleichmäßig.
+            smeter_row.addLayout(smeter_column, stretch=2)
+        else:
+            smeter_row.addLayout(smeter_column, stretch=0)
 
-        # DSP-Slider rechts neben dem S-Meter — NB (0..10), DNF (on/off),
-        # DNR (1..15), AGC (4 diskrete Positionen). DNF hat keinen Pegel
-        # im FT-991A, deshalb ohne Slider, aber gleicher Spaltenaufbau.
-        # AGC ist ein diskreter Modus-Schalter (AUTO/FAST/MID/SLOW).
-        self.nb_slider = DspSlider("NB", supports_level=True,
-                                   level_min=0, level_max=10)
+        self.nb_slider = DspSlider(
+            "NB",
+            supports_level=True,
+            level_min=0,
+            level_max=10,
+            tick_interval=1,
+        )
         self.an_slider = DspSlider("DNF", supports_level=False)
-        self.nr_slider = DspSlider("DNR", supports_level=True,
-                                   level_min=1, level_max=15)
+        self.nr_slider = DspSlider(
+            "DNR",
+            supports_level=True,
+            level_min=1,
+            level_max=15,
+            tick_interval=1,
+        )
         self.agc_slider = AgcSlider()
-        for s in (self.nb_slider, self.an_slider, self.nr_slider, self.agc_slider):
-            smeter_row.addWidget(s)
-        smeter_row.addStretch(1)
+        self.sql_slider = SqlSlider()
+        self.mic_gain_slider = MicGainSlider()
+        for s in (
+            self.sql_slider,
+            self.nb_slider,
+            self.nr_slider,
+            self.agc_slider,
+            self.mic_gain_slider,
+            self.an_slider,
+        ):
+            if self._integrated_main_layout:
+                pol = s.sizePolicy()
+                pol.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+                s.setSizePolicy(pol)
+                smeter_row.addWidget(s, stretch=1)
+            else:
+                smeter_row.addWidget(s)
+        if not self._integrated_main_layout:
+            smeter_row.addStretch(1)
         smeter_v.addLayout(smeter_row, stretch=1)
 
-        outer.addWidget(smeter_frame, stretch=0)
-
-        # --- AF / RF-Gain (Mini-Bars) -----------------------------------
+        # --- AF / RF-Gain -------------------------------------------------
         gain_frame = QFrame()
         gain_frame.setFrameShape(QFrame.StyledPanel)
         gain_layout = QVBoxLayout(gain_frame)
@@ -1268,27 +1797,39 @@ class MeterWidget(QWidget):
 
         self.af_gain_bar = MiniLevelBar("AF", 255)
         self.rf_gain_bar = MiniLevelBar("RF", 255)
-        self.sq_gain_bar = MiniLevelBar("SQL", 100)
+        if self._integrated_main_layout:
+            for gb in (self.af_gain_bar, self.rf_gain_bar):
+                gp = gb.sizePolicy()
+                gp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+                gb.setSizePolicy(gp)
         gain_layout.addWidget(self.af_gain_bar)
         gain_layout.addWidget(self.rf_gain_bar)
-        gain_layout.addWidget(self.sq_gain_bar)
 
-        outer.addWidget(gain_frame)
+        # --- Sendebandbreite (SH WIDTH, unter AF/RF) ---------------------
+        self._tx_bw_frame = QFrame()
+        self._tx_bw_frame.setFrameShape(QFrame.StyledPanel)
+        self._tx_bw_frame.hide()
+        tx_bw_outer = QVBoxLayout(self._tx_bw_frame)
+        tx_bw_outer.setContentsMargins(6, 4, 6, 4)
+        tx_bw_outer.setSpacing(4)
+        self._tx_bw_panel = TxBandwidthPanel()
+        tx_bw_outer.addWidget(self._tx_bw_panel)
+        self._tx_bw_panel.p2_changed.connect(self._on_tx_bandwidth_p2_chosen)
 
-        # --- TX-Bars (kleiner, hochkant, unten) -------------------------
+        # --- TX-Bars ------------------------------------------------------
         bars_frame = QFrame()
         bars_frame.setFrameShape(QFrame.StyledPanel)
         bars_outer = QVBoxLayout(bars_frame)
         bars_outer.setContentsMargins(6, 4, 6, 4)
         bars_outer.setSpacing(3)
 
-        tx_label = QLabel("TX-Meter")
-        tx_label.setAlignment(Qt.AlignCenter)
-        tlf = tx_label.font()
+        tx_meters_heading = QLabel("TX-Meter")
+        tx_meters_heading.setAlignment(Qt.AlignCenter)
+        tlf = tx_meters_heading.font()
         tlf.setBold(True)
         tlf.setPointSizeF(tlf.pointSizeF() * 0.85)
-        tx_label.setFont(tlf)
-        bars_outer.addWidget(tx_label)
+        tx_meters_heading.setFont(tlf)
+        bars_outer.addWidget(tx_meters_heading)
 
         bars_layout = QHBoxLayout()
         bars_layout.setContentsMargins(0, 0, 0, 0)
@@ -1296,18 +1837,62 @@ class MeterWidget(QWidget):
 
         self._bars: Dict[MeterKind, ScaledMeterBar] = {}
         for kind, _info in meter_choices():
-            bar = make_tx_meter_bar(kind)
+            bar = make_tx_meter_bar(
+                kind, flex_horizontal=self._integrated_main_layout
+            )
             self._bars[kind] = bar
             bars_layout.addWidget(bar, stretch=1)
+        self._sync_po_meter_scale()
         bars_outer.addLayout(bars_layout, stretch=1)
 
-        outer.addWidget(bars_frame, stretch=1)
+        if self._integrated_main_layout:
+            gfp = gain_frame.sizePolicy()
+            gfp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            gain_frame.setSizePolicy(gfp)
+            tbfp = self._tx_bw_frame.sizePolicy()
+            tbfp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            self._tx_bw_frame.setSizePolicy(tbfp)
+            bfp = bars_frame.sizePolicy()
+            bfp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            bfp.setVerticalPolicy(QSizePolicy.Policy.Expanding)
+            bars_frame.setSizePolicy(bfp)
 
-        # --- Statuszeile ------------------------------------------------
+        if self._integrated_main_layout:
+            mid_row = QHBoxLayout()
+            mid_row.setSpacing(8)
+            mid_row.addWidget(smeter_frame, stretch=1)
+            meter_right = QWidget()
+            mrp = meter_right.sizePolicy()
+            mrp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            meter_right.setSizePolicy(mrp)
+            rv = QVBoxLayout(meter_right)
+            rv.setContentsMargins(0, 0, 0, 0)
+            rv.setSpacing(8)
+            rv.addWidget(gain_frame)
+            rv.addWidget(self._tx_bw_frame)
+            rv.addWidget(bars_frame, stretch=1)
+            mid_row.addWidget(meter_right, stretch=1)
+            outer.addLayout(mid_row, stretch=1)
+        else:
+            outer.addWidget(smeter_frame, stretch=0)
+            outer.addWidget(gain_frame)
+            outer.addWidget(self._tx_bw_frame)
+            outer.addWidget(bars_frame, stretch=1)
+
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("color: gray; font-size: 10px;")
         outer.addWidget(self.status_label)
+        # Leeres Label würde sonst eine Leerzeile reservieren → zu großer Abstand
+        # zur unteren Hauptfenster-Leiste.
+        self.status_label.hide()
+
+    def apply_dsp_mode_relevance(self, mode_group: str) -> None:
+        """Blendet NB/DNR/DNF aus, wenn die Modusgruppe sie nicht verwendet (FM, C4FM)."""
+        show = mode_group_supports_dnr_dnf(mode_group)
+        self.nb_slider.setVisible(show)
+        self.nr_slider.setVisible(show)
+        self.an_slider.setVisible(show)
 
     # ------------------------------------------------------------------
     # Lebenszyklus des Pollers
@@ -1376,33 +1961,82 @@ class MeterWidget(QWidget):
             self.tx_status_changed.emit(False)
         self._last_tx = None
 
+    def pause_polling(self) -> None:
+        """Pausiert den Poller, *ohne* den Thread zu zerstoeren.
+
+        Setzt nur das ``_active``-Flag im Worker — ein laufender Tick
+        beendet sich nach dem aktuellen Roundtrip von selbst. Der naechste
+        ``resume_polling`` startet die Schleife wieder ohne Thread-Recreate.
+
+        Verwendung: kurzfristige CAT-Vollbandbreite-Faelle wie das
+        Einlesen aller Speicherkanaele.
+        """
+        if self._poller is not None:
+            QMetaObject.invokeMethod(self._poller, "stop", Qt.QueuedConnection)
+
+    def resume_polling(self) -> None:
+        """Setzt einen mit :meth:`pause_polling` pausierten Poller fort."""
+        if self._poller is not None:
+            QMetaObject.invokeMethod(self._poller, "start", Qt.QueuedConnection)
+
+    def ensure_polling(self) -> None:
+        """Poller fortsetzen oder neu starten (z. B. nach Speicherkanal-Editor)."""
+        if self._poller is not None:
+            self.resume_polling()
+        elif self._cat.is_connected():
+            self.start_polling()
+
     def on_connection_changed(self, connected: bool) -> None:
+        self._last_rx_mic_gain = None
+        if not connected:
+            self._last_mode_for_bw = None
         if connected:
             self.start_polling()
         else:
             self.stop_polling()
+        self.mic_gain_slider.setEnabled(connected)
+        self._sync_tx_bw_frame_visibility()
 
     # ------------------------------------------------------------------
     # Signal-Handler vom Poller
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # POWER-Skala (bandabhängig)
+    # ------------------------------------------------------------------
+
+    def _sync_po_meter_scale(self) -> None:
+        """121/100 W (KW) vs. 149/50 W je nach VFO-A (≥ 50 MHz wie SWR-Logik)."""
+        want_vhf = po_use_50w_scale(self._last_vfo_a_hz)
+        if self._po_band_vhf == want_vhf:
+            return
+        self._po_band_vhf = want_vhf
+        self._bars[MeterKind.PO].configure_po_band(vhf_uhf=want_vhf)
+
     def _on_tx_sample(self, sample: object) -> None:
         if not isinstance(sample, TxMeterSample):
             return
+        self._sync_po_meter_scale()
         transmitting = sample.transmitting
         self.tx_led.set_active(transmitting)
         self.tx_label.setText("TX" if transmitting else "RX")
 
-        # TX-Bars im RX-Modus gedimmt darstellen, in TX volle Farbe
-        for kind, value in sample.values.items():
-            bar = self._bars.get(kind)
-            if bar is None:
+        # Hinweis: Das ``values``-Dict kann unvollstaendig sein, wenn
+        # einzelne ``RMn;``-Reads beim Senden gescheitert sind (siehe
+        # MeterPoller._poll_tx). Wir setzen ``enabled_visual`` deswegen
+        # fuer **alle** TX-Bars passend zum TX/RX-Status, und schreiben
+        # ``set_value`` nur fuer die tatsaechlich vorhandenen Werte --
+        # so bleiben fehlende Bars optisch korrekt eingefaerbt und
+        # behalten ihren letzten Wert, bis der naechste Read klappt.
+        for kind, bar in self._bars.items():
+            bar.set_enabled_visual(transmitting)
+            if kind not in sample.values:
                 continue
+            value = sample.values[kind]
             if kind == MeterKind.SWR:
                 self._apply_swr_value(bar, value)
             else:
                 bar.set_value(value)
-            bar.set_enabled_visual(transmitting)
 
         # S-Meter im TX gedimmt darstellen
         self.smeter_bar.set_enabled_visual(not transmitting)
@@ -1419,13 +2053,14 @@ class MeterWidget(QWidget):
         # VHF/UHF die SWR-Anzeige zu unterdrücken.
         if sample.frequency_hz is not None:
             self._last_vfo_a_hz = sample.frequency_hz
+        self._sync_po_meter_scale()
         # S-Meter immer aktualisieren — ScaledMeterBar formatiert intern.
         self.smeter_bar.set_value(sample.smeter)
 
         # Slow-Path-Felder nur anwenden, wenn vom Poller mitgeschickt
         if sample.squelch is not None:
             self.smeter_bar.set_squelch(sample.squelch)
-            self.sq_gain_bar.set_value(sample.squelch)
+            self.sql_slider.set_value(sample.squelch)
         if sample.af_gain is not None:
             self.af_gain_bar.set_value(sample.af_gain)
         if sample.rf_gain is not None:
@@ -1442,6 +2077,19 @@ class MeterWidget(QWidget):
             self.nr_slider.set_level(level)
         if sample.auto_notch is not None:
             self.an_slider.set_state(sample.auto_notch)
+        if sample.mic_gain is not None:
+            self.mic_gain_slider.set_value(sample.mic_gain)
+            mg = int(sample.mic_gain)
+            if self._last_rx_mic_gain != mg:
+                self._last_rx_mic_gain = mg
+                self.mic_gain_synced_from_radio.emit(mg)
+
+        if sample.mode is not None:
+            self._last_mode_for_bw = sample.mode
+        self._tx_bw_panel.set_rx_mode(self._last_mode_for_bw)
+        if sample.tx_bandwidth_sh is not None:
+            self._tx_bw_panel.set_p2(sample.tx_bandwidth_sh, remote=True)
+        self._sync_tx_bw_frame_visibility()
 
         # Mode + Frequenzen an's Header weiterreichen
         if (
@@ -1455,9 +2103,28 @@ class MeterWidget(QWidget):
                 sample.frequency_b_hz or 0,
             )
 
+    def _sync_tx_bw_frame_visibility(self) -> None:
+        if not self._cat.is_connected():
+            self._tx_bw_frame.hide()
+            self._tx_bw_panel.setEnabled(False)
+            return
+        self._tx_bw_panel.setEnabled(True)
+        if sh_bandwidth_visible_for_mode(self._last_mode_for_bw):
+            self._tx_bw_frame.show()
+        else:
+            self._tx_bw_frame.hide()
+
+    def _on_tx_bandwidth_p2_chosen(self, p2: int) -> None:
+        val = int(p2)
+        self._safe_write(
+            lambda: self._ft.write_tx_bandwidth_sh(val),
+            where="SH WIDTH",
+        )
+
     def _on_poller_error(self, message: str) -> None:
         self.status_label.setStyleSheet("color: #c62828;")
         self.status_label.setText(f"Meter-Fehler: {message}")
+        self.status_label.show()
 
     # ------------------------------------------------------------------
     # SWR-Sonderbehandlung VHF/UHF
@@ -1496,6 +2163,8 @@ class MeterWidget(QWidget):
         self.nr_slider.toggled.connect(self._on_dnr_toggled)
         self.nr_slider.level_changed.connect(self._on_dnr_level_changed)
         self.agc_slider.mode_chosen.connect(self._on_agc_chosen)
+        self.sql_slider.value_chosen.connect(self._on_sql_chosen)
+        self.mic_gain_slider.value_chosen.connect(self._on_mic_gain_chosen)
 
     def _safe_write(self, writer, *, where: str) -> None:
         """Führt einen DSP-Write aus und fängt Fehler still in der Statuszeile."""
@@ -1508,9 +2177,11 @@ class MeterWidget(QWidget):
         except (CatError, OSError) as exc:
             self.status_label.setStyleSheet("color: #c62828;")
             self.status_label.setText(f"{where}: {exc}")
+            self.status_label.show()
         except Exception:  # noqa: BLE001
             self.status_label.setStyleSheet("color: #c62828;")
             self.status_label.setText(f"{where}: unerwarteter Fehler")
+            self.status_label.show()
             traceback.print_exc()
 
     def _on_nb_toggled(self, on: bool) -> None:
@@ -1539,6 +2210,18 @@ class MeterWidget(QWidget):
         self._safe_write(lambda: self._ft.write_agc(mode),
                          where="AGC schreiben")
 
+    def _on_sql_chosen(self, value: int) -> None:
+        self._safe_write(
+            lambda: self._ft.write_squelch(value),
+            where="SQL schreiben",
+        )
+
+    def _on_mic_gain_chosen(self, value: int) -> None:
+        self._safe_write(
+            lambda: self._ft.set_mic_gain(int(value)),
+            where="MIC Gain schreiben",
+        )
+
     # ------------------------------------------------------------------
     # Helfer
     # ------------------------------------------------------------------
@@ -1550,8 +2233,11 @@ class MeterWidget(QWidget):
         self.smeter_bar.reset()
         self.af_gain_bar.set_value(None)
         self.rf_gain_bar.set_value(None)
-        self.sq_gain_bar.set_value(None)
+        self.sql_slider.set_value(None)
+        self.mic_gain_slider.set_value(None)
         self.agc_slider.set_mode(None)
         self.nb_slider.set_state(None)
         self.nr_slider.set_state(None)
         self.an_slider.set_state(None)
+        self.status_label.clear()
+        self.status_label.hide()

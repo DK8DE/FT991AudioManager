@@ -24,7 +24,13 @@ from mapping.rx_mapping import (
     format_nr_query,
     format_rf_gain_query,
     format_squelch_query,
+    format_squelch_set,
+    ALL_OPERATING_MODES,
+    coarse_mode_group_for,
     mode_group_for,
+    mode_group_supports_dnr_dnf,
+    normalize_profile_mode_group,
+    rx_mode_from_selection,
     parse_af_gain_response,
     parse_agc_response,
     parse_auto_notch_response,
@@ -90,6 +96,25 @@ class ModeMappingTest(unittest.TestCase):
         self.assertEqual(mode_group_for(RxMode.C4FM), "C4FM")
         self.assertEqual(mode_group_for(RxMode.UNKNOWN), "OTHER")
 
+    def test_all_operating_modes_covers_md_1_to_e(self) -> None:
+        self.assertEqual(len(ALL_OPERATING_MODES), 14)
+        self.assertEqual(ALL_OPERATING_MODES[0], RxMode.LSB)
+        self.assertEqual(ALL_OPERATING_MODES[-1], RxMode.C4FM)
+
+    def test_rx_mode_from_selection(self) -> None:
+        self.assertEqual(rx_mode_from_selection("FM-N"), RxMode.FM_N)
+        self.assertEqual(rx_mode_from_selection("SSB"), RxMode.USB)
+        self.assertEqual(normalize_profile_mode_group("SSB"), "USB")
+        self.assertEqual(coarse_mode_group_for("FM-N"), "FM")
+
+    def test_dnr_dnf_mode_groups(self) -> None:
+        # Steuert auch Sichtbarkeit des NB-Sliders (mit DNR/DNF gleich FM/C4FM).
+        self.assertFalse(mode_group_supports_dnr_dnf("FM"))
+        self.assertFalse(mode_group_supports_dnr_dnf("C4FM"))
+        self.assertTrue(mode_group_supports_dnr_dnf("SSB"))
+        self.assertTrue(mode_group_supports_dnr_dnf("AM"))
+        self.assertTrue(mode_group_supports_dnr_dnf("DATA"))
+
 
 class FrequencyMappingTest(unittest.TestCase):
     def test_query(self) -> None:
@@ -122,6 +147,8 @@ class FrequencyMappingTest(unittest.TestCase):
 class LevelMappingTest(unittest.TestCase):
     def test_squelch(self) -> None:
         self.assertEqual(format_squelch_query(), "SQ0;")
+        self.assertEqual(format_squelch_set(50), "SQ0050;")
+        self.assertEqual(format_squelch_set(999), "SQ0100;")
         self.assertEqual(parse_squelch_response("SQ0050;"), 50)
         self.assertEqual(parse_squelch_response("SQ0000;"), 0)
         self.assertEqual(parse_squelch_response("SQ0100;"), 100)
@@ -275,6 +302,8 @@ class _RxFakeRadio(SerialCAT):
 
     def send_command(self, command: str, *, read_response: bool = True):  # type: ignore[override]
         self.sent.append(command)
+        if not read_response:
+            return ""
         try:
             return self.responses[command]
         except KeyError as exc:
@@ -288,6 +317,12 @@ class FT991CatRxTest(unittest.TestCase):
         self.assertEqual(ft.read_squelch(), 30)
         self.assertEqual(ft.read_af_gain(), 200)
         self.assertEqual(ft.read_rf_gain(), 255)
+
+    def test_write_squelch(self) -> None:
+        radio = _RxFakeRadio()
+        ft = FT991CAT(radio)
+        ft.write_squelch(65)
+        self.assertIn("SQ0065;", radio.sent)
 
     def test_dsp_status(self) -> None:
         ft = FT991CAT(_RxFakeRadio())

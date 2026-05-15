@@ -104,6 +104,22 @@ class WriteEqDiffTest(unittest.TestCase):
         self.assertEqual(written, 1)
         self.assertEqual(cat.writes[0][0], PROCESSOR_EQ_MENUS.band3_level)
 
+    def test_off_band_normalizes_stale_level_in_diff(self) -> None:
+        """Freq OFF mit altem Level: Schreibplan setzt Freq 00 und Level +00."""
+        cat = _FakeSerialCAT()
+        ft = FT991CAT(cat)
+        baseline = _make_eq(level_mid=5)
+        new = EQSettings(
+            eq1=baseline.eq1,
+            eq2=EQBand(freq="OFF", level=8, bw=5),
+            eq3=baseline.eq3,
+        )
+        written = ft.write_eq(new, NORMAL_EQ_MENUS, baseline=baseline)
+        self.assertEqual(written, 2)
+        payloads = dict(cat.writes)
+        self.assertEqual(payloads[NORMAL_EQ_MENUS.band2_freq], "00")
+        self.assertEqual(payloads[NORMAL_EQ_MENUS.band2_level], "+00")
+
 
 # ----------------------------------------------------------------------
 # write_extended_for_mode mit baseline

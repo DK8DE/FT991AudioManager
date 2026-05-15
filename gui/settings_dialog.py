@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 from cat import (
     CatError,
     CatTimeoutError,
+    FT991_RADIO_IDS,
     FT991A_RADIO_ID,
     FT991CAT,
     PortInfo,
@@ -197,7 +198,7 @@ class ConnectionSettingsDialog(QDialog):
         self.poll_tx_spin.setSuffix(" ms")
         self.poll_tx_spin.setValue(self._settings.polling.tx_interval_ms)
         self.poll_tx_spin.setToolTip(
-            "Wie oft die Meter (ALC/COMP/PO/SWR) während TX abgefragt werden."
+            "Wie oft die Meter (ALC/COMP/POWER/SWR) während TX abgefragt werden."
         )
         self.poll_tx_spin.valueChanged.connect(self._on_tx_spin_changed)
         grid.addWidget(self.poll_tx_spin, 0, 1)
@@ -218,14 +219,15 @@ class ConnectionSettingsDialog(QDialog):
         return box
 
     def _build_profile_view_group(self) -> QGroupBox:
-        box = QGroupBox("Profil-Anzeige")
+        box = QGroupBox("EQ-Profil-Anzeige")
         outer = QVBoxLayout(box)
         outer.setContentsMargins(10, 14, 10, 10)
         outer.setSpacing(6)
 
         outer.addWidget(
             QLabel(
-                "Stellt ein, welche Bereiche im Profil-Tab sichtbar sind. "
+                "Stellt ein, welche Bereiche im Equalizer-Fenster (EQ-Profil) "
+                "sichtbar sind. "
                 "Hilfreich, um die Oberfläche kompakter zu halten, wenn "
                 "bestimmte Werte selten verändert werden."
             )
@@ -235,7 +237,7 @@ class ConnectionSettingsDialog(QDialog):
             "„Erweiterte Einstellungen“ bei SSB ausblenden"
         )
         self.hide_extended_ssb_check.setToolTip(
-            "Versteckt im Profil-Tab die Sektion mit SSB Low-/High-Cut, "
+            "Versteckt im Equalizer (EQ-Profil) die Sektion mit SSB Low-/High-Cut, "
             "Mic-Select und Out-Level — die bleibt dann nur in den anderen "
             "Modi (AM/FM/DATA/RTTY) sichtbar."
         )
@@ -349,9 +351,10 @@ class ConnectionSettingsDialog(QDialog):
                 f"FT-991/FT-991A erkannt.\nAntwort: {identity.raw}",
             )
         elif identity.radio_id is not None:
+            expected_str = " oder ".join(f"ID{rid};" for rid in FT991_RADIO_IDS)
             self._set_status_warn(
                 f"Antwort {identity.raw.strip()} — kein FT-991(A), "
-                f"erwartet ID{FT991A_RADIO_ID};"
+                f"erwartet {expected_str}"
             )
             QMessageBox.warning(
                 self,
@@ -359,7 +362,7 @@ class ConnectionSettingsDialog(QDialog):
                 (
                     f"Das Gerät hat geantwortet, ist aber kein FT-991(A).\n\n"
                     f"Antwort: {identity.raw}\n"
-                    f"Erwartet: ID{FT991A_RADIO_ID};"
+                    f"Erwartet: {expected_str}"
                 ),
             )
         else:

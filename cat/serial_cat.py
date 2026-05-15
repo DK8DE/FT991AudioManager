@@ -26,7 +26,13 @@ from typing import List, Optional
 import serial
 import serial.tools.list_ports
 
-from .cat_errors import CatConnectionLostError, CatNotConnectedError, CatTimeoutError
+from .cat_errors import (
+    CatCommandUnsupportedError,
+    CatConnectionLostError,
+    CatNotConnectedError,
+    CatProtocolError,
+    CatTimeoutError,
+)
 from .cat_log import CatLog
 
 
@@ -198,7 +204,13 @@ class SerialCAT:
     # Kommandos
     # ------------------------------------------------------------------
 
-    def send_command(self, command: str, *, read_response: bool = True) -> str:
+    def send_command(
+        self,
+        command: str,
+        *,
+        read_response: bool = True,
+        expected_prefix: Optional[str] = None,
+    ) -> str:
         """Sendet ein CAT-Kommando.
 
         - ``command`` darf mit oder ohne ``;`` enden; das Semikolon wird bei
@@ -206,6 +218,12 @@ class SerialCAT:
         - Wenn ``read_response`` ``True`` ist, wird bis zum nächsten ``;``
           gelesen und der gesamte String (inkl. ``;``) zurückgegeben.
         - Bei ``read_response=False`` wird ein leerer String geliefert.
+        - ``expected_prefix`` bestimmt, welcher Antwort-Präfix vom Stale-
+          Filter als „passend" akzeptiert wird. Wenn ``None`` (Default),
+          wird ``command.rstrip(';')`` verwendet. Für Befehle, deren Echo
+          vom angefragten Wert abweicht (z. B. ``MTnnn;`` → das FT-991
+          echo't die *aktive* Channel-Nr statt der angefragten), kann der
+          Aufrufer einen lockeren Präfix-Match wie ``"MT"`` setzen.
 
         Wirft :class:`CatNotConnectedError`, wenn keine Verbindung offen ist,
         :class:`CatConnectionLostError`, wenn die Verbindung während des
@@ -256,8 +274,12 @@ class SerialCAT:
             if not read_response:
                 return ""
 
+            effective_prefix = (
+                expected_prefix if expected_prefix is not None
+                else command.rstrip(";")
+            )
             try:
-                response = self._read_until_terminator(ser)
+                response = self._read_with_stale_discard(ser, effective_prefix)
             except CatTimeoutError:
                 if self._log is not None:
                     self._log.log_error(
@@ -272,7 +294,69 @@ class SerialCAT:
 
             if self._log is not None:
                 self._log.log_rx(response)
+
+            # Yaesus generische Fehlerantwort: das Geraet kennt diesen
+            # Befehl nicht (z. B. NR0; / BC0; auf einem FT-991 ohne A).
+            # Wir werfen eine spezielle Exception, damit hoehere Schichten
+            # den Befehl gezielt fuer die Sitzung deaktivieren koennen.
+            if response == "?;":
+                raise CatCommandUnsupportedError(
+                    f"Funkgeraet kennt Befehl {command!r} nicht "
+                    f"(Antwort '?;')"
+                )
             return response
+
+    #: Maximale Anzahl an Frames, die wir vor einer passenden Antwort
+    #: schlucken, bevor wir aufgeben. 5 ist mehr als genug -- in der
+    #: Praxis sind hoechstens 1-2 unaufgeforderte AI-Frames hintereinander
+    #: zu sehen.
+    _MAX_STALE_DISCARDS = 5
+
+    def _read_with_stale_discard(
+        self, ser: "serial.Serial", expected_prefix: str
+    ) -> str:
+        """Liest die naechste Antwort, die zum Anfrage-Praefix passt.
+
+        Yaesu-Funkgeraete koennen unaufgeforderte ``AI``-Frames senden
+        (Auto Information): jede Frontpanel-Aktion wie NB-Tastendruck,
+        VFO-Aenderung, PTT etc. erzeugt sofort einen Statuspuls auf der
+        seriellen Leitung. Ist dieser Puls schon im Transit, wenn wir
+        ``reset_input_buffer`` aufrufen, landet er nach unserem
+        ``write`` zuerst im Puffer und wir wuerden ihn faelschlich als
+        Antwort auf unsere Anfrage interpretieren -- mit Off-by-N-
+        Kaskaden bei den folgenden Reads.
+
+        Strategie: Wir lesen so lange Frames vom Port, bis einer mit
+        dem erwarteten Praefix beginnt. Vorherige Frames werden im
+        CAT-Log als "Stale-Frame" markiert und verworfen. Yaesus
+        Fehlerantwort ``?;`` (Command not recognized) reichen wir
+        unveraendert an den Caller weiter, damit der hoehere Parser
+        daraus seinen Protokollfehler bilden kann.
+        """
+        discards = 0
+        while True:
+            frame = self._read_until_terminator(ser)
+            if frame.startswith(expected_prefix):
+                return frame
+            if frame == "?;":
+                # Yaesus generische "command not understood"-Antwort
+                # gehoert nicht zum erwarteten Praefix, ist aber auch
+                # kein Stale-Frame -- wir reichen sie durch.
+                return frame
+            if self._log is not None:
+                self._log.log_warn(
+                    f"CAT: verworfener Stale-Frame {frame!r} "
+                    f"(erwartete Antwort fuer {expected_prefix!r})"
+                )
+            discards += 1
+            if discards >= self._MAX_STALE_DISCARDS:
+                # Wir sind aus dem Tritt geraten -- erstmal aufgeben und
+                # Protokollfehler signalisieren. Der Caller (FT991CAT)
+                # entscheidet, ob er den naechsten Tick neu probiert.
+                raise CatProtocolError(
+                    f"Keine passende Antwort fuer {expected_prefix!r} "
+                    f"nach {discards} verworfenen Stale-Frames."
+                )
 
     def _handle_connection_lost(self, command: str, exc: BaseException) -> None:
         """Wird intern aufgerufen, sobald pyserial einen IO-Fehler meldet.

@@ -29,11 +29,21 @@ from mapping.audio_mapping import (
     SSB_BPF_DEFAULT_KEY,
 )
 
+from mapping.rx_mapping import (
+    ALL_OPERATING_MODES,
+    LEGACY_PROFILE_MODE_GROUPS,
+    normalize_profile_mode_group,
+)
+
 from .eq_band import EQSettings
 from .extended_settings import ExtendedSettings
 
 
-VALID_MODE_GROUPS = ("SSB", "AM", "FM", "DATA", "C4FM")
+# Legacy-Gruppen (Kompatibilität) + alle MD-Einzelmodi.
+VALID_MODE_GROUPS = tuple(
+    {m.value for m in ALL_OPERATING_MODES}
+    | set(LEGACY_PROFILE_MODE_GROUPS)
+)
 
 
 @dataclass
@@ -83,9 +93,9 @@ class AudioProfile:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AudioProfile":
         name = str(data.get("name") or "Unbenannt")
-        mode_group = str(data.get("mode_group") or "SSB").upper()
-        if mode_group not in VALID_MODE_GROUPS:
-            mode_group = "SSB"
+        mode_group = normalize_profile_mode_group(
+            str(data.get("mode_group") or "SSB")
+        )
 
         normal_eq_data = data.get("normal_eq")
         normal_eq = (

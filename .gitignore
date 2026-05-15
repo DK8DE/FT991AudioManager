@@ -38,6 +38,9 @@ desktop.ini
 # presets.json bleibt versioniert (= die mitgelieferten Default-Profile).
 data/settings.json
 
+# Automatische Speicherkanal-Backups (nur lokal, nicht ins Repo)
+data/memory_backups/
+
 # Tests
 .pytest_cache/
 .coverage

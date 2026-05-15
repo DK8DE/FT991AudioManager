@@ -9,7 +9,7 @@ Die Indizes laut Manual 1711-D (FT-991 CAT Operation Reference Book, S. 16):
 ``RM2;``     —      hängt vom Front-Panel-Meter ab (nicht nutzen)
 ``RM3;``     COMP   Speech-Processor-Kompression
 ``RM4;``     ALC    ALC-Aussteuerung
-``RM5;``     PO     Power Out (relativ)
+``RM5;``     PO     Power Out (Rohwert; Watt-Skala in der GUI bandabhängig)
 ``RM6;``     SWR    Stehwellen-Verhältnis (Rohwert)
 ``RM7;``     ID     Endstufen-Drain-Strom
 ``RM8;``     VDD    Endstufen-Versorgungsspannung
@@ -30,7 +30,55 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
+
+#: PO (RM5): Kalibrierung aus Prüfmaß — volle Nennleistung am jeweiligen Rohwert.
+#: Kurzwelle (u. a. unter 50 MHz): 100 W bei Rohwert 121.
+#: Ab 50 MHz (2 m / 70 cm …): 50 W bei Rohwert 149 (gleiche Frequenzlogik wie SWR-Hinweis im Meter-Widget).
+PO_CAT_RAW_FULL_HF = 121
+PO_CAT_RAW_FULL_VHF = 149
+PO_WATTS_HF = 100
+PO_WATTS_VHF = 50
+
+
+def po_use_50w_scale(freq_hz: Optional[int]) -> bool:
+    """True → 50-W-Skala (149 Rohwert), sonst 100-W-Skala (121)."""
+    if freq_hz is None or freq_hz <= 0:
+        return False
+    return freq_hz >= 50_000_000
+
+
+def po_power_ticks_hf() -> List[Tuple[int, str]]:
+    r = PO_CAT_RAW_FULL_HF
+    return [
+        (0, "0"),
+        (max(1, int(0.25 * r)), "25"),
+        (max(1, int(0.50 * r)), "50"),
+        (max(1, int(0.75 * r)), "75"),
+        (r, "100"),
+    ]
+
+
+def po_power_ticks_vhf() -> List[Tuple[int, str]]:
+    r = PO_CAT_RAW_FULL_VHF
+    return [
+        (0, "0"),
+        (max(1, int(0.20 * r)), "10"),
+        (max(1, int(0.40 * r)), "20"),
+        (max(1, int(0.60 * r)), "30"),
+        (max(1, int(0.80 * r)), "40"),
+        (r, "50"),
+    ]
+
+
+def format_po_watts(raw: int, *, vhf_uhf: bool) -> str:
+    """PO-Rohwert → Watt-Anzeige (linear bis Nennleistung)."""
+    val = max(0, min(255, int(raw)))
+    if vhf_uhf:
+        w = val * PO_WATTS_VHF / PO_CAT_RAW_FULL_VHF
+    else:
+        w = val * PO_WATTS_HF / PO_CAT_RAW_FULL_HF
+    return f"{max(0, round(w))} W"
 
 
 class MeterKind(str, Enum):
@@ -44,7 +92,7 @@ class MeterKind(str, Enum):
 # Tick-Tabellen für die Skalen-Beschriftung der TX-Meter
 # ----------------------------------------------------------------------
 
-#: ALC / COMP / PO werden als Prozent dargestellt — Rohwert 0..255 auf 0..100 %.
+#: ALC / COMP: Prozent — Rohwert 0..255 auf 0..100 %.
 _PERCENT_TICKS: List[Tuple[int, str]] = [
     (0,   "0"),
     (64,  "25"),
@@ -145,8 +193,9 @@ METER_INFO: Dict[MeterKind, MeterInfo] = {
         unit="%", ticks=_PERCENT_TICKS, value_formatter=_format_percent,
     ),
     MeterKind.PO: MeterInfo(
-        index=5, label="PO", raw_max=255, warn=0.80, danger=0.95,
-        unit="%", ticks=_PERCENT_TICKS, value_formatter=_format_percent,
+        index=5, label="POWER", raw_max=255, warn=0.80, danger=0.95,
+        unit="", ticks=po_power_ticks_hf(),
+        value_formatter=lambda raw: format_po_watts(raw, vhf_uhf=False),
     ),
     MeterKind.SWR: MeterInfo(
         index=6, label="SWR", raw_max=255, warn=0.30, danger=0.50,
@@ -158,6 +207,11 @@ METER_INFO: Dict[MeterKind, MeterInfo] = {
 def format_meter_value(kind: MeterKind, raw: int) -> str:
     """Formatiert einen Rohwert in der zum Meter passenden Einheit."""
     return METER_INFO[kind].value_formatter(raw)
+
+
+def format_meter_value_po(raw: int, *, vhf_uhf: bool) -> str:
+    """PO-Anzeige mit bandrichtiger Watt-Skala (für Tests/Hilfen)."""
+    return format_po_watts(raw, vhf_uhf=vhf_uhf)
 
 
 # Reihenfolge fürs UI (von oben nach unten)
@@ -256,12 +310,18 @@ def parse_tx_response(response: str) -> bool:
     return state in ("1", "2")
 
 
-def classify_value(kind: MeterKind, value: int) -> str:
+def classify_value(
+    kind: MeterKind, value: int, *, po_vhf_uhf: bool = False
+) -> str:
     """Liefert ``'ok'`` / ``'warn'`` / ``'danger'`` für die UI-Farbgebung."""
     info = METER_INFO[kind]
-    if info.raw_max <= 0:
+    if kind == MeterKind.PO:
+        ref = PO_CAT_RAW_FULL_VHF if po_vhf_uhf else PO_CAT_RAW_FULL_HF
+        frac = max(0.0, min(1.0, value / ref)) if ref > 0 else 0.0
+    elif info.raw_max <= 0:
         return "ok"
-    frac = max(0.0, min(1.0, value / info.raw_max))
+    else:
+        frac = max(0.0, min(1.0, value / info.raw_max))
     if frac >= info.danger:
         return "danger"
     if frac >= info.warn:
