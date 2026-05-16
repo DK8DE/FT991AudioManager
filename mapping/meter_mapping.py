@@ -32,52 +32,319 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Tuple
 
-#: PO (RM5): Kalibrierung aus Prüfmaß — volle Nennleistung am jeweiligen Rohwert.
-#: Kurzwelle (u. a. unter 50 MHz): 100 W bei Rohwert 121.
-#: Ab 50 MHz (2 m / 70 cm …): 50 W bei Rohwert 149 (gleiche Frequenzlogik wie SWR-Hinweis im Meter-Widget).
-PO_CAT_RAW_FULL_HF = 121
-PO_CAT_RAW_FULL_VHF = 149
+#: PO (RM5): Standard-Stützpunkte (werden durch ``po_calibration.json`` ersetzt).
+PO_WATTS_CALIB_HF_DEFAULT: List[Tuple[int, int]] = [
+    (0, 0),
+    (34, 5),
+    (58, 10),
+    (72, 15),
+    (83, 20),
+    (93, 25),
+    (104, 30),
+    (127, 35),
+    (147, 50),
+    (171, 70),
+    (183, 80),
+    (195, 90),
+    (207, 100),
+]
+PO_WATTS_CALIB_VHF_DEFAULT: List[Tuple[int, int]] = list(PO_WATTS_CALIB_HF_DEFAULT)
+
+# Rückwärtskompatibler Alias
+PO_WATTS_CALIB_HF = PO_WATTS_CALIB_HF_DEFAULT
+
+CALIB_BAND_HF = "hf_10m"
+CALIB_BAND_VHF_2M = "vhf_2m"
+CALIB_BAND_UHF_70CM = "uhf_70cm"
+
+#: Kalibrierung: ``(eingestellte_watt, rm5_rohwert)`` je Band.
+_po_calib_watt_raw_by_band: Dict[str, List[Tuple[int, int]]] = {
+    CALIB_BAND_HF: [(w, r) for r, w in PO_WATTS_CALIB_HF_DEFAULT if w > 0],
+    CALIB_BAND_VHF_2M: [(w, r) for r, w in PO_WATTS_CALIB_VHF_DEFAULT if w > 0],
+    CALIB_BAND_UHF_70CM: [(w, r) for r, w in PO_WATTS_CALIB_VHF_DEFAULT if w > 0],
+}
+_po_calib_by_band: Dict[str, List[Tuple[int, int]]] = {}
+# Rückwärtskompatibel
+_po_calib_hf: List[Tuple[int, int]] = list(PO_WATTS_CALIB_HF_DEFAULT)
+_po_calib_vhf: List[Tuple[int, int]] = list(PO_WATTS_CALIB_VHF_DEFAULT)
+PO_CAT_RAW_FULL_HF = _po_calib_hf[-1][0]
+PO_CAT_RAW_FULL_VHF = 147
 PO_WATTS_HF = 100
 PO_WATTS_VHF = 50
 
 
-def po_use_50w_scale(freq_hz: Optional[int]) -> bool:
-    """True → 50-W-Skala (149 Rohwert), sonst 100-W-Skala (121)."""
+def calib_band_id_for_freq(freq_hz: Optional[int]) -> str:
+    """Kalibrierkurve: nur 10-m-KW-Messung (für alle Bänder in der Anzeige)."""
+    return CALIB_BAND_HF
+
+
+def po_max_watts_for_freq(freq_hz: Optional[int]) -> int:
+    """Nennleistung der Skala (100 W HF/6 m, 50 W 2 m / 70 cm)."""
     if freq_hz is None or freq_hz <= 0:
+        return PO_WATTS_HF
+    f = int(freq_hz)
+    if f >= 144_000_000 and f < 420_000_000:
+        return PO_WATTS_VHF
+    if f >= 420_000_000:
+        return PO_WATTS_VHF
+    return PO_WATTS_HF
+
+
+def _watt_raw_usable(pairs: List[Tuple[int, int]]) -> bool:
+    """Kalibrierkurve brauchbar: mindestens zwei verschiedene RM5-Rohwerte."""
+    raws = [r for w, r in pairs if w > 0]
+    if len(raws) < 2:
         return False
-    return freq_hz >= 50_000_000
+    return len(set(raws)) >= 2 and (max(raws) - min(raws)) >= 5
+
+
+def po_calib_watt_raw_for_freq(freq_hz: Optional[int]) -> List[Tuple[int, int]]:
+    """Watt→Roh-Kalibrierpunkte — immer die 10-m-KW-Kalibrierung (RM5 ist bandunabhängig)."""
+    pairs = _po_calib_watt_raw_by_band.get(CALIB_BAND_HF, [])
+    if _watt_raw_usable(pairs):
+        return pairs
+    return [(w, r) for r, w in PO_WATTS_CALIB_HF_DEFAULT if w > 0]
+
+
+def po_calib_table_for_freq(freq_hz: Optional[int]) -> List[Tuple[int, int]]:
+    """``(rohwert, watt)`` für Skalen-Ticks (aus Watt→Roh-Punkten abgeleitet)."""
+    return _raw_watt_table_from_watt_raw(po_calib_watt_raw_for_freq(freq_hz))
+
+
+def _raw_watt_table_from_watt_raw(
+    watt_raw: List[Tuple[int, int]],
+) -> List[Tuple[int, int]]:
+    raw_to_w: Dict[int, int] = {}
+    for watts, raw in watt_raw:
+        w, r = int(watts), int(raw)
+        if w > 0:
+            raw_to_w[r] = max(raw_to_w.get(r, 0), w)
+    if not raw_to_w:
+        return [(0, 0)]
+    return [(0, 0)] + sorted(raw_to_w.items())
+
+
+def _raw_at_watts(table: List[Tuple[int, int]], watts: int) -> Optional[int]:
+    for raw, w in table:
+        if w == watts:
+            return raw
+    return None
+
+
+def _sync_full_scale_constants() -> None:
+    global PO_CAT_RAW_FULL_HF, PO_CAT_RAW_FULL_VHF, _po_calib_hf, _po_calib_vhf
+    global _po_calib_by_band, PO_WATTS_CALIB_HF
+    hf_tbl = _raw_watt_table_from_watt_raw(
+        _po_calib_watt_raw_by_band.get(CALIB_BAND_HF, [])
+    )
+    _po_calib_by_band[CALIB_BAND_HF] = hf_tbl
+    _po_calib_hf = hf_tbl
+    PO_WATTS_CALIB_HF = hf_tbl
+    PO_CAT_RAW_FULL_HF = hf_tbl[-1][0] if hf_tbl else 255
+    _po_calib_by_band[CALIB_BAND_VHF_2M] = hf_tbl
+    _po_calib_by_band[CALIB_BAND_UHF_70CM] = hf_tbl
+    _po_calib_vhf = hf_tbl
+    raw50 = _raw_at_watts(hf_tbl, 50)
+    PO_CAT_RAW_FULL_VHF = raw50 if raw50 is not None else PO_CAT_RAW_FULL_HF
+
+
+def apply_po_calibration_watt_raw(
+    bands: Dict[str, List[Tuple[int, int]]],
+) -> None:
+    """Setzt die 10-m-KW-Kalibrierung (andere Band-IDs werden ignoriert)."""
+    pairs = bands.get(CALIB_BAND_HF)
+    if pairs:
+        cleaned = sorted(
+            (int(w), int(r)) for w, r in pairs if int(w) > 0 and int(r) >= 0
+        )
+        _po_calib_watt_raw_by_band[CALIB_BAND_HF] = cleaned
+    _sync_full_scale_constants()
+
+
+def _table_raw_watt_to_watt_raw(
+    table: List[Tuple[int, int]],
+) -> List[Tuple[int, int]]:
+    """``(rohwert, watt)`` → ``(watt, rohwert)``."""
+    out: List[Tuple[int, int]] = []
+    for raw, watts in table:
+        if raw == 0 and watts == 0:
+            continue
+        out.append((int(watts), int(raw)))
+    return sorted(out, key=lambda t: t[0])
+
+
+def apply_po_calibration_tables(
+    *,
+    hf: Optional[List[Tuple[int, int]]] = None,
+    vhf: Optional[List[Tuple[int, int]]] = None,
+    uhf: Optional[List[Tuple[int, int]]] = None,
+) -> None:
+    """Setzt PO-Kurven aus ``(rohwert, watt)``-Tabellen (Tests/Legacy)."""
+    bands: Dict[str, List[Tuple[int, int]]] = {}
+    if hf:
+        bands[CALIB_BAND_HF] = _table_raw_watt_to_watt_raw(hf)
+    if vhf:
+        bands[CALIB_BAND_VHF_2M] = _table_raw_watt_to_watt_raw(vhf)
+    if uhf:
+        bands[CALIB_BAND_UHF_70CM] = _table_raw_watt_to_watt_raw(uhf)
+    if bands:
+        apply_po_calibration_watt_raw(bands)
+
+
+def load_po_calibration_from_disk() -> bool:
+    """Lädt ``data/po_calibration.json``; ``True`` wenn angewendet."""
+    try:
+        from model.po_calibration_store import load_po_calibration
+
+        cal = load_po_calibration()
+    except Exception:
+        return False
+    pairs = cal.watt_raw_pairs(CALIB_BAND_HF)
+    if not pairs:
+        return False
+    apply_po_calibration_watt_raw({CALIB_BAND_HF: pairs})
+    return True
+
+
+def _raw_to_watts_from_watt_raw(
+    watt_raw: List[Tuple[int, int]],
+    raw: int,
+    *,
+    max_watts: float,
+) -> float:
+    """Rohwert → Watt entlang der gemessenen Leistungsstufen (interpoliert)."""
+    val = max(0, min(255, int(raw)))
+    pts = sorted([(0, 0)] + [(int(w), int(r)) for w, r in watt_raw if w > 0], key=lambda t: t[0])
+    if len(pts) < 2:
+        return 0.0
+
+    candidates: List[float] = []
+    for (w0, r0), (w1, r1) in zip(pts, pts[1:]):
+        if r0 == r1:
+            if val == r0:
+                candidates.append(float(w1))
+            continue
+        lo_r, hi_r = min(r0, r1), max(r0, r1)
+        if lo_r <= val <= hi_r:
+            frac = (val - r0) / (r1 - r0)
+            candidates.append(w0 + frac * (w1 - w0))
+
+    if candidates:
+        return min(max(candidates), max_watts)
+
+    _w1, r1 = pts[1]
+    if val < r1 and r1 > 0:
+        return min(max_watts, _w1 * val / r1)
+
+    w_max, r_max = pts[-1]
+    if val >= r_max:
+        return min(max_watts, float(w_max))
+
+    return 0.0
+
+
+def _watts_to_raw_from_watt_raw(
+    watt_raw: List[Tuple[int, int]],
+    watts: float,
+) -> int:
+    target = max(0.0, float(watts))
+    if target <= 0:
+        return 0
+    pts = sorted([(int(w), int(r)) for w, r in watt_raw if w > 0], key=lambda t: t[0])
+    if not pts:
+        return 0
+    exact = {w: r for w, r in pts}
+    tw = int(round(target))
+    if tw in exact:
+        return exact[tw]
+    for (w0, r0), (w1, r1) in zip(pts, pts[1:]):
+        if w0 <= target <= w1:
+            if w1 <= w0:
+                return r1
+            frac = (target - w0) / (w1 - w0)
+            return int(round(r0 + frac * (r1 - r0)))
+    return pts[-1][1]
+
+
+_sync_full_scale_constants()
+
+# Beim Import gespeicherte Kalibrierung laden (falls vorhanden).
+load_po_calibration_from_disk()
+
+
+def po_use_50w_scale(freq_hz: Optional[int]) -> bool:
+    """True → 50-W-Skala (2 m / 70 cm), sonst 100-W-Skala."""
+    return po_max_watts_for_freq(freq_hz) <= PO_WATTS_VHF
+
+
+def po_raw_to_watts(
+    raw: int,
+    *,
+    vhf_uhf: bool = False,
+    freq_hz: Optional[int] = None,
+) -> float:
+    """PO-Rohwert → Watt (Interpolation entlang der Kalibrier-Leistungsstufen)."""
+    if freq_hz is None:
+        freq_hz = 145_500_000 if vhf_uhf else 14_000_000
+    max_w = float(po_max_watts_for_freq(freq_hz))
+    pairs = po_calib_watt_raw_for_freq(freq_hz)
+    return _raw_to_watts_from_watt_raw(pairs, raw, max_watts=max_w)
+
+
+def po_watts_to_raw(
+    watts: float,
+    *,
+    vhf_uhf: bool = False,
+    freq_hz: Optional[int] = None,
+) -> int:
+    """Watt → Rohwert (aus den Kalibrier-Stützpunkten)."""
+    if freq_hz is None:
+        freq_hz = 145_500_000 if vhf_uhf else 14_000_000
+    return _watts_to_raw_from_watt_raw(po_calib_watt_raw_for_freq(freq_hz), watts)
+
+
+def po_bar_fraction(
+    raw: int,
+    *,
+    vhf_uhf: bool = False,
+    freq_hz: Optional[int] = None,
+) -> float:
+    """Relativer Balkenfüllgrad 0..1 entlang der Watt-Skala."""
+    if freq_hz is None:
+        freq_hz = 145_500_000 if vhf_uhf else 14_000_000
+    ref = po_max_watts_for_freq(freq_hz)
+    if ref <= 0:
+        return 0.0
+    return max(0.0, min(1.0, po_raw_to_watts(raw, freq_hz=freq_hz) / ref))
+
+
+def po_power_ticks_for_freq(freq_hz: Optional[int]) -> List[Tuple[int, str]]:
+    if po_use_50w_scale(freq_hz):
+        labels = (0, 10, 20, 30, 40, 50)
+    else:
+        labels = (0, 25, 50, 75, 100)
+    ticks = [(po_watts_to_raw(w, freq_hz=freq_hz), str(w)) for w in labels]
+    return sorted(ticks, key=lambda t: t[0])
 
 
 def po_power_ticks_hf() -> List[Tuple[int, str]]:
-    r = PO_CAT_RAW_FULL_HF
-    return [
-        (0, "0"),
-        (max(1, int(0.25 * r)), "25"),
-        (max(1, int(0.50 * r)), "50"),
-        (max(1, int(0.75 * r)), "75"),
-        (r, "100"),
-    ]
+    return po_power_ticks_for_freq(14_000_000)
 
 
 def po_power_ticks_vhf() -> List[Tuple[int, str]]:
-    r = PO_CAT_RAW_FULL_VHF
-    return [
-        (0, "0"),
-        (max(1, int(0.20 * r)), "10"),
-        (max(1, int(0.40 * r)), "20"),
-        (max(1, int(0.60 * r)), "30"),
-        (max(1, int(0.80 * r)), "40"),
-        (r, "50"),
-    ]
+    return po_power_ticks_for_freq(145_500_000)
 
 
-def format_po_watts(raw: int, *, vhf_uhf: bool) -> str:
-    """PO-Rohwert → Watt-Anzeige (linear bis Nennleistung)."""
-    val = max(0, min(255, int(raw)))
-    if vhf_uhf:
-        w = val * PO_WATTS_VHF / PO_CAT_RAW_FULL_VHF
-    else:
-        w = val * PO_WATTS_HF / PO_CAT_RAW_FULL_HF
+def format_po_watts(
+    raw: int,
+    *,
+    vhf_uhf: bool = False,
+    freq_hz: Optional[int] = None,
+) -> str:
+    """PO-Rohwert → Watt-Anzeige (Kalibrierkurve)."""
+    if freq_hz is None:
+        freq_hz = 145_500_000 if vhf_uhf else 14_000_000
+    w = po_raw_to_watts(raw, freq_hz=freq_hz)
     return f"{max(0, round(w))} W"
 
 
@@ -311,13 +578,20 @@ def parse_tx_response(response: str) -> bool:
 
 
 def classify_value(
-    kind: MeterKind, value: int, *, po_vhf_uhf: bool = False
+    kind: MeterKind,
+    value: int,
+    *,
+    po_vhf_uhf: bool = False,
+    po_freq_hz: Optional[int] = None,
 ) -> str:
     """Liefert ``'ok'`` / ``'warn'`` / ``'danger'`` für die UI-Farbgebung."""
     info = METER_INFO[kind]
     if kind == MeterKind.PO:
-        ref = PO_CAT_RAW_FULL_VHF if po_vhf_uhf else PO_CAT_RAW_FULL_HF
-        frac = max(0.0, min(1.0, value / ref)) if ref > 0 else 0.0
+        frac = po_bar_fraction(
+            value,
+            vhf_uhf=po_vhf_uhf,
+            freq_hz=po_freq_hz,
+        )
     elif info.raw_max <= 0:
         return "ok"
     else:

@@ -7,6 +7,7 @@ import unittest
 from gui.vfo_triplet_widget import (
     compose_frequency_hz,
     decompose_frequency_hz,
+    snap_vfo_hz_to_10hz_grid,
 )
 
 
@@ -23,7 +24,11 @@ class VfoDecomposeTest(unittest.TestCase):
         self.assertEqual(compose_frequency_hz(m, k, h), hz)
 
     def test_clamp_khz_hz_parts(self) -> None:
-        self.assertEqual(compose_frequency_hz(1, 9999, 9999), 1_999_999)
+        self.assertEqual(compose_frequency_hz(1, 999, 989), 1_999_990)
+
+    def test_snap_hz_tenth_grid(self) -> None:
+        self.assertEqual(snap_vfo_hz_to_10hz_grid(14_229_254), 14_229_250)
+        self.assertEqual(snap_vfo_hz_to_10hz_grid(14_229_255), 14_229_260)
 
 
 if __name__ == "__main__":  # pragma: no cover

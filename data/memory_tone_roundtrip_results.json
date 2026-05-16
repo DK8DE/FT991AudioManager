@@ -1,0 +1,401 @@
+[
+  {
+    "strategy": "mc_cn_ct_mt_p9",
+    "commands": [
+      "MC091;",
+      "CN00017;",
+      "CT02;",
+      "MT091438975000+7600004020002XYZ         ;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok",
+      "ok",
+      "? (Funkgeraet kennt Befehl 'MT091438975000+7600004020002XYZ         ;' nicht (Antwort '?;'))",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00017;",
+    "cn_num": 17,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_1188"
+  },
+  {
+    "strategy": "mc_cn_ct_mt_codec",
+    "commands": [
+      "MC091;",
+      "CN00017;",
+      "CT02;",
+      "MT091438975000+7600004020002XYZ         ;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok",
+      "ok",
+      "? (Funkgeraet kennt Befehl 'MT091438975000+7600004020002XYZ         ;' nicht (Antwort '?;'))",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00017;",
+    "cn_num": 17,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_1188"
+  },
+  {
+    "strategy": "mc_cn_ct_hamlib_mw",
+    "commands": [
+      "MC091;",
+      "CN00017;",
+      "CT02;",
+      "MW091438975000+00000042172;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00017;",
+    "cn_num": 17,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_1188"
+  },
+  {
+    "strategy": "hamlib_mw_only",
+    "commands": [
+      "MW091438975000+00000042172;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00017;",
+    "cn_num": 17,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_1188"
+  },
+  {
+    "strategy": "mt_p9_only",
+    "commands": [
+      "MT091438975000+7600004020002XYZ         ;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "? (Funkgeraet kennt Befehl 'MT091438975000+7600004020002XYZ         ;' nicht (Antwort '?;'))",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00017;",
+    "cn_num": 17,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_1188"
+  },
+  {
+    "strategy": "mc_cn_ct_mt_p9",
+    "commands": [
+      "MC091;",
+      "CN00008;",
+      "CT02;",
+      "MT091438975000+7600004020002XYZ         ;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok",
+      "ok",
+      "? (Funkgeraet kennt Befehl 'MT091438975000+7600004020002XYZ         ;' nicht (Antwort '?;'))",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00008;",
+    "cn_num": 8,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_885"
+  },
+  {
+    "strategy": "mc_cn_ct_mt_codec",
+    "commands": [
+      "MC091;",
+      "CN00008;",
+      "CT02;",
+      "MT091438975000+7600004020002XYZ         ;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok",
+      "ok",
+      "? (Funkgeraet kennt Befehl 'MT091438975000+7600004020002XYZ         ;' nicht (Antwort '?;'))",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00008;",
+    "cn_num": 8,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_885"
+  },
+  {
+    "strategy": "mc_cn_ct_hamlib_mw",
+    "commands": [
+      "MC091;",
+      "CN00008;",
+      "CT02;",
+      "MW091438975000+00000042082;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00008;",
+    "cn_num": 8,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_885"
+  },
+  {
+    "strategy": "hamlib_mw_only",
+    "commands": [
+      "MW091438975000+00000042082;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00008;",
+    "cn_num": 8,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_885"
+  },
+  {
+    "strategy": "mt_p9_only",
+    "commands": [
+      "MT091438975000+7600004020002XYZ         ;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "? (Funkgeraet kennt Befehl 'MT091438975000+7600004020002XYZ         ;' nicht (Antwort '?;'))",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004020020XYZ         ;",
+    "p8": "2",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN00008;",
+    "cn_num": 8,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "CTCSS Encode",
+    "parsed_hz": 88.5,
+    "case": "ctcss_885"
+  },
+  {
+    "strategy": "mc_cn_ct_mt_p9",
+    "commands": [
+      "MC091;",
+      "CN01000;",
+      "CT04;",
+      "MT091438975000+7600004040002XYZ         ;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok",
+      "ok",
+      "? (Funkgeraet kennt Befehl 'MT091438975000+7600004040002XYZ         ;' nicht (Antwort '?;'))",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004040020XYZ         ;",
+    "p8": "4",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN01000;",
+    "cn_num": 0,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "DCS Encode",
+    "parsed_hz": 88.5,
+    "case": "dcs_23"
+  },
+  {
+    "strategy": "mc_cn_ct_mt_codec",
+    "commands": [
+      "MC091;",
+      "CN01000;",
+      "CT04;",
+      "MT091438975000+7600004040002XYZ         ;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok",
+      "ok",
+      "? (Funkgeraet kennt Befehl 'MT091438975000+7600004040002XYZ         ;' nicht (Antwort '?;'))",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004040020XYZ         ;",
+    "p8": "4",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN01000;",
+    "cn_num": 0,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "DCS Encode",
+    "parsed_hz": 88.5,
+    "case": "dcs_23"
+  },
+  {
+    "strategy": "mc_cn_ct_hamlib_mw",
+    "commands": [
+      "MC091;",
+      "CN01000;",
+      "CT04;",
+      "MW091438975000+00000044002;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok",
+      "ok",
+      "ok",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004040020XYZ         ;",
+    "p8": "4",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN01000;",
+    "cn_num": 0,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "DCS Encode",
+    "parsed_hz": 88.5,
+    "case": "dcs_23"
+  },
+  {
+    "strategy": "hamlib_mw_only",
+    "commands": [
+      "MW091438975000+00000044002;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "ok",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004040020XYZ         ;",
+    "p8": "4",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN01000;",
+    "cn_num": 0,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "DCS Encode",
+    "parsed_hz": 88.5,
+    "case": "dcs_23"
+  },
+  {
+    "strategy": "mt_p9_only",
+    "commands": [
+      "MT091438975000+7600004040002XYZ         ;",
+      "FA133000000;"
+    ],
+    "responses": [
+      "? (Funkgeraet kennt Befehl 'MT091438975000+7600004040002XYZ         ;' nicht (Antwort '?;'))",
+      "ok"
+    ],
+    "mt": "MT091438975000+7600004040020XYZ         ;",
+    "p8": "4",
+    "p9": "00",
+    "p9_int": 0,
+    "hz_from_p9": 67.0,
+    "cn_read": "CN01000;",
+    "cn_num": 0,
+    "ok_p9": false,
+    "ok_cn": true,
+    "parsed_mode": "DCS Encode",
+    "parsed_hz": 88.5,
+    "case": "dcs_23"
+  }
+]

@@ -22,7 +22,7 @@ class DuplicateFrequencyTest(unittest.TestCase):
         self.assertEqual(bank.duplicate_frequency_hz(), {145_500_000})
 
 
-    def test_channels_for_radio_write_includes_trailing_empty(self) -> None:
+    def test_channels_for_radio_write_only_user_changed(self) -> None:
         bank = MemoryChannelBank()
         bank.channels[0] = MemoryEditorChannel(
             number=1, enabled=True, name="A", rx_frequency_hz=145_500_000
@@ -31,10 +31,12 @@ class DuplicateFrequencyTest(unittest.TestCase):
             bank.channels[i] = MemoryEditorChannel.empty_slot(i + 1)
         bank.channels[50].changed = True
         to_write = bank.channels_for_radio_write()
-        numbers = [ch.number for ch in to_write]
-        self.assertEqual(len(to_write), 100)
-        self.assertIn(51, numbers)
-        self.assertIn(100, numbers)
+        self.assertEqual([ch.number for ch in to_write], [51])
+
+    def test_channels_for_radio_write_full_on_layout_change(self) -> None:
+        bank = MemoryChannelBank()
+        bank.layout_changed = True
+        self.assertEqual(len(bank.channels_for_radio_write()), 100)
 
     def test_empty_slot_count(self) -> None:
         bank = MemoryChannelBank()

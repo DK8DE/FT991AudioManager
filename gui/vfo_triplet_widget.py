@@ -1,7 +1,8 @@
 """Dreiteilige VFO-Frequenz (MHz | kHz | Hz) mit Mausrad und flachem Eingabe-Stil.
 
 Beispiel 149.112500 MHz → Anzeige ``149`` **·** ``112`` ``500`` (dicht, Punkt vor kHz).
-Mausrad über einem Block: Schritt 1 MHz / 1 kHz / 1 Hz pro Raster (120°-Tick).
+Mausrad über einem Block: Schritt 1 MHz / 1 kHz / 10 Hz pro Raster (120°-Tick);
+der Hz-Block bleibt auf Zehner (…0 Hz).
 """
 
 from __future__ import annotations
@@ -12,9 +13,23 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QWidget
 
-# FT-991/991A: sinnvoller CAT-Rahmen (9 Stellen; 470 MHz Obergrenze).
-VFO_MIN_HZ = 0
-VFO_MAX_HZ = 470_000_000
+from mapping.vfo_bands import (
+    VFO_CAT_MAX_HZ,
+    VFO_CAT_MIN_HZ,
+    clamp_vfo_frequency_hz,
+    step_vfo_frequency_hz,
+)
+
+VFO_MIN_HZ = VFO_CAT_MIN_HZ
+VFO_MAX_HZ = VFO_CAT_MAX_HZ
+#: Hz-Segment (letzte drei Stellen): nur 10-Hz-Schritte, Einerstelle immer 0.
+VFO_HZ_SEGMENT_STEP = 10
+
+
+def snap_vfo_hz_to_10hz_grid(hz: int) -> int:
+    """Frequenz auf 10-Hz-Raster (letzte Ziffer der Hz-Anzeige = 0)."""
+    h = clamp_vfo_frequency_hz(int(hz))
+    return int(round(h / VFO_HZ_SEGMENT_STEP) * VFO_HZ_SEGMENT_STEP)
 
 
 def decompose_frequency_hz(hz: int) -> Tuple[int, int, int]:
@@ -32,7 +47,7 @@ def compose_frequency_hz(mhz: int, k3: int, h3: int) -> int:
     m = max(0, int(mhz))
     k = max(0, min(999, int(k3)))
     h = max(0, min(999, int(h3)))
-    return min(VFO_MAX_HZ, m * 1_000_000 + k * 1000 + h)
+    return snap_vfo_hz_to_10hz_grid(m * 1_000_000 + k * 1000 + h)
 
 
 class _HzStepEdit(QLineEdit):
@@ -66,7 +81,7 @@ class VfoTripletWidget(QWidget):
     def __init__(
         self,
         *,
-        text_color: str = "#d8d8d8",
+        text_color: str = "#FFFFFF",
         font_scale: float = 2.3,
         parent: Optional[QWidget] = None,
     ) -> None:
@@ -147,7 +162,7 @@ class VfoTripletWidget(QWidget):
         """
         if self._any_segment_focused():
             return
-        h = max(VFO_MIN_HZ, min(VFO_MAX_HZ, int(hz)))
+        h = snap_vfo_hz_to_10hz_grid(hz)
         self._last_hz = h
         self._suppress_emit = True
         try:
@@ -176,7 +191,7 @@ class VfoTripletWidget(QWidget):
     def _emit_user_if_needed(self, hz: int) -> None:
         if self._suppress_emit:
             return
-        hz = max(VFO_MIN_HZ, min(VFO_MAX_HZ, hz))
+        hz = snap_vfo_hz_to_10hz_grid(hz)
         if hz == self._last_hz:
             return
         self._last_hz = hz
@@ -187,8 +202,10 @@ class VfoTripletWidget(QWidget):
             return
         parsed = self._parse_blocks()
         base = parsed if parsed is not None else self._last_hz
-        step = (1_000_000, 1_000, 1)[segment] * steps
-        new_hz = max(VFO_MIN_HZ, min(VFO_MAX_HZ, base + step))
+        step = (1_000_000, 1_000, VFO_HZ_SEGMENT_STEP)[segment] * steps
+        new_hz = snap_vfo_hz_to_10hz_grid(
+            clamp_vfo_frequency_hz(step_vfo_frequency_hz(base, step))
+        )
         self._display_hz(new_hz)
         self._emit_user_if_needed(new_hz)
 
@@ -199,8 +216,9 @@ class VfoTripletWidget(QWidget):
         if parsed is None:
             self._display_hz(self._last_hz)
             return
-        self._display_hz(parsed)
-        self._emit_user_if_needed(parsed)
+        clamped = clamp_vfo_frequency_hz(parsed)
+        self._display_hz(clamped)
+        self._emit_user_if_needed(clamped)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.LeftButton:

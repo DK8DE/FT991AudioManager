@@ -47,6 +47,14 @@ from mapping.memory_editor_codec import (
     should_write_cleared,
     validate_channel_range,
 )
+from mapping.memory_tones import (
+    apply_cn_read_to_channel,
+    format_cn_query,
+    format_cn_set,
+    format_ct_set,
+    parse_cn_read_response,
+    tone_mode_needs_cn,
+)
 from mapping.memory_mapping import (
     MemoryChannel,
     format_mc_query,
@@ -285,6 +293,70 @@ class FT991CAT:
             raise TxLockError(
                 "Das Funkgerät sendet gerade — Schreibvorgang wurde abgebrochen."
             )
+
+    def set_cat_transmit(self, on: bool, *, wait: bool = True, timeout_s: float = 3.0) -> None:
+        """Schaltet CAT-TX ein (``TX1;``) bzw. aus (``TX0;``).
+
+        Laut Manual: P1=1 bei ``TX;`` = CAT TX ON, P1=0 = CAT/Radio TX OFF.
+        """
+        cmd = "TX1;" if on else "TX0;"
+        self._cat.send_command(cmd, read_response=False)
+        if not wait:
+            return
+        deadline = time.monotonic() + max(0.2, float(timeout_s))
+        while time.monotonic() < deadline:
+            if self.get_tx_status() == on:
+                return
+            time.sleep(0.05)
+        state = "TX" if on else "RX"
+        raise CatProtocolError(
+            f"Funkgerät ist nach {timeout_s:.1f} s nicht in {state}."
+        )
+
+    def set_tx_max_power_watts(self, menu_number: int, watts: int) -> None:
+        """Setzt EX137/138/139/140 (TX MAX POWER, Deckel) in Watt."""
+        from mapping.tx_power_mapping import encode_tx_max_power_menu
+
+        self.write_menu(menu_number, encode_tx_max_power_menu(watts))
+
+    def read_tx_max_power_watts(self, menu_number: int) -> int:
+        """Liest EX137/138/139/140 (TX MAX POWER) in Watt."""
+        raw = self.read_menu(menu_number)
+        try:
+            return int(raw)
+        except ValueError as exc:
+            raise CatProtocolError(
+                f"EX{menu_number:03d} TX MAX POWER nicht numerisch: {raw!r}"
+            ) from exc
+
+    def set_pc_power_watts(self, watts: int, *, max_watts: int = 100) -> None:
+        """Setzt die Sendeleistung über ``PC;`` (POWER CONTROL, Manual 1711-D)."""
+        from mapping.tx_power_mapping import format_pc_set
+
+        self.ensure_rx()
+        self._cat.send_command(
+            format_pc_set(watts, max_watts=max_watts),
+            read_response=False,
+        )
+
+    def read_pc_power_watts(self) -> int:
+        """Liest die Sendeleistung über ``PC;``."""
+        from mapping.tx_power_mapping import parse_pc_response
+
+        response = self._cat.send_command("PC;")
+        try:
+            return parse_pc_response(response)
+        except ValueError as exc:
+            raise CatProtocolError(str(exc)) from exc
+
+    def start_antenna_tuner(self) -> None:
+        """Startet den internen Antennentuner (``AC002;`` = Tune Start)."""
+        self.ensure_rx()
+        self._cat.send_command("AC002;", read_response=False)
+
+    def read_antenna_tuner_status(self) -> str:
+        """Liest ``AC;`` — Antwort ``ACxyz;``."""
+        return self._cat.send_command("AC;")
 
     # ------------------------------------------------------------------
     # VFO
@@ -967,14 +1039,18 @@ class FT991CAT:
 
     def write_frequency(self, hz: int) -> None:
         """Setzt VFO-A-Frequenz in Hz (``FAnnnnnnnnn;``)."""
+        from mapping.vfo_bands import clamp_vfo_frequency_hz
+
         self.ensure_rx()
-        v = max(0, min(999_999_999, int(hz)))
+        v = clamp_vfo_frequency_hz(int(hz))
         self._cat.send_command(f"FA{v:09d};", read_response=False)
 
     def write_frequency_b(self, hz: int) -> None:
         """Setzt VFO-B-Frequenz in Hz (``FBnnnnnnnnn;``)."""
+        from mapping.vfo_bands import clamp_vfo_frequency_hz
+
         self.ensure_rx()
-        v = max(0, min(999_999_999, int(hz)))
+        v = clamp_vfo_frequency_hz(int(hz))
         self._cat.send_command(f"FB{v:09d};", read_response=False)
 
     # ------------------------------------------------------------------
@@ -1051,19 +1127,45 @@ class FT991CAT:
         self._cat.send_command(format_mc_set(channel), read_response=False)
 
     def read_memory_editor_channel(self, channel: int) -> MemoryEditorChannel:
-        """Liest einen Speicherkanal fuer den Editor (``MTnnn;``, Rohdaten)."""
+        """Liest einen Speicherkanal (``MTnnn;``, bei Ton zusätzlich ``CN`` via ``MC``)."""
         validate_channel_range(channel)
         response = self._cat.send_command(
             format_mt_query(channel),
             expected_prefix="MT",
         )
         try:
-            return editor_channel_from_mt_response(
+            ch = editor_channel_from_mt_response(
                 response,
                 requested_channel=channel,
             )
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
+
+        if ch.enabled and tone_mode_needs_cn(ch.tone_mode):
+            self._read_memory_channel_tone_via_cn(ch)
+        return ch
+
+    def _read_memory_channel_tone_via_cn(self, channel: MemoryEditorChannel) -> None:
+        """CTCSS-Hz / DCS-Code stehen nicht in ``MT`` — nur nach ``MC`` + ``CN`` lesbar."""
+        log = self.get_log()
+        try:
+            self.select_memory_channel(channel.number)
+            time.sleep(0.12)
+            query = format_cn_query(channel.tone_mode)
+            cn_response = self._cat.send_command(query, expected_prefix="CN")
+            p2, number = parse_cn_read_response(cn_response)
+            apply_cn_read_to_channel(channel, p2=p2, number=number)
+            if log is not None:
+                log.log_info(
+                    f"Read Memory Tone #{channel.number:03d}: {cn_response.strip()}"
+                )
+        except (CatError, ValueError) as exc:
+            if log is not None:
+                log.log_warn(
+                    f"CN-Lesen Kanal {channel.number:03d} fehlgeschlagen: {exc}"
+                )
+        finally:
+            self.switch_to_vfo_mode()
 
     def write_memory_editor_channel(
         self,
@@ -1071,35 +1173,41 @@ class FT991CAT:
         *,
         verify: bool = False,
     ) -> None:
-        """Schreibt einen Speicherkanal per ``MW…;`` und ``MT…;``."""
+        """Schreibt Speicherkanal: ``MC`` → ``CN``/``CT`` → ``MT`` (991A lehnt langes ``MW`` ab)."""
         validate_channel_range(channel.number)
-        mw_command = build_mw_command(channel)
         command = build_mt_command(channel)
         log = self.get_log()
         if log is not None:
-            log.log_info(f"Write Memory #{channel.number:03d}: {mw_command[:20]}…")
-        # MW schreibt die eigentlichen Speicher-Daten. Gerade leere Slots
-        # werden vom FT-991/A per MT allein nicht zuverlässig gelöscht.
-        self._cat.send_command(
-            mw_command,
-            read_response=False,
-        )
-        if should_write_cleared(channel):
-            channel.raw_cat_response = mw_command
-            channel.raw_mt_body = command[2:-1]
-            channel.changed = False
-            return
-
+            log.log_info(f"Select Memory #{channel.number:03d} for write")
+        self.select_memory_channel(channel.number)
+        time.sleep(0.05)
+        if not should_write_cleared(channel) and tone_mode_needs_cn(
+            channel.tone_mode
+        ):
+            try:
+                cn_command = format_cn_set(
+                    channel.tone_mode,
+                    ctcss_hz=channel.ctcss_tone_hz,
+                    dcs_code=channel.dcs_code,
+                )
+            except ValueError as exc:
+                raise CatProtocolError(str(exc)) from exc
+            ct_command = format_ct_set(channel.tone_mode)
+            if log is not None:
+                log.log_info(
+                    f"Write Memory Tone #{channel.number:03d}: "
+                    f"{cn_command}{ct_command}"
+                )
+            self._cat.send_command(cn_command, read_response=False)
+            self._cat.send_command(ct_command, read_response=False)
+            time.sleep(0.05)
         if log is not None:
-            log.log_info(f"Write Memory Tag #{channel.number:03d}: {command[:20]}…")
-        # MT schreibt zusätzlich den Tag/Namen.
-        self._cat.send_command(
-            command,
-            read_response=False,
-        )
+            log.log_info(f"Write Memory #{channel.number:03d}: {command[:24]}…")
+        self._cat.send_command(command, read_response=False)
         channel.raw_cat_response = command
         channel.raw_mt_body = command[2:-1]
         channel.changed = False
+        self.switch_to_vfo_mode()
 
     def switch_to_vfo_mode(self) -> bool:
         """Schaltet das Funkgeraet aus dem Memory-Modus zurueck in den

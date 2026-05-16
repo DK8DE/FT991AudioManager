@@ -51,17 +51,17 @@ class DarkPaletteTest(unittest.TestCase):
         )
 
     def test_dark_colors_match_spec(self) -> None:
-        # Sicherstellen, dass die genau spezifizierten Werte erhalten bleiben.
-        self.assertEqual(DARK_COLORS["Window"], "#1C1C1C")
-        self.assertEqual(DARK_COLORS["WindowText"], "#E1E1E1")
+        # Hauptfenster-Dark-Mode (Screenshot FT-991A Audio-Profilmanager).
+        self.assertEqual(DARK_COLORS["Window"], "#1E1E1E")
+        self.assertEqual(DARK_COLORS["WindowText"], "#FFFFFF")
         self.assertEqual(DARK_COLORS["Base"], "#2D2D2D")
-        self.assertEqual(DARK_COLORS["AlternateBase"], "#202020")
-        self.assertEqual(DARK_COLORS["ToolTipBase"], "#242424")
-        self.assertEqual(DARK_COLORS["Button"], "#262626")
+        self.assertEqual(DARK_COLORS["AlternateBase"], "#252525")
+        self.assertEqual(DARK_COLORS["ToolTipBase"], "#1E1E1E")
+        self.assertEqual(DARK_COLORS["Button"], "#2D2D2D")
         self.assertEqual(DARK_COLORS["BrightText"], "#FF5050")
-        self.assertEqual(DARK_COLORS["Link"], "#4496EB")
-        self.assertEqual(DARK_COLORS["Highlight"], "#4496EB")
-        self.assertEqual(DARK_COLORS["HighlightedText"], "#121212")
+        self.assertEqual(DARK_COLORS["Link"], "#2196F3")
+        self.assertEqual(DARK_COLORS["Highlight"], "#2196F3")
+        self.assertEqual(DARK_COLORS["HighlightedText"], "#FFFFFF")
 
 
 class ApplyThemeTest(unittest.TestCase):

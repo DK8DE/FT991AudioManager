@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "channels": {
+    "091": {
+      "tone_mode": "CTCSS Encode",
+      "ctcss_tone_hz": 118.8,
+      "dcs_code": 23
+    }
+  }
+}

@@ -1,0 +1,727 @@
+{
+  "baseline_mt": "MT091438975000+7600004040020XYZ         ;",
+  "attempts": [
+    {
+      "strategy": "cn_ct_mw",
+      "case": "off",
+      "commands": [
+        "MW091438975000+7600004000002;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004000002;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=0 P9=00 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw",
+      "case": "ctcss_enc_885",
+      "commands": [
+        "CN0008;",
+        "CT02;",
+        "MW091438975000+7600004020802;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN0008;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004020802;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=08 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw",
+      "case": "ctcss_enc_1188",
+      "commands": [
+        "CN0017;",
+        "CT02;",
+        "MW091438975000+7600004021702;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN0017;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004021702;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=17 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw",
+      "case": "ctcss_encdec_67",
+      "commands": [
+        "CN0000;",
+        "CT01;",
+        "MW091438975000+7600004010002;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN0000;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004010002;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=1 P9=00 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw",
+      "case": "dcs_enc_23",
+      "commands": [
+        "CN1023;",
+        "CT04;",
+        "MW091438975000+7600004042302;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN1023;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004042302;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=4 P9=23 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw",
+      "case": "dcs_encdec_23",
+      "commands": [
+        "CN1023;",
+        "CT03;",
+        "MW091438975000+7600004032302;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN1023;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004032302;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=3 P9=23 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw_mt",
+      "case": "off",
+      "commands": [
+        "MW091438975000+7600004000002;",
+        "MT091438975000+7600004000002XYZ         ;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004000002;' nicht (Antwort '?;'))",
+        "? (Funkgeraet kennt Befehl 'MT091438975000+7600004000002XYZ         ;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=0 P9=00 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw_mt",
+      "case": "ctcss_enc_885",
+      "commands": [
+        "CN0008;",
+        "CT02;",
+        "MW091438975000+7600004020802;",
+        "MT091438975000+7600004020802XYZ         ;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN0008;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004020802;' nicht (Antwort '?;'))",
+        "? (Funkgeraet kennt Befehl 'MT091438975000+7600004020802XYZ         ;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=08 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw_mt",
+      "case": "ctcss_enc_1188",
+      "commands": [
+        "CN0017;",
+        "CT02;",
+        "MW091438975000+7600004021702;",
+        "MT091438975000+7600004021702XYZ         ;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN0017;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004021702;' nicht (Antwort '?;'))",
+        "? (Funkgeraet kennt Befehl 'MT091438975000+7600004021702XYZ         ;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=17 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw_mt",
+      "case": "ctcss_encdec_67",
+      "commands": [
+        "CN0000;",
+        "CT01;",
+        "MW091438975000+7600004010002;",
+        "MT091438975000+7600004010002XYZ         ;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN0000;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004010002;' nicht (Antwort '?;'))",
+        "? (Funkgeraet kennt Befehl 'MT091438975000+7600004010002XYZ         ;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=1 P9=00 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw_mt",
+      "case": "dcs_enc_23",
+      "commands": [
+        "CN1023;",
+        "CT04;",
+        "MW091438975000+7600004042302;",
+        "MT091438975000+7600004042302XYZ         ;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN1023;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004042302;' nicht (Antwort '?;'))",
+        "? (Funkgeraet kennt Befehl 'MT091438975000+7600004042302XYZ         ;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=4 P9=23 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "cn_ct_mw_mt",
+      "case": "dcs_encdec_23",
+      "commands": [
+        "CN1023;",
+        "CT03;",
+        "MW091438975000+7600004032302;",
+        "MT091438975000+7600004032302XYZ         ;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'CN1023;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004032302;' nicht (Antwort '?;'))",
+        "? (Funkgeraet kennt Befehl 'MT091438975000+7600004032302XYZ         ;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=3 P9=23 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_cn_ct_mw",
+      "case": "off",
+      "commands": [
+        "MC091;",
+        "MW091438975000+7600004000002;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004000002;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=0 P9=00 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_cn_ct_mw",
+      "case": "ctcss_enc_885",
+      "commands": [
+        "MC091;",
+        "CN0008;",
+        "CT02;",
+        "MW091438975000+7600004020802;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'CN0008;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004020802;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004020020XYZ         ;",
+      "p8": "2",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=08 shift=2 | got P8=2 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_cn_ct_mw",
+      "case": "ctcss_enc_1188",
+      "commands": [
+        "MC091;",
+        "CN0017;",
+        "CT02;",
+        "MW091438975000+7600004021702;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'CN0017;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004021702;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004020020XYZ         ;",
+      "p8": "2",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=17 shift=2 | got P8=2 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_cn_ct_mw",
+      "case": "ctcss_encdec_67",
+      "commands": [
+        "MC091;",
+        "CN0000;",
+        "CT01;",
+        "MW091438975000+7600004010002;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'CN0000;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004010002;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004010020XYZ         ;",
+      "p8": "1",
+      "p9": "00",
+      "shift": "0",
+      "success": true,
+      "note": "want P8=1 P9=00 shift=2 | got P8=1 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_cn_ct_mw",
+      "case": "dcs_enc_23",
+      "commands": [
+        "MC091;",
+        "CN1023;",
+        "CT04;",
+        "MW091438975000+7600004042302;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'CN1023;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004042302;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004040020XYZ         ;",
+      "p8": "4",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=4 P9=23 shift=2 | got P8=4 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_cn_ct_mw",
+      "case": "dcs_encdec_23",
+      "commands": [
+        "MC091;",
+        "CN1023;",
+        "CT03;",
+        "MW091438975000+7600004032302;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'CN1023;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004032302;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=3 P9=23 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mw_only",
+      "case": "off",
+      "commands": [
+        "MW091438975000+7600004000002;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004000002;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=0 P9=00 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mw_only",
+      "case": "ctcss_enc_885",
+      "commands": [
+        "MW091438975000+7600004020802;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004020802;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=08 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mw_only",
+      "case": "ctcss_enc_1188",
+      "commands": [
+        "MW091438975000+7600004021702;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004021702;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=17 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mw_only",
+      "case": "ctcss_encdec_67",
+      "commands": [
+        "MW091438975000+7600004010002;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004010002;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=1 P9=00 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mw_only",
+      "case": "dcs_enc_23",
+      "commands": [
+        "MW091438975000+7600004042302;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004042302;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=4 P9=23 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mw_only",
+      "case": "dcs_encdec_23",
+      "commands": [
+        "MW091438975000+7600004032302;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004032302;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=3 P9=23 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "hamlib_mw",
+      "case": "off",
+      "commands": [
+        "MW091438975000+00000040002;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000040002;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=0 P9=00 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "hamlib_mw",
+      "case": "ctcss_enc_885",
+      "commands": [
+        "MW091438975000+00000042082;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000042082;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=08 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "hamlib_mw",
+      "case": "ctcss_enc_1188",
+      "commands": [
+        "MW091438975000+00000042172;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000042172;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=17 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "hamlib_mw",
+      "case": "ctcss_encdec_67",
+      "commands": [
+        "MW091438975000+00000041002;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000041002;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=1 P9=00 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "hamlib_mw",
+      "case": "dcs_enc_23",
+      "commands": [
+        "MW091438975000+00000044232;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000044232;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=4 P9=23 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "hamlib_mw",
+      "case": "dcs_encdec_23",
+      "commands": [
+        "MW091438975000+00000043232;"
+      ],
+      "responses": [
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000043232;' nicht (Antwort '?;'))"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=3 P9=23 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_hamlib",
+      "case": "off",
+      "commands": [
+        "MC091;",
+        "MW091438975000+00000040002;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000040002;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=0 P9=00 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_hamlib",
+      "case": "ctcss_enc_885",
+      "commands": [
+        "MC091;",
+        "MW091438975000+00000042082;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000042082;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=08 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_hamlib",
+      "case": "ctcss_enc_1188",
+      "commands": [
+        "MC091;",
+        "MW091438975000+00000042172;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000042172;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=2 P9=17 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_hamlib",
+      "case": "ctcss_encdec_67",
+      "commands": [
+        "MC091;",
+        "MW091438975000+00000041002;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000041002;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=1 P9=00 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_hamlib",
+      "case": "dcs_enc_23",
+      "commands": [
+        "MC091;",
+        "MW091438975000+00000044232;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000044232;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=4 P9=23 shift=2 | got P8=3 P9=00 shift=0"
+    },
+    {
+      "strategy": "mc_hamlib",
+      "case": "dcs_encdec_23",
+      "commands": [
+        "MC091;",
+        "MW091438975000+00000043232;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+00000043232;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004030020XYZ         ;",
+      "p8": "3",
+      "p9": "00",
+      "shift": "0",
+      "success": false,
+      "note": "want P8=3 P9=23 shift=2 | got P8=3 P9=00 shift=0"
+    }
+  ],
+  "winners": [
+    {
+      "strategy": "mc_cn_ct_mw",
+      "case": "ctcss_encdec_67",
+      "commands": [
+        "MC091;",
+        "CN0000;",
+        "CT01;",
+        "MW091438975000+7600004010002;",
+        "FA133000000;"
+      ],
+      "responses": [
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'CN0000;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)",
+        "? (Funkgeraet kennt Befehl 'MW091438975000+7600004010002;' nicht (Antwort '?;'))",
+        "? (Keine vollständige CAT-Antwort innerhalb von 1000 ms empfangen.)"
+      ],
+      "mt_response": "MT091438975000+7600004010020XYZ         ;",
+      "p8": "1",
+      "p9": "00",
+      "shift": "0",
+      "success": true,
+      "note": "want P8=1 P9=00 shift=2 | got P8=1 P9=00 shift=0"
+    }
+  ]
+}

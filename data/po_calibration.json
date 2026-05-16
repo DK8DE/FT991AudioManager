@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "bands": {
+    "hf_10m": {
+      "band_id": "hf_10m",
+      "label": "10 m (KW)",
+      "freq_hz": 28500000,
+      "mode": "FM",
+      "measured_at": "2026-05-16T12:17:23+00:00",
+      "points": [
+        {
+          "watts": 5,
+          "raw": 32
+        },
+        {
+          "watts": 10,
+          "raw": 58
+        },
+        {
+          "watts": 15,
+          "raw": 72
+        },
+        {
+          "watts": 20,
+          "raw": 85
+        },
+        {
+          "watts": 25,
+          "raw": 93
+        },
+        {
+          "watts": 30,
+          "raw": 106
+        },
+        {
+          "watts": 35,
+          "raw": 116
+        },
+        {
+          "watts": 40,
+          "raw": 128
+        },
+        {
+          "watts": 45,
+          "raw": 138
+        },
+        {
+          "watts": 50,
+          "raw": 147
+        },
+        {
+          "watts": 55,
+          "raw": 154
+        },
+        {
+          "watts": 60,
+          "raw": 160
+        },
+        {
+          "watts": 65,
+          "raw": 166
+        },
+        {
+          "watts": 70,
+          "raw": 173
+        },
+        {
+          "watts": 75,
+          "raw": 179
+        },
+        {
+          "watts": 80,
+          "raw": 185
+        },
+        {
+          "watts": 85,
+          "raw": 191
+        },
+        {
+          "watts": 90,
+          "raw": 197
+        },
+        {
+          "watts": 95,
+          "raw": 200
+        },
+        {
+          "watts": 100,
+          "raw": 208
+        }
+      ]
+    }
+  }
+}

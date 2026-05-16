@@ -125,7 +125,7 @@ class MemoryEditorChannel:
 
     @property
     def change_status(self) -> ChangeStatus:
-        if self.is_empty:
+        if self.is_empty and self.changed:
             return ChangeStatus.DELETED
         if self.moved:
             return ChangeStatus.MOVED
@@ -298,28 +298,13 @@ class MemoryChannelBank:
     def channels_for_radio_write(self) -> list[MemoryEditorChannel]:
         """Kanäle, die beim Speichern ans Gerät müssen.
 
-        - Layout geändert / gelöschte Kanäle: alle 100 Plätze
-        - sonst: geänderte Kanäle + leere Plätze am Ende (Löschung im Gerät)
+        - Layout geändert / Kanäle verschoben: alle 100 Plätze
+        - sonst: nur vom Benutzer geänderte Kanäle (inkl. bewusst geleerter)
         """
-        any_cleared = any(
-            ch.changed and (ch.is_empty or ch.rx_frequency_hz <= 0)
-            for ch in self.channels
-        )
-        if (
-            self.layout_changed
-            or any(ch.moved for ch in self.channels)
-            or any_cleared
-        ):
+        if self.layout_changed or any(ch.moved for ch in self.channels):
             return list(self.channels)
 
-        by_number: dict[int, MemoryEditorChannel] = {
-            ch.number: ch for ch in self.changed_channels()
-        }
-        last_row = self.last_filled_row_index()
-        for i in range(last_row + 1, len(self.channels)):
-            ch = self.channels[i]
-            by_number[ch.number] = ch
-        return [by_number[n] for n in sorted(by_number)]
+        return sorted(self.changed_channels(), key=lambda c: c.number)
 
     def move_up(self, row: int) -> None:
         if row <= 0:

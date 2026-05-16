@@ -6,10 +6,10 @@ Neuer schlanker Aufbau (ab 0.5.1):
   Meter-Bereich** (S-Meter + DSP links, AF/RF + TX-Meter rechts); unten
   **Mode-Gruppe**, **EQ-Profil** und **Speicherkanal**.
 - **EQ-Profil- und Mode-Auswahl** bleiben im Hauptfenster; der Equalizer-Editor
-  (Grundwerte, EQ, Erweitert, Speichern) liegt in **Edit → Equalizer**.
+  (Grundwerte, EQ, Erweitert, Speichern) liegt in **Bearbeiten → Equalizer**.
 - Verbindung: **Datei → Verbinden** / **Datei → Trennen**.
 - Die Verbindungs-Konfiguration liegt unter **Datei → Einstellungen**.
-- Speicherkanäle unter **Edit → Speicherkanäle**.
+- Speicherkanäle unter **Bearbeiten → Speicherkanäle**.
 - Das CAT-Log liegt unter **Ansicht → CAT-Log anzeigen** (eigenes Fenster).
 """
 
@@ -53,21 +53,29 @@ from model import AppSettings, PresetStore
 from .app_icon import app_icon
 from .equalizer_window import EqualizerWindow
 from .log_widget import LogWindow
+from .calibration_dialog import open_calibration_dialog
 from .memory_editor_dialog import open_memory_editor
 from .memory_loader import MemoryChannelLoader
 from .meter_widget import MeterWidget
 from .profile_widget import ProfileWidget
 from .settings_dialog import ConnectionSettingsDialog
 from .theme import apply_theme
+from mapping.amateur_bands import amateur_band_for_hz
+
 from .vfo_triplet_widget import VfoTripletWidget
+
+_VFO_CAPTION_STYLE_IDLE = "color: #888888; font-weight: bold;"
+_VFO_CAPTION_STYLE_IN_BAND = "color: #5ddc7a; font-weight: bold;"
+_VFO_CAPTION_STYLE_OUT_OF_BAND = "color: #ff6b6b; font-weight: bold;"
+_VFO_FREQ_COLOR = "#FFFFFF"
 
 
 class MainWindow(QMainWindow):
     """Hauptfenster mit VFO-Zeile, großem Meter-Panel und EQ-Profilzeile."""
 
-    #: Startgröße beim ersten Öffnen (in logischen Pixeln).
-    MAIN_START_WIDTH = 600
-    MAIN_START_HEIGHT = 600
+    #: Start- und Mindestgröße des Hauptfensters (logische Pixel).
+    MAIN_START_WIDTH = 800
+    MAIN_START_HEIGHT = 680
 
     def __init__(self, settings: AppSettings, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -85,7 +93,20 @@ class MainWindow(QMainWindow):
         self._log_window: Optional[LogWindow] = None
         self._equalizer_window: Optional[EqualizerWindow] = None
         self._memory_editor: Optional[QWidget] = None
+        self._calibration_dialog: Optional[QWidget] = None
         self._last_identity_info: str = ""
+        self._vfo_a_pending_hz: Optional[int] = None
+        self._vfo_b_pending_hz: Optional[int] = None
+        self._vfo_a_write_timer = QTimer(self)
+        self._vfo_a_write_timer.setSingleShot(True)
+        self._vfo_a_write_timer.setInterval(150)
+        self._vfo_a_write_timer.timeout.connect(self._flush_vfo_a_frequency_write)
+        self._vfo_b_write_timer = QTimer(self)
+        self._vfo_b_write_timer.setSingleShot(True)
+        self._vfo_b_write_timer.setInterval(150)
+        self._vfo_b_write_timer.timeout.connect(self._flush_vfo_b_frequency_write)
+        self._vfo_a_display_hz: int = 0
+        self._vfo_b_display_hz: int = 0
 
         self._build_ui()
         self._build_menu()
@@ -203,6 +224,7 @@ class MainWindow(QMainWindow):
 
     def _apply_startup_window_geometry(self) -> None:
         """Fenster auf :attr:`MAIN_START_*` setzen und auf dem Bildschirm zentrieren."""
+        self.setMinimumSize(self.MAIN_START_WIDTH, self.MAIN_START_HEIGHT)
         cw = self.centralWidget()
         if cw is not None:
             cw.setMinimumSize(0, 0)
@@ -243,16 +265,16 @@ class MainWindow(QMainWindow):
 
         self._vfo_a_caption = QLabel("VFO-A:")
         self._vfo_a_caption.setFont(vfo_caption_font)
-        self._vfo_a_caption.setStyleSheet("color: #d8d8d8;")
-        self._vfo_a_triplet = VfoTripletWidget(text_color="#d8d8d8", font_scale=2.3)
+        self._vfo_a_caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
+        self._vfo_a_triplet = VfoTripletWidget(text_color=_VFO_FREQ_COLOR, font_scale=2.3)
         self._vfo_a_triplet.user_frequency_changed.connect(
             self._on_user_vfo_a_frequency
         )
 
         self._vfo_b_caption = QLabel("VFO-B:")
         self._vfo_b_caption.setFont(vfo_caption_font)
-        self._vfo_b_caption.setStyleSheet("color: #a8a8a8;")
-        self._vfo_b_triplet = VfoTripletWidget(text_color="#a8a8a8", font_scale=2.3)
+        self._vfo_b_caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
+        self._vfo_b_triplet = VfoTripletWidget(text_color=_VFO_FREQ_COLOR, font_scale=2.3)
         self._vfo_b_triplet.user_frequency_changed.connect(
             self._on_user_vfo_b_frequency
         )
@@ -277,6 +299,7 @@ class MainWindow(QMainWindow):
 
         # ----- Oben rechts: VFO-A/B + RX/TX --------------------------------
         top_bar = QFrame()
+        top_bar.setObjectName("panelFrame")
         top_bar.setFrameShape(QFrame.StyledPanel)
         top_row = QHBoxLayout(top_bar)
         top_row.setContentsMargins(10, 6, 10, 6)
@@ -299,6 +322,7 @@ class MainWindow(QMainWindow):
 
         # ----- Unten: Mode + EQ-Profil; Speicherkanal darunter (volle Breite) --
         bottom_bar = QFrame()
+        bottom_bar.setObjectName("panelFrame")
         bottom_bar.setFrameShape(QFrame.StyledPanel)
         bottom_outer = QVBoxLayout(bottom_bar)
         bottom_outer.setContentsMargins(8, 6, 8, 6)
@@ -368,6 +392,27 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
+        # === Bearbeiten ===============================================
+        edit_menu = menu.addMenu("&Bearbeiten")
+
+        memory_action = QAction("&Speicherkanäle…", self)
+        memory_action.setShortcut("Ctrl+K")
+        memory_action.triggered.connect(self._on_memory_editor_action)
+        edit_menu.addAction(memory_action)
+
+        edit_menu.addSeparator()
+
+        equalizer_action = QAction("&Equalizer…", self)
+        equalizer_action.setShortcut("Ctrl+Shift+E")
+        equalizer_action.triggered.connect(self._on_equalizer_action)
+        edit_menu.addAction(equalizer_action)
+
+        edit_menu.addSeparator()
+
+        calibration_action = QAction("&Kalibrierung…", self)
+        calibration_action.triggered.connect(self._on_calibration_action)
+        edit_menu.addAction(calibration_action)
+
         # === Ansicht ==================================================
         view_menu = menu.addMenu("&Ansicht")
 
@@ -386,21 +431,6 @@ class MainWindow(QMainWindow):
         self.dark_mode_action.setShortcut("Ctrl+D")
         self.dark_mode_action.toggled.connect(self._on_dark_mode_toggled)
         view_menu.addAction(self.dark_mode_action)
-
-        # === Edit =====================================================
-        edit_menu = menu.addMenu("&Edit")
-
-        memory_action = QAction("&Speicherkanäle…", self)
-        memory_action.setShortcut("Ctrl+K")
-        memory_action.triggered.connect(self._on_memory_editor_action)
-        edit_menu.addAction(memory_action)
-
-        edit_menu.addSeparator()
-
-        equalizer_action = QAction("&Equalizer…", self)
-        equalizer_action.setShortcut("Ctrl+Shift+E")
-        equalizer_action.triggered.connect(self._on_equalizer_action)
-        edit_menu.addAction(equalizer_action)
 
         # === Hilfe ====================================================
         help_menu = menu.addMenu("&Hilfe")
@@ -610,6 +640,10 @@ class MainWindow(QMainWindow):
         self.meter_widget.on_connection_changed(connected)
         if not connected:
             self._mode_label.setText("Mode: —")
+            self._vfo_a_display_hz = 0
+            self._vfo_b_display_hz = 0
+            self._update_vfo_caption_band_color(self._vfo_a_caption, 0)
+            self._update_vfo_caption_band_color(self._vfo_b_caption, 0)
             self._vfo_a_triplet.set_placeholder_empty()
             self._vfo_b_triplet.set_placeholder_empty()
             self._vfo_a_triplet.set_interactive(False)
@@ -634,6 +668,19 @@ class MainWindow(QMainWindow):
         else:
             self._tx_label.setStyleSheet("")
 
+    def _update_vfo_caption_band_color(self, caption: QLabel, hz: int) -> None:
+        if hz <= 0:
+            caption.setStyleSheet(_VFO_CAPTION_STYLE_IDLE)
+            caption.setToolTip("")
+            return
+        band = amateur_band_for_hz(hz)
+        if band is not None:
+            caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
+            caption.setToolTip(f"Amateurfunkband {band}")
+        else:
+            caption.setStyleSheet(_VFO_CAPTION_STYLE_OUT_OF_BAND)
+            caption.setToolTip("Außerhalb der Amateurfunkbänder")
+
     def _on_rx_info_changed(
         self, mode: object, frequency_hz: int, frequency_b_hz: int
     ) -> None:
@@ -641,13 +688,27 @@ class MainWindow(QMainWindow):
         if isinstance(mode, RxMode):
             self._mode_label.setText(f"Mode: {mode.value}")
         if frequency_hz > 0:
+            self._vfo_a_display_hz = frequency_hz
             self._vfo_a_triplet.set_frequency_hz(frequency_hz)
+            self._update_vfo_caption_band_color(self._vfo_a_caption, frequency_hz)
         if frequency_b_hz > 0:
+            self._vfo_b_display_hz = frequency_b_hz
             self._vfo_b_triplet.set_frequency_hz(frequency_b_hz)
+            self._update_vfo_caption_band_color(self._vfo_b_caption, frequency_b_hz)
 
     def _on_user_vfo_a_frequency(self, hz: int) -> None:
         if not self._cat.is_connected():
             return
+        self._vfo_a_display_hz = hz
+        self._update_vfo_caption_band_color(self._vfo_a_caption, hz)
+        self._vfo_a_pending_hz = hz
+        self._vfo_a_write_timer.start()
+
+    def _flush_vfo_a_frequency_write(self) -> None:
+        if not self._cat.is_connected() or self._vfo_a_pending_hz is None:
+            return
+        hz = self._vfo_a_pending_hz
+        self._vfo_a_pending_hz = None
         try:
             FT991CAT(self._cat).write_frequency(hz)
         except CatError as exc:
@@ -656,6 +717,16 @@ class MainWindow(QMainWindow):
     def _on_user_vfo_b_frequency(self, hz: int) -> None:
         if not self._cat.is_connected():
             return
+        self._vfo_b_display_hz = hz
+        self._update_vfo_caption_band_color(self._vfo_b_caption, hz)
+        self._vfo_b_pending_hz = hz
+        self._vfo_b_write_timer.start()
+
+    def _flush_vfo_b_frequency_write(self) -> None:
+        if not self._cat.is_connected() or self._vfo_b_pending_hz is None:
+            return
+        hz = self._vfo_b_pending_hz
+        self._vfo_b_pending_hz = None
         try:
             FT991CAT(self._cat).write_frequency_b(hz)
         except CatError as exc:
@@ -903,6 +974,41 @@ class MainWindow(QMainWindow):
 
     def _on_memory_editor_closed(self, *_args: object) -> None:
         self._memory_editor = None
+        self.profile_widget.set_cat_blocked(False)
+        self.meter_widget.ensure_polling()
+
+    def _on_calibration_action(self) -> None:
+        if not self._cat.is_connected():
+            QMessageBox.information(
+                self,
+                "Nicht verbunden",
+                (
+                    "Die Kalibrierung benötigt eine aktive CAT-Verbindung.\n\n"
+                    "Bitte zuerst verbinden."
+                ),
+            )
+            return
+        dlg = self._calibration_dialog
+        if dlg is not None and dlg.isVisible():
+            dlg.raise_()
+            dlg.activateWindow()
+            return
+        self.meter_widget.pause_polling()
+        self.profile_widget.set_cat_blocked(True)
+        self._calibration_dialog = open_calibration_dialog(
+            self._cat,
+            parent=self,
+            on_closed=self._on_calibration_closed,
+        )
+        self._calibration_dialog.calibration_applied.connect(
+            self._on_calibration_applied
+        )
+
+    def _on_calibration_applied(self) -> None:
+        self.meter_widget.refresh_po_calibration()
+
+    def _on_calibration_closed(self, *_args: object) -> None:
+        self._calibration_dialog = None
         self.profile_widget.set_cat_blocked(False)
         self.meter_widget.ensure_polling()
 

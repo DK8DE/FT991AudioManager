@@ -2,7 +2,7 @@
 
 Zeigt:
 
-* **S-Meter** + **DSP-Slider (SQL / NB / DNR / AGC / MIC / DNF)** in einer Zeile —
+* **S-Meter** + **POWER** + **DSP-Slider (SQL / NB / DNR / AGC / MIC / DNF)** in einer Zeile —
   bei NB/DNR ändert der Slider-Zug den Pegel und die LED toggelt on/off.
   Bei DNF nur on/off. **MIC Gain** wird wie die anderen Slow-Path-Werte
   zyklisch mit ``MG;`` vom Funkgerät gelesen, Verstellung am TRX erscheint
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import traceback
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from PySide6.QtCore import (
     QMetaObject,
@@ -61,6 +61,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.themed_slider import MeterVerticalSlider
+
 from cat import SerialCAT
 from cat.cat_errors import (
     CatCommandUnsupportedError,
@@ -75,7 +77,12 @@ from mapping.meter_mapping import (
     SMETER_RAW_MAX,
     SMETER_TICKS,
     format_meter_value,
+    format_po_watts,
     meter_choices,
+    po_bar_fraction,
+    po_calib_table_for_freq,
+    po_max_watts_for_freq,
+    po_power_ticks_for_freq,
     po_use_50w_scale,
 )
 from mapping.rx_mapping import (
@@ -110,6 +117,10 @@ class TxMeterSample:
 
     transmitting: bool
     values: Dict[MeterKind, int]
+    #: VFO-A während TX (einmal pro Poll), damit die POWER-Skala zum Band passt.
+    frequency_hz: Optional[int] = None
+    #: Sendeleistung (CAT ``PC;``), wenn im TX-Poll gelesen.
+    pc_power_watts: Optional[int] = None
 
 
 # Rückwärtskompatibler Alias — vor 0.6 hieß die Klasse so.
@@ -135,6 +146,8 @@ class RxStatusSample:
     auto_notch: Optional[bool] = None
     #: MIC Gain (CAT ``MG;``) — nur im Slow-Path, z. B. nach Verstellung am Gerät.
     mic_gain: Optional[int] = None
+    #: Sendeleistung (CAT ``PC;``) — Slow-Path / nach Änderung am Gerät.
+    tx_power_watts: Optional[int] = None
     #: Sendebandbreite / SH WIDTH (``SH0;``) — P2 0..21, nur Slow-Path.
     tx_bandwidth_sh: Optional[int] = None
     mode: Optional[RxMode] = None
@@ -312,10 +325,29 @@ class MeterPoller(QObject):
                 # Wir lassen den Wert im Dict aus -- die GUI behaelt
                 # den letzten bekannten Wert fuer diesen Bar.
                 continue
+        freq_hz: Optional[int] = None
+        try:
+            freq_hz = ft.read_frequency()
+        except Exception:
+            pass
+        pc_power: Optional[int] = None
+        try:
+            pc_power = ft.read_pc_power_watts()
+        except CatConnectionLostError:
+            raise
+        except CatError:
+            pass
         # Auch wenn nicht alle 4 Meter gelesen werden konnten: das
         # Sample muss raus, damit die GUI weiss, dass das Radio sendet
         # (TX-LED rot, Bars aktiv eingefaerbt).
-        self.tx_sample.emit(TxMeterSample(transmitting=True, values=values))
+        self.tx_sample.emit(
+            TxMeterSample(
+                transmitting=True,
+                values=values,
+                frequency_hz=freq_hz,
+                pc_power_watts=pc_power,
+            )
+        )
         # Beim nächsten RX direkt einen vollen Slow-Path-Read machen.
         self._force_full_rx = True
         return self._tx_interval_ms
@@ -388,6 +420,7 @@ class MeterPoller(QObject):
         freq_b = _safe("freq_b", ft.read_frequency_b)
         mic_gain = _safe("mic_gain", ft.get_mic_gain)
         tx_bw = _safe("sh_width", ft.read_tx_bandwidth_sh)
+        tx_power = _safe("pc_power", ft.read_pc_power_watts)
 
         sample = RxStatusSample(
             smeter=smeter,
@@ -399,6 +432,7 @@ class MeterPoller(QObject):
             noise_reduction=(nr_on, nr_level) if (nr_on is not None and nr_level is not None) else None,
             auto_notch=auto_notch,
             mic_gain=mic_gain,
+            tx_power_watts=tx_power,
             tx_bandwidth_sh=tx_bw,
             mode=mode,
             frequency_hz=freq_a,
@@ -447,11 +481,11 @@ class TxIndicator(QFrame):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         if self._state == self.STATE_TX:
-            fill = QColor(220, 50, 50)
-            border = QColor(120, 20, 20)
+            fill = QColor(255, 80, 80)
+            border = QColor(140, 30, 30)
         elif self._state == self.STATE_RX:
-            fill = QColor(60, 190, 80)
-            border = QColor(28, 110, 40)
+            fill = QColor(93, 220, 122)
+            border = QColor(40, 140, 60)
         else:  # STATE_OFF
             fill = QColor(70, 70, 70)
             border = QColor(40, 40, 40)
@@ -600,7 +634,7 @@ class DspSlider(QFrame):
         v.addLayout(led_row)
 
         if supports_level:
-            self._slider = QSlider(Qt.Vertical)
+            self._slider = MeterVerticalSlider()
             self._slider.setRange(level_min, level_max)
             self._slider.setValue(level_min)
             self._slider.setMinimumHeight(130)
@@ -773,7 +807,7 @@ class AgcSlider(QFrame):
         spacer.setFixedHeight(18)
         v.addWidget(spacer)
 
-        self._slider = QSlider(Qt.Vertical)
+        self._slider = MeterVerticalSlider()
         # Range 0..3 für AUTO/FAST/MID/SLOW. Wir nutzen invertedAppearance,
         # damit AUTO oben steht (= weichster Modus oben, härtester unten
         # ist die übliche Konvention bei Yaesu).
@@ -866,13 +900,13 @@ class SqlSlider(QFrame):
         spacer.setFixedHeight(18)
         v.addWidget(spacer)
 
-        self._slider = QSlider(Qt.Vertical)
+        self._slider = MeterVerticalSlider()
         self._slider.setRange(0, 100)
         self._slider.setValue(0)
         self._slider.setMinimumHeight(130)
         self._slider.setSingleStep(1)
         self._slider.setPageStep(10)
-        self._slider.setTickPosition(QSlider.TicksRight)
+        self._slider.setTickPosition(QSlider.TickPosition.TicksRight)
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
         self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
@@ -914,6 +948,116 @@ class SqlSlider(QFrame):
 
 
 # ----------------------------------------------------------------------
+# PowerSlider — Sendeleistung (CAT PC), 5-W-Schritte, bandabhängiges Maximum
+# ----------------------------------------------------------------------
+
+
+class PowerSlider(QFrame):
+    """Vertikaler Slider für Sendeleistung (``PC;``) in 5-W-Schritten."""
+
+    value_chosen = Signal(int)
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._applying_remote = False
+        self._max_w = 100
+
+        self.setFrameShape(QFrame.NoFrame)
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(2, 2, 2, 2)
+        v.setSpacing(3)
+
+        title = QLabel("POWER")
+        title.setAlignment(Qt.AlignCenter)
+        tf = title.font()
+        tf.setBold(True)
+        tf.setPointSizeF(tf.pointSizeF() * 0.85)
+        title.setFont(tf)
+        v.addWidget(title)
+
+        spacer = QWidget()
+        spacer.setFixedHeight(18)
+        v.addWidget(spacer)
+
+        self._slider = MeterVerticalSlider()
+        self._slider.setRange(5, 100)
+        self._slider.setValue(50)
+        self._slider.setMinimumHeight(130)
+        self._slider.setSingleStep(5)
+        self._slider.setPageStep(10)
+        self._slider.setTickPosition(QSlider.TickPosition.TicksRight)
+        self._slider.setTickInterval(10)
+        self._slider.setInvertedAppearance(False)
+        self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._slider.setToolTip("Sendeleistung (PC) — 5-W-Schritte")
+        self._slider.valueChanged.connect(self._on_slider_changed)
+
+        slider_row = QHBoxLayout()
+        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.addStretch(1)
+        slider_row.addWidget(self._slider)
+        slider_row.addStretch(1)
+        v.addLayout(slider_row, stretch=1)
+
+        self._value_label = QLabel("50 W")
+        self._value_label.setAlignment(Qt.AlignCenter)
+        vf = self._value_label.font()
+        vf.setPointSizeF(vf.pointSizeF() * 0.85)
+        self._value_label.setFont(vf)
+        v.addWidget(self._value_label)
+
+    def _format_watts(self, watts: int) -> str:
+        return f"{watts} W"
+
+    def _on_slider_changed(self, value: int) -> None:
+        val = self._snap_watts(int(value))
+        if val != int(self._slider.value()):
+            self._slider.setValue(val)
+            return
+        self._value_label.setText(self._format_watts(val))
+        if self._applying_remote:
+            return
+        self.value_chosen.emit(val)
+
+    def _snap_watts(self, value: int) -> int:
+        from mapping.tx_power_mapping import PC_POWER_MIN, clamp_pc_power_watts
+
+        w = int(value)
+        w = max(PC_POWER_MIN, min(self._max_w, w))
+        snapped = ((w + 2) // 5) * 5
+        return clamp_pc_power_watts(snapped, max_watts=self._max_w)
+
+    def set_max_watts(self, max_w: int) -> None:
+        cap = 50 if int(max_w) <= 50 else 100
+        if cap == self._max_w:
+            return
+        self._max_w = cap
+        self._applying_remote = True
+        try:
+            self._slider.setMaximum(cap)
+            if self._slider.value() > cap:
+                self._slider.setValue(self._snap_watts(cap))
+            self._value_label.setText(self._format_watts(self._slider.value()))
+        finally:
+            self._applying_remote = False
+
+    def set_value(self, value: Optional[int]) -> None:
+        if value is None:
+            self._value_label.setText("—")
+            return
+        val = self._snap_watts(int(value))
+        val = min(val, self._max_w)
+        self._applying_remote = True
+        try:
+            if val != self._slider.value():
+                self._slider.setValue(val)
+            self._value_label.setText(self._format_watts(val))
+        finally:
+            self._applying_remote = False
+
+
+# ----------------------------------------------------------------------
 # MicGainSlider — vertikaler Slider MIC Gain (0..100), CAT MG
 # ----------------------------------------------------------------------
 
@@ -945,13 +1089,13 @@ class MicGainSlider(QFrame):
         spacer.setFixedHeight(18)
         v.addWidget(spacer)
 
-        self._slider = QSlider(Qt.Vertical)
+        self._slider = MeterVerticalSlider()
         self._slider.setRange(0, 100)
         self._slider.setValue(50)
         self._slider.setMinimumHeight(130)
         self._slider.setSingleStep(1)
         self._slider.setPageStep(5)
-        self._slider.setTickPosition(QSlider.TicksRight)
+        self._slider.setTickPosition(QSlider.TickPosition.TicksRight)
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
         self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
@@ -1014,7 +1158,7 @@ def _bar_gradient_for(warn: float, danger: float, *, enabled: bool) -> QLinearGr
     """
     grad = QLinearGradient(0, 1, 0, 0)
     if enabled:
-        green = QColor("#1bb340")
+        green = QColor("#32CD32")
         orange = QColor("#ed8a19")
         red = QColor("#c62828")
         # Die Stops liegen so, dass der Übergang nicht direkt am Schwellwert
@@ -1075,7 +1219,8 @@ class ScaledMeterBar(QWidget):
         super().__init__(parent)
         self._flex_horizontal = bool(flex_horizontal)
         self._raw_max = raw_max
-        self._fill_ref: Optional[int] = None  # PO: 121/149 statt 255 für Balken/Skala
+        self._fill_ref: Optional[int] = None  # PO: Roh-Max für Tooltip (Balken oft nichtlinear)
+        self._fill_fraction_fn: Optional[Callable[[int], float]] = None
         self._ticks: List[tuple] = list(ticks or [])
         self._warn = max(0.0, min(1.0, warn))
         self._danger = max(self._warn, min(1.0, danger))
@@ -1174,11 +1319,12 @@ class ScaledMeterBar(QWidget):
         self._canvas.update()
 
     def configure_po_band(self, *, vhf_uhf: bool) -> None:
-        """POWER-Balken: 100 W bei Rohwert 121 (KW) bzw. 50 W bei 149 (≥50 MHz)."""
+        """POWER-Balken: empirische Rohwert→Watt-Kurve (HF 100 W @ 207, VHF 50 W @ 147)."""
         from mapping.meter_mapping import (
             PO_CAT_RAW_FULL_HF,
             PO_CAT_RAW_FULL_VHF,
             format_po_watts,
+            po_bar_fraction,
             po_power_ticks_hf,
             po_power_ticks_vhf,
         )
@@ -1186,10 +1332,12 @@ class ScaledMeterBar(QWidget):
         if vhf_uhf:
             self._fill_ref = PO_CAT_RAW_FULL_VHF
             self._ticks = list(po_power_ticks_vhf())
+            self._fill_fraction_fn = lambda r, vf=True: po_bar_fraction(r, vhf_uhf=vf)
             self._value_formatter = lambda r, vf=True: format_po_watts(r, vhf_uhf=vf)
         else:
             self._fill_ref = PO_CAT_RAW_FULL_HF
             self._ticks = list(po_power_ticks_hf())
+            self._fill_fraction_fn = lambda r, vf=False: po_bar_fraction(r, vhf_uhf=vf)
             self._value_formatter = lambda r, vf=False: format_po_watts(r, vhf_uhf=vf)
         last = self._value
         self._value = None
@@ -1278,16 +1426,19 @@ class _ScaledBarCanvas(QWidget):
         bar_w = p._bar_width
 
         # Hintergrund-Bar
-        border_color = QColor("#555") if p._enabled else QColor("#3a3a3a")
+        border_color = QColor("#3A3A3A") if p._enabled else QColor("#2A2A2A")
         painter.setPen(QPen(border_color, 1))
-        painter.setBrush(QColor("#1b1b1b"))
+        painter.setBrush(QColor("#1B1B1B"))
         painter.drawRoundedRect(bar_x, bar_top, bar_w, bar_height, 3, 3)
 
         denom = p._fill_ref if p._fill_ref is not None else p._raw_max
 
         # Gefüllter Bereich (Farbverlauf gemäss warn/danger)
         if p._value is not None and p._value > 0:
-            frac = min(1.0, p._value / denom) if denom > 0 else 0.0
+            if p._fill_fraction_fn is not None:
+                frac = p._fill_fraction_fn(p._value)
+            else:
+                frac = min(1.0, p._value / denom) if denom > 0 else 0.0
             filled_top = int(bar_bottom - frac * bar_height)
             grad = _bar_gradient_for(p._warn, p._danger, enabled=p._enabled)
             # Gradient-Koordinaten auf Pixel ummappen, damit die Stops mit
@@ -1317,9 +1468,12 @@ class _ScaledBarCanvas(QWidget):
         painter.setFont(scale_font)
         fm = QFontMetrics(scale_font)
         for raw_tick, tick_label in p._ticks:
-            if denom <= 0:
+            if denom <= 0 and p._fill_fraction_fn is None:
                 continue
-            tick_frac = max(0.0, min(1.0, raw_tick / denom))
+            if p._fill_fraction_fn is not None:
+                tick_frac = p._fill_fraction_fn(raw_tick)
+            else:
+                tick_frac = max(0.0, min(1.0, raw_tick / denom))
             ty = int(bar_bottom - tick_frac * bar_height)
             painter.drawLine(bar_x - 3, ty, bar_x - 1, ty)
             text_rect_y = ty - fm.ascent() // 2 - 1
@@ -1410,10 +1564,7 @@ class MiniLevelBar(QWidget):
         self.bar.setRange(0, raw_max)
         self.bar.setTextVisible(False)
         self.bar.setFixedHeight(8)
-        self.bar.setStyleSheet(
-            "QProgressBar { border: 1px solid #555; border-radius: 2px; background: #1a1a1a; }"
-            "QProgressBar::chunk { background-color: #4a7fbf; }"
-        )
+        self.bar.setStyleSheet("")
         layout.addWidget(self.bar, stretch=1)
 
         self._value_label = QLabel("—")
@@ -1463,7 +1614,7 @@ class _SymmetricTxBwBar(QWidget):
         painter.setRenderHint(QPainter.Antialiasing, True)
         w = max(1, self.width())
         h = max(1, self.height())
-        painter.fillRect(0, 0, w, h, QColor("#1e1e1e"))
+        painter.fillRect(0, 0, w, h, QColor("#0F0F0F"))
         cx = w / 2.0
         span = max(4.0, (w / 2.0) - 5.0)
         t = (self._hz_disp - VISUAL_HZ_MIN) / float(VISUAL_HZ_MAX - VISUAL_HZ_MIN)
@@ -1635,8 +1786,8 @@ class MeterWidget(QWidget):
         #: die SWR-Anzeige auf VHF/UHF zu unterdrücken (siehe
         #: :meth:`_apply_swr_value`).
         self._last_vfo_a_hz: Optional[int] = None
-        #: POWER-Meter: letzte gewählte Skala (50 W vs. 100 W) nach VFO-A.
-        self._po_band_vhf: Optional[bool] = None
+        #: POWER-Meter: Kalibrierkurve (10-m-KW, für alle Bänder).
+        self._po_calib_scale_max_w: Optional[int] = None
         #: Zuletzt per Signal ``mic_gain_synced_from_radio`` gemeldeter Wert —
         #: verhindert Spam bei jedem RX-Sample mit unverändertem ``MG;``.
         self._last_rx_mic_gain: Optional[int] = None
@@ -1695,6 +1846,7 @@ class MeterWidget(QWidget):
 
         # --- S-Meter + DSP-Slider ---------------------------------------
         smeter_frame = QFrame()
+        smeter_frame.setObjectName("panelFrame")
         smeter_frame.setFrameShape(QFrame.StyledPanel)
         if self._integrated_main_layout:
             sfp = smeter_frame.sizePolicy()
@@ -1730,6 +1882,15 @@ class MeterWidget(QWidget):
             smeter_row.addLayout(smeter_column, stretch=2)
         else:
             smeter_row.addLayout(smeter_column, stretch=0)
+
+        self.power_slider = PowerSlider()
+        if self._integrated_main_layout:
+            psp = self.power_slider.sizePolicy()
+            psp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            self.power_slider.setSizePolicy(psp)
+            smeter_row.addWidget(self.power_slider, stretch=1)
+        else:
+            smeter_row.addWidget(self.power_slider)
 
         self.nb_slider = DspSlider(
             "NB",
@@ -1787,6 +1948,7 @@ class MeterWidget(QWidget):
 
         # --- Sendebandbreite (SH WIDTH, unter AF/RF) ---------------------
         self._tx_bw_frame = QFrame()
+        self._tx_bw_frame.setObjectName("panelFrame")
         self._tx_bw_frame.setFrameShape(QFrame.StyledPanel)
         self._tx_bw_frame.hide()
         tx_bw_outer = QVBoxLayout(self._tx_bw_frame)
@@ -1798,6 +1960,7 @@ class MeterWidget(QWidget):
 
         # --- TX-Bars ------------------------------------------------------
         bars_frame = QFrame()
+        bars_frame.setObjectName("panelFrame")
         bars_frame.setFrameShape(QFrame.StyledPanel)
         bars_outer = QVBoxLayout(bars_frame)
         bars_outer.setContentsMargins(6, 4, 6, 4)
@@ -1822,6 +1985,9 @@ class MeterWidget(QWidget):
             )
             self._bars[kind] = bar
             bars_layout.addWidget(bar, stretch=1)
+        po_bar = self._bars[MeterKind.PO]
+        po_bar._value_formatter = self._format_po_meter_value
+        po_bar._fill_fraction_fn = self._po_meter_bar_fraction
         self._sync_po_meter_scale()
         bars_outer.addLayout(bars_layout, stretch=1)
 
@@ -1985,18 +2151,45 @@ class MeterWidget(QWidget):
     # POWER-Skala (bandabhängig)
     # ------------------------------------------------------------------
 
+    def _format_po_meter_value(self, raw: int) -> str:
+        return format_po_watts(raw, freq_hz=self._last_vfo_a_hz)
+
+    def _po_meter_bar_fraction(self, raw: int) -> float:
+        return po_bar_fraction(raw, freq_hz=self._last_vfo_a_hz)
+
     def _sync_po_meter_scale(self) -> None:
-        """121/100 W (KW) vs. 149/50 W je nach VFO-A (≥ 50 MHz wie SWR-Logik)."""
-        want_vhf = po_use_50w_scale(self._last_vfo_a_hz)
-        if self._po_band_vhf == want_vhf:
+        """POWER-Skala: 10-m-Kalibrierkurve, Skalenende je Band (100 W / 50 W)."""
+        max_w = po_max_watts_for_freq(self._last_vfo_a_hz)
+        if max_w == self._po_calib_scale_max_w:
             return
-        self._po_band_vhf = want_vhf
-        self._bars[MeterKind.PO].configure_po_band(vhf_uhf=want_vhf)
+        self._po_calib_scale_max_w = max_w
+        table = po_calib_table_for_freq(self._last_vfo_a_hz)
+        bar = self._bars[MeterKind.PO]
+        bar._fill_ref = table[-1][0] if table else 255
+        bar._ticks = list(po_power_ticks_for_freq(self._last_vfo_a_hz))
+        last = bar._value
+        bar._value = None
+        if last is not None:
+            bar.set_value(last)
+        bar._canvas.update()
+
+    def refresh_po_calibration(self) -> None:
+        """Lädt ``po_calibration.json`` neu und aktualisiert die POWER-Skala."""
+        from mapping.meter_mapping import load_po_calibration_from_disk
+
+        load_po_calibration_from_disk()
+        self._po_calib_scale_max_w = None
+        self._sync_po_meter_scale()
 
     def _on_tx_sample(self, sample: object) -> None:
         if not isinstance(sample, TxMeterSample):
             return
+        if sample.frequency_hz is not None:
+            self._last_vfo_a_hz = sample.frequency_hz
+            self._apply_power_slider_scale()
         self._sync_po_meter_scale()
+        if sample.pc_power_watts is not None:
+            self.power_slider.set_value(sample.pc_power_watts)
         transmitting = sample.transmitting
         self.tx_led.set_active(transmitting)
         self.tx_label.setText("TX" if transmitting else "RX")
@@ -2033,7 +2226,10 @@ class MeterWidget(QWidget):
         # VHF/UHF die SWR-Anzeige zu unterdrücken.
         if sample.frequency_hz is not None:
             self._last_vfo_a_hz = sample.frequency_hz
+            self._apply_power_slider_scale()
         self._sync_po_meter_scale()
+        if sample.tx_power_watts is not None:
+            self.power_slider.set_value(sample.tx_power_watts)
         # S-Meter immer aktualisieren — ScaledMeterBar formatiert intern.
         self.smeter_bar.set_value(sample.smeter)
 
@@ -2144,6 +2340,7 @@ class MeterWidget(QWidget):
         self.nr_slider.level_changed.connect(self._on_dnr_level_changed)
         self.agc_slider.mode_chosen.connect(self._on_agc_chosen)
         self.sql_slider.value_chosen.connect(self._on_sql_chosen)
+        self.power_slider.value_chosen.connect(self._on_power_chosen)
         self.mic_gain_slider.value_chosen.connect(self._on_mic_gain_chosen)
 
     def _safe_write(self, writer, *, where: str) -> None:
@@ -2196,6 +2393,21 @@ class MeterWidget(QWidget):
             where="SQL schreiben",
         )
 
+    def _apply_power_slider_scale(self) -> None:
+        from mapping.meter_mapping import po_max_watts_for_freq
+
+        self.power_slider.set_max_watts(po_max_watts_for_freq(self._last_vfo_a_hz))
+
+    def _on_power_chosen(self, watts: int) -> None:
+        from mapping.meter_mapping import po_max_watts_for_freq
+
+        max_w = po_max_watts_for_freq(self._last_vfo_a_hz)
+
+        def _write() -> None:
+            self._ft.set_pc_power_watts(int(watts), max_watts=max_w)
+
+        self._safe_write(_write, where="POWER schreiben")
+
     def _on_mic_gain_chosen(self, value: int) -> None:
         self._safe_write(
             lambda: self._ft.set_mic_gain(int(value)),
@@ -2214,6 +2426,7 @@ class MeterWidget(QWidget):
         self.af_gain_bar.set_value(None)
         self.rf_gain_bar.set_value(None)
         self.sql_slider.set_value(None)
+        self.power_slider.set_value(None)
         self.mic_gain_slider.set_value(None)
         self.agc_slider.set_mode(None)
         self.nb_slider.set_state(None)

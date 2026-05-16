@@ -1,30 +1,36 @@
 """MT-Codec für den Speicherkanal-Editor — lesen/schreiben mit Rohdaten-Erhalt.
 
-FT-991/A MT-Body (38 Zeichen, beobachtet + CAT Manual 1711-D)::
+FT-991/A MT-Body (38 Zeichen, Hamlib ``newcat_get_channel`` / CAT Manual)::
 
     P1  (3)   Kanal
     P2  (9)   RX-Frequenz Hz
-    P3  (1)   ``+`` / ``-`` (Ablage-Richtung *und* Clarifier auf dem Gerät)
-    P4  (4)   Ablage-Offset in **kHz** (z. B. ``0600`` = 600 kHz) — nicht Hz!
+    P3  (1)   ``+`` / ``-`` (Clarifier-Richtung)
+    P4  (4)   Ablage-Offset in **kHz** (z. B. ``0600`` = 600 kHz)
     P5  (1)   RX-Clarifier
     P6  (1)   TX-Clarifier
-    P7  (1)   Mode
-    P8  (1)   CTCSS/DCS
-    P9  (2)   Position 21–22, meist ``00``
-    P10 (1)   **Position 24** (nicht 23): 0=Simplex, 1=Plus, 2=Minus
-    P11 (2)   Position 25, meist ``0``
+    P7  (1)   Mode (Hex) — Body-Index 19
+    P7b (1)   Reserve ``0`` — Body-Index 20 (MW/MT, vor Tonfeldern)
+    P8  (1)   Tonmodus — Body-Index **21**
+    P9  (2)   Tonnummer 00..49 — Body-Index **22..23**
+    P10 (1)   Reserve ``0`` — Body-Index 24
+    P11 (1)   Ablage 0/1/2 — Body-Index **25**
     P12 (12)  Tag
 
-Wichtig: **P3** ist nur Clarifier (+/−), nicht die Ablage-Richtung.
-Die Ziffern 21–25 (z. B. ``00020``) sind **kein** Offset — bei P4=``0000``
-gilt der Band-Standard: 2 m → 600 kHz, 70 cm → 7600 kHz (jeweils Minus).
+``MW`` nutzt dieselbe Mittelstruktur P3..P11 (14 Zeichen ab ``+``).
+Zusätzlich setzt Hamlib vor dem Schreiben ``CN`` + ``CT`` (siehe ``memory_tones``).
 """
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
-from mapping.memory_tones import ToneMode, tone_mode_from_p8, tone_mode_to_p8
+from mapping.memory_tones import (
+    ToneMode,
+    ctcss_cat_tone_number,
+    ctcss_hz_from_cat_tone_number,
+    tone_mode_from_p8,
+    tone_mode_to_p8,
+)
 from mapping.rx_mapping import MODE_TO_CODE, RxMode, _MD_CODE_TO_MODE
 from model.memory_editor_channel import (
     DEFAULT_EMPTY_FREQ_HZ,
@@ -37,6 +43,8 @@ from model.memory_editor_channel import (
 
 MT_BODY_LEN: int = 38
 TAG_LEN: int = 12
+MW_MID_LEN: int = 14  # body[12:26] — von ``+`` bis Ende P11
+POS_MW_MID = slice(12, 26)
 
 POS_CHANNEL = slice(0, 3)
 POS_FREQ = slice(3, 12)
@@ -45,28 +53,29 @@ POS_CLAR_OFFSET_KHZ = slice(13, 17)
 POS_RX_CLAR = 17
 POS_TX_CLAR = 18
 POS_MODE = 19
-POS_TONE_MODE = 20
-POS_FIXED_P9 = slice(21, 23)
-# P10 sitzt auf dem FT-991/A faktisch an Index 24 (Index 23 ist meist 0).
-POS_SHIFT_DIR = 24
-POS_FIXED_P11 = 25
+POS_PRE_TONE_FILLER = 20
+POS_TONE_MODE = 21
+POS_TONE_INDEX = slice(22, 24)
+POS_MID_FILLER = 24
+POS_SHIFT_DIR = 25
 POS_TAG = slice(26, 38)
+
+# Sonderzeichen in MT-Antworten (z. B. Relais mit DCS)
+_P8_EXTRA: dict[str, ToneMode] = {
+    "B": ToneMode.DCS_ENC_DEC,
+}
 
 
 def empty_mt_body(channel: int) -> str:
-    """Leerer Speicherplatz — exakt 38 Zeichen (wie am FT-991/A für leere Slots).
-
-    Beobachtetes Format: ``nnn000000000+0000000000000`` + 12 Leerzeichen Tag.
-    Wichtig: **kein** Mode ``4`` (FM) in der Mitte — sonst bleibt der Kanal
-    am Gerät belegt.
-    """
+    """Leerer Speicherplatz — exakt 38 Zeichen (wie am FT-991/A für leere Slots."""
     ch = f"{channel:03d}"
     return f"{ch}{'0' * 9}+{'0' * 13}{' ' * TAG_LEN}"
 
 
 def empty_mw_command(channel: int) -> str:
     """Leerer Speicherplatz als ``MW``-Befehl (ohne Tag-Feld)."""
-    return f"MW{channel:03d}{'0' * 9}+{'0' * 13};"
+    body = empty_mt_body(channel)
+    return f"MW{body[0:12]}{body[POS_MW_MID]};"
 
 
 def should_write_cleared(channel: MemoryEditorChannel) -> bool:
@@ -91,19 +100,15 @@ def normalize_channel_for_write(channel: MemoryEditorChannel) -> None:
 
 
 def _shift_from_p10(body: str) -> ShiftDirection:
-    if len(body) <= POS_SHIFT_DIR:
-        return ShiftDirection.SIMPLEX
-    code = body[POS_SHIFT_DIR]
-    if code == "1":
-        return ShiftDirection.PLUS
-    if code == "2":
-        return ShiftDirection.MINUS
+    """Ablage-Richtung — am Gerät Index 24 oder 25 (je nach Mittelteil)."""
+    for idx in (POS_SHIFT_DIR, 24):
+        if len(body) > idx:
+            code = body[idx]
+            if code == "1":
+                return ShiftDirection.PLUS
+            if code == "2":
+                return ShiftDirection.MINUS
     return ShiftDirection.SIMPLEX
-
-
-def _shift_from_body(body: str) -> ShiftDirection:
-    """Ablage-Richtung nur aus P10 (Index 24). P3 ist Clarifier, nicht RPT."""
-    return _shift_from_p10(body)
 
 
 def _shift_to_p10(direction: ShiftDirection) -> str:
@@ -114,13 +119,36 @@ def _shift_to_p10(direction: ShiftDirection) -> str:
     return "0"
 
 
+def _tone_mode_from_body(body: str) -> ToneMode:
+    if len(body) <= POS_TONE_MODE:
+        return ToneMode.OFF
+    ch = body[POS_TONE_MODE]
+    if ch in _P8_EXTRA:
+        return _P8_EXTRA[ch]
+    return tone_mode_from_p8(ch)
+
+
+def _encode_tone_fields(channel: MemoryEditorChannel, body: List[str]) -> None:
+    """P8 = Tonmodus; P9 = ``00`` (fest, Yaesu Manual — Frequenz nur per ``CN``)."""
+    body[POS_TONE_INDEX] = list("00")
+    if channel.tone_mode == ToneMode.OFF:
+        body[POS_TONE_MODE] = "0"
+        return
+    body[POS_TONE_MODE] = tone_mode_to_p8(channel.tone_mode)
+
+
+def _apply_tone_from_body(ch: MemoryEditorChannel, body: str) -> None:
+    """Nur P8 aus MT — Tonfrequenz steht nicht zuverlässig in P9 (meist ``00``)."""
+    if len(body) > POS_TONE_MODE:
+        ch.tone_mode = _tone_mode_from_body(body)
+
+
 def _parse_offset_khz(body: str) -> int:
     """Ablage-Offset in kHz aus P4 (4 Ziffern). Werte < 100 ignorieren (Artefakt)."""
     if len(body) >= 17:
         p4 = body[POS_CLAR_OFFSET_KHZ]
         if p4.isdigit():
             value = int(p4)
-            # 00020 als Ganzes ist kein Offset; echte Werte: 0600, 7600, …
             if value >= 100:
                 return value
     return 0
@@ -131,6 +159,33 @@ def _mode_from_body(body: str) -> RxMode:
         return RxMode.FM
     code = body[POS_MODE].upper()
     return _MD_CODE_TO_MODE.get(code, RxMode.UNKNOWN)
+
+
+def _build_mt_body_list(channel: MemoryEditorChannel) -> List[str]:
+    """Erzeugt den 38-stelligen MT-Body (Liste einzelner Zeichen)."""
+    if channel.raw_mt_body and len(channel.raw_mt_body) >= MT_BODY_LEN:
+        body = list(channel.raw_mt_body[:MT_BODY_LEN])
+    else:
+        body = list(empty_mt_body(channel.number))
+
+    body[POS_CHANNEL.start:POS_CHANNEL.stop] = list(f"{channel.number:03d}")
+    body[POS_FREQ.start:POS_FREQ.stop] = list(
+        f"{max(0, channel.rx_frequency_hz):09d}"
+    )
+    body[POS_MODE] = MODE_TO_CODE.get(channel.mode, "4")
+    body[POS_RX_CLAR] = "0"
+    body[POS_TX_CLAR] = "0"
+    body[POS_PRE_TONE_FILLER] = "0"
+
+    khz = max(0, min(9999, channel.shift_offset_hz // 1000))
+    if not channel.raw_mt_body:
+        body[POS_CLAR_SIGN] = "+"
+    body[POS_CLAR_OFFSET_KHZ] = list(f"{khz:04d}")
+    _encode_tone_fields(channel, body)
+    body[POS_MID_FILLER] = "0"
+    body[POS_SHIFT_DIR] = _shift_to_p10(channel.shift_direction)
+
+    return body
 
 
 def editor_channel_from_mt_response(
@@ -159,15 +214,14 @@ def editor_channel_from_mt_response(
             mode=RxMode.FM,
             shift_direction=ShiftDirection.SIMPLEX,
             shift_offset_hz=0,
-            tone_mode=tone_mode_from_p8(
-                body[POS_TONE_MODE] if len(body) > POS_TONE_MODE else "0"
-            ),
+            tone_mode=_tone_mode_from_body(body),
             raw_cat_response=response,
             raw_mt_body=empty_mt_body(requested_channel),
         )
 
-    shift_direction = _shift_from_body(body)
+    shift_direction = _shift_from_p10(body)
     offset_hz = _parse_offset_khz(body) * 1000
+    tone_mode = _tone_mode_from_body(body)
 
     ch = MemoryEditorChannel(
         number=requested_channel,
@@ -177,47 +231,25 @@ def editor_channel_from_mt_response(
         mode=_mode_from_body(body),
         shift_direction=shift_direction,
         shift_offset_hz=offset_hz,
-        tone_mode=tone_mode_from_p8(
-            body[POS_TONE_MODE] if len(body) > POS_TONE_MODE else "0"
-        ),
+        tone_mode=tone_mode,
         ctcss_tone_hz=88.5,
         dcs_code=23,
         raw_cat_response=response,
         raw_mt_body=body[:MT_BODY_LEN].ljust(MT_BODY_LEN)[:MT_BODY_LEN],
     )
-    # P4 oft 0000 bei Relais → Band-Default (600 kHz / 7,6 MHz)
+    _apply_tone_from_body(ch, body)
     if shift_direction != ShiftDirection.SIMPLEX and ch.shift_offset_hz == 0:
         ch.shift_offset_hz = ch.suggest_shift_offset_hz()
     return ch
 
 
 def build_mt_command(channel: MemoryEditorChannel) -> str:
-    """Baut ``MT…;`` (Set) — Ablage in P4 (kHz) und P10 (Index 24)."""
+    """Baut ``MT…;`` inkl. P8/P9 (Tonmodus + 2-stellige Tonnummer)."""
     normalize_channel_for_write(channel)
     if should_write_cleared(channel):
         return f"MT{empty_mt_body(channel.number)};"
-    if channel.raw_mt_body and len(channel.raw_mt_body) >= MT_BODY_LEN:
-        body = list(channel.raw_mt_body[:MT_BODY_LEN])
-    else:
-        body = list(empty_mt_body(channel.number))
 
-    body[POS_CHANNEL.start:POS_CHANNEL.stop] = list(f"{channel.number:03d}")
-    body[POS_FREQ.start:POS_FREQ.stop] = list(
-        f"{max(0, channel.rx_frequency_hz):09d}"
-    )
-    body[POS_MODE] = MODE_TO_CODE.get(channel.mode, "4")
-    body[POS_TONE_MODE] = tone_mode_to_p8(channel.tone_mode)
-
-    khz = max(0, min(9999, channel.shift_offset_hz // 1000))
-    if not channel.raw_mt_body:
-        body[POS_CLAR_SIGN] = "+"
-    body[POS_CLAR_OFFSET_KHZ] = list(f"{khz:04d}")
-    body[POS_FIXED_P9] = list("00")
-    if len(body) > POS_SHIFT_DIR:
-        body[POS_SHIFT_DIR] = _shift_to_p10(channel.shift_direction)
-    if len(body) > POS_FIXED_P11:
-        body[POS_FIXED_P11] = "0"
-
+    body = _build_mt_body_list(channel)
     tag = channel.name.encode("ascii", errors="ignore").decode("ascii")
     tag = tag[:TAG_LEN].ljust(TAG_LEN)
     body[POS_TAG.start:POS_TAG.stop] = list(tag)
@@ -226,20 +258,13 @@ def build_mt_command(channel: MemoryEditorChannel) -> str:
 
 
 def build_mw_command(channel: MemoryEditorChannel) -> str:
-    """Baut ``MW…;`` (Memory Channel Write, ohne Tag-Feld)."""
+    """Baut ``MW…;`` — gleiche Mittelfelder wie ``MT`` (P3..P11), ohne Tag."""
     normalize_channel_for_write(channel)
     if should_write_cleared(channel):
         return empty_mw_command(channel.number)
 
-    khz = max(0, min(9999, channel.shift_offset_hz // 1000))
-    sign = "+"
-    mode = MODE_TO_CODE.get(channel.mode, "4")
-    tone = tone_mode_to_p8(channel.tone_mode)
-    shift = _shift_to_p10(channel.shift_direction)
-    return (
-        f"MW{channel.number:03d}{max(0, channel.rx_frequency_hz):09d}"
-        f"{sign}{khz:04d}00{mode}00{tone}00{shift};"
-    )
+    body = _build_mt_body_list(channel)
+    return f"MW{''.join(body[0:12])}{''.join(body[POS_MW_MID])};"
 
 
 def parse_mt_or_empty_editor(

@@ -16,8 +16,6 @@ from model.memory_editor_channel import (
     ShiftDirection,
     editor_mode_from_label,
 )
-
-
 def backup_path(base_dir: Path) -> Path:
     base_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

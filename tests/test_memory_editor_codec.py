@@ -15,7 +15,7 @@ from mapping.memory_editor_codec import (
     normalize_channel_for_write,
     should_write_cleared,
 )
-from mapping.memory_tones import ToneMode
+from mapping.memory_tones import ToneMode, ctcss_cat_tone_number
 from mapping.rx_mapping import RxMode
 from model.memory_editor_channel import (
     DEFAULT_EMPTY_FREQ_HZ,
@@ -163,6 +163,45 @@ class MemoryEditorCodecTest(unittest.TestCase):
         self.assertEqual(len(body), 38)
         self.assertEqual(body[13:17], "0600")
         self.assertEqual(body[POS_SHIFT_DIR], "2")
+        self.assertEqual(body[21], "2")
+        self.assertEqual(body[22:24], "00")
+        self.assertEqual(body[25], "2")
+
+    def test_ctcss_118_8_minus_70cm(self) -> None:
+        """Kanal 91: 438,975 MHz, CTCSS 118,8 Hz Encode, Minus 7,6 MHz."""
+        self.assertEqual(ctcss_cat_tone_number(118.8), 17)
+        ch = MemoryEditorChannel(
+            number=91,
+            enabled=True,
+            name="XYZ",
+            rx_frequency_hz=438_975_000,
+            mode=RxMode.FM,
+            shift_direction=ShiftDirection.MINUS,
+            shift_offset_hz=7_600_000,
+            tone_mode=ToneMode.CTCSS_ENC,
+            ctcss_tone_hz=118.8,
+        )
+        mt = build_mt_command(ch)[2:-1]
+        self.assertEqual(mt[21], "2")  # P8 CTCSS Encode
+        self.assertEqual(mt[22:24], "00")  # P9 fest; Ton per CN
+        self.assertEqual(mt[25], "2")  # Minus
+        self.assertIn("+7600004020002", mt)
+
+    def test_parse_ctcss_tone_from_body(self) -> None:
+        body = list(empty_mt_body(91))
+        body[3:12] = list("438975000")
+        body[13:17] = list("7600")
+        body[21] = "2"
+        body[22:24] = list("00")
+        body[25] = "2"
+        body[26:38] = list("XYZ".ljust(12))
+        body = "".join(body)
+        ch = editor_channel_from_mt_response(
+            f"MT{body};", requested_channel=91
+        )
+        self.assertEqual(ch.tone_mode, ToneMode.CTCSS_ENC)
+        self.assertEqual(ch.ctcss_tone_hz, 88.5)  # Hz steht nicht in MT
+        self.assertEqual(ch.shift_direction, ShiftDirection.MINUS)
 
 
 if __name__ == "__main__":  # pragma: no cover

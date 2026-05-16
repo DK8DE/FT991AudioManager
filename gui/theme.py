@@ -25,20 +25,34 @@ from PySide6.QtWidgets import QApplication, QStyleFactory
 # =====================================================================
 
 DARK_COLORS: Dict[str, str] = {
-    "Window":           "#1C1C1C",
-    "WindowText":       "#E1E1E1",
+    "Window":           "#1E1E1E",
+    "WindowText":       "#FFFFFF",
     "Base":             "#2D2D2D",
-    "AlternateBase":    "#202020",
-    "ToolTipBase":      "#242424",
-    "ToolTipText":      "#E1E1E1",
-    "Text":             "#E1E1E1",
-    "Button":           "#262626",
-    "ButtonText":       "#E1E1E1",
+    "AlternateBase":    "#252525",
+    "ToolTipBase":      "#1E1E1E",
+    "ToolTipText":      "#FFFFFF",
+    "Text":             "#FFFFFF",
+    "Button":           "#2D2D2D",
+    "ButtonText":       "#FFFFFF",
     "BrightText":       "#FF5050",
-    "Link":             "#4496EB",
-    "Highlight":        "#4496EB",
-    "HighlightedText":  "#121212",
+    "Link":             "#2196F3",
+    "Highlight":        "#2196F3",
+    "HighlightedText":  "#FFFFFF",
 }
+
+#: Panels, Combos, Tabellen — etwas heller als Fensterhintergrund
+PANEL_BG = "#2D2D2D"
+PANEL_BORDER = "#3A3A3A"
+#: S-Meter / TX-Meter-Balken (dunkler als Panel)
+METER_BAR_BG = "#1B1B1B"
+METER_TRACK_BG = METER_BAR_BG
+#: Speicherkanal-Editor-Tabelle
+TABLE_HEADER_BG = "#383838"
+TABLE_GRID_COLOR = "#1A1A1A"
+ACCENT_BLUE = DARK_COLORS["Highlight"]
+ACCENT_GREEN = "#5DDC7A"
+#: Inaktiver Slider-Track und Skalenstriche (SQL, NB, …)
+SLIDER_INACTIVE = "#9F9F9F"
 
 #: Zusatzfarben für Disabled-Zustand (sanftere Abblendung)
 DARK_DISABLED = {
@@ -58,9 +72,9 @@ SIDEBAR_ITEM_BG     = DARK_COLORS["Base"]
 SIDEBAR_TEXT        = DARK_COLORS["WindowText"]
 SIDEBAR_SELECTED_BG = DARK_COLORS["Highlight"]
 SIDEBAR_SELECTED_FG = DARK_COLORS["HighlightedText"]
-SIDEBAR_HOVER_BG    = "#4F4F4F"
-SIDEBAR_HOVER_FG    = "#EAEAEA"
-SIDEBAR_SEPARATOR   = "#787878"
+SIDEBAR_HOVER_BG    = "#2A2A2A"
+SIDEBAR_HOVER_FG    = "#FFFFFF"
+SIDEBAR_SEPARATOR   = "#3A3A3A"
 SIDEBAR_ITEM_RADIUS = 3  # px
 
 
@@ -254,6 +268,96 @@ def build_dark_stylesheet() -> str:
     QMenuBar::item:selected, QMenu::item:selected {{
         background: {DARK_COLORS["Highlight"]};
         color:      {DARK_COLORS["HighlightedText"]};
+    }}
+
+    /* --- Panel-Rahmen (VFO-Zeile, S-Meter, Combos) — nicht für LEDs --- */
+    QFrame#panelFrame {{
+        background-color: {PANEL_BG};
+        border: 1px solid {PANEL_BORDER};
+        border-radius: {SIDEBAR_ITEM_RADIUS}px;
+    }}
+
+    /* --- Slider (SQL, AGC, MIC, DSP) — hellblauer Track + Griff --- */
+    QSlider::groove:vertical {{
+        background: {SLIDER_INACTIVE};
+        width: 5px;
+        border-radius: 2px;
+    }}
+    QSlider::handle:vertical {{
+        background: {ACCENT_BLUE};
+        height: 14px;
+        width: 14px;
+        margin: 0 -5px;
+        border-radius: 7px;
+        border: none;
+    }}
+    /* Fusion: sub-page = oberhalb, add-page = unterhalb des Griffs — Blau von unten */
+    QSlider::add-page:vertical {{
+        background: {ACCENT_BLUE};
+        border-radius: 2px;
+    }}
+    QSlider::sub-page:vertical {{
+        background: {SLIDER_INACTIVE};
+        border-radius: 2px;
+    }}
+    QSlider::groove:horizontal {{
+        background: #2A2A2A;
+        height: 5px;
+        border-radius: 2px;
+    }}
+    QSlider::handle:horizontal {{
+        background: {ACCENT_BLUE};
+        width: 14px;
+        height: 14px;
+        margin: -5px 0;
+        border-radius: 7px;
+        border: none;
+    }}
+    QSlider::sub-page:horizontal {{
+        background: {ACCENT_BLUE};
+        border-radius: 2px;
+    }}
+    QSlider::add-page:horizontal {{
+        background: #2A2A2A;
+        border-radius: 2px;
+    }}
+
+    /* --- AF/RF-Balken --- */
+    QProgressBar {{
+        border: 1px solid #3A3A3A;
+        border-radius: 2px;
+        background: {METER_TRACK_BG};
+        text-align: center;
+    }}
+    QProgressBar::chunk {{
+        background-color: {ACCENT_BLUE};
+        border-radius: 1px;
+    }}
+
+    /* --- Tabellen (Speicherkanal-Editor) --- */
+    QTableView {{
+        background-color: {DARK_COLORS["Base"]};
+        alternate-background-color: {DARK_COLORS["AlternateBase"]};
+        color: {DARK_COLORS["Text"]};
+        gridline-color: {TABLE_GRID_COLOR};
+        border: 1px solid {PANEL_BORDER};
+        selection-background-color: {DARK_COLORS["Highlight"]};
+        selection-color: {DARK_COLORS["HighlightedText"]};
+    }}
+    QTableView::item {{
+        padding: 2px 4px;
+    }}
+    QHeaderView::section {{
+        background-color: {TABLE_HEADER_BG};
+        color: {DARK_COLORS["WindowText"]};
+        padding: 4px 6px;
+        border: none;
+        border-right: 1px solid {TABLE_GRID_COLOR};
+        border-bottom: 1px solid {TABLE_GRID_COLOR};
+    }}
+    QTableCornerButton::section {{
+        background-color: {TABLE_HEADER_BG};
+        border: none;
     }}
     """
 

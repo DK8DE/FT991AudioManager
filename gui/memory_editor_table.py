@@ -301,6 +301,8 @@ class MemoryEditorTableView(QTableView):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        self.setAlternatingRowColors(True)
+        self.setShowGrid(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)

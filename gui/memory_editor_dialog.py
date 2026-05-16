@@ -249,14 +249,8 @@ class MemoryEditorWindow(QMainWindow):
             )
             return
 
-        any_cleared = any(
-            ch.changed and (ch.is_empty or ch.rx_frequency_hz <= 0)
-            for ch in self._bank.channels
-        )
-        full_write = (
-            self._bank.layout_changed
-            or any(ch.moved for ch in self._bank.channels)
-            or any_cleared
+        full_write = self._bank.layout_changed or any(
+            ch.moved for ch in self._bank.channels
         )
         channels = self._bank.channels_for_radio_write()
         if not channels:
@@ -269,16 +263,9 @@ class MemoryEditorWindow(QMainWindow):
                 "Vorher wird eine Sicherung angelegt. Fortfahren?"
             )
         else:
-            trailing = max(0, len(channels) - len(self._bank.changed_channels()))
-            extra = (
-                f"\nDavon {trailing} leere Plätze am Ende "
-                f"(Löschung im Gerät)."
-                if trailing
-                else ""
-            )
             msg = (
-                f"{len(channels)} Kanäle an das Gerät senden?\n"
-                f"Vorher wird eine Sicherung angelegt.{extra}"
+                f"{len(channels)} geänderte Kanäle an das Gerät senden?\n"
+                f"Vorher wird eine Sicherung angelegt."
             )
 
         if QMessageBox.question(self, "Speichern", msg) != QMessageBox.Yes:

@@ -30,6 +30,15 @@ from mapping.meter_mapping import (
 
 
 class MeterMappingTest(unittest.TestCase):
+    def setUp(self) -> None:
+        from mapping.meter_mapping import (
+            PO_WATTS_CALIB_HF_DEFAULT,
+            apply_po_calibration_watt_raw,
+        )
+
+        d = [(w, r) for r, w in PO_WATTS_CALIB_HF_DEFAULT if w > 0]
+        apply_po_calibration_watt_raw({"hf_10m": d})
+
     def test_indices(self) -> None:
         # Indizes laut Manual 1711-D (FT-991 CAT Operation Reference Book, S. 16):
         # RM1=S, RM3=COMP, RM4=ALC, RM5=PO, RM6=SWR.
@@ -124,15 +133,20 @@ class MeterMappingTest(unittest.TestCase):
         self.assertEqual(format_meter_value(MeterKind.ALC, 128), "50%")
         self.assertEqual(format_meter_value(MeterKind.ALC, 255), "100%")
         self.assertEqual(format_meter_value(MeterKind.COMP, 191), "75%")
-        self.assertEqual(format_meter_value(MeterKind.PO, 121), "100 W")
-        self.assertEqual(format_meter_value(MeterKind.PO, 61), "50 W")
+        self.assertEqual(format_meter_value(MeterKind.PO, 207), "100 W")
+        self.assertEqual(format_meter_value(MeterKind.PO, 147), "50 W")
 
     def test_po_watts_per_band(self) -> None:
-        from mapping.meter_mapping import format_po_watts
+        from mapping.meter_mapping import format_po_watts, po_raw_to_watts
 
-        self.assertEqual(format_po_watts(121, vhf_uhf=False), "100 W")
-        self.assertEqual(format_po_watts(149, vhf_uhf=True), "50 W")
-        self.assertEqual(format_po_watts(140, vhf_uhf=True), "47 W")
+        self.assertEqual(format_po_watts(207, vhf_uhf=False), "100 W")
+        self.assertEqual(format_po_watts(34, vhf_uhf=False), "5 W")
+        self.assertEqual(format_po_watts(147, vhf_uhf=False), "50 W")
+        self.assertEqual(format_po_watts(147, vhf_uhf=True), "50 W")
+        self.assertEqual(format_po_watts(171, vhf_uhf=True), "50 W")
+        # Zwischenstützpunkt (linear zwischen 104/30 und 127/35)
+        self.assertEqual(format_po_watts(121, vhf_uhf=False), "34 W")
+        self.assertAlmostEqual(po_raw_to_watts(93, vhf_uhf=False), 25.0, places=1)
 
     def test_format_swr(self) -> None:
         # ``raw == 0`` zeigen wir bewusst als "—" — ein RM6;-Roh von 0
@@ -169,6 +183,7 @@ class _MeterFakeRadio(SerialCAT):
             MeterKind.PO: 50,
             MeterKind.SWR: 20,
         }
+        self.pc_power_watts = 50
         self.sent: List[str] = []
 
     def is_connected(self) -> bool:  # type: ignore[override]
@@ -178,6 +193,10 @@ class _MeterFakeRadio(SerialCAT):
         self.sent.append(command)
         if command == "TX;":
             return "TX1;" if self.transmitting else "TX0;"
+        if command == "FA;":
+            return "FA014250000;"
+        if command == "PC;":
+            return f"PC{int(self.pc_power_watts):03d};"
         for kind, info in METER_INFO.items():
             if command == f"RM{info.index};":
                 return f"RM{info.index}{self.meter_values[kind]:03d};"
