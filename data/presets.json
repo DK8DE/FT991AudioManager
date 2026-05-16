@@ -2,45 +2,44 @@
   "version": 1,
   "profiles": [
     {
-      "name": "SSB Sprache",
-      "mode_group": "USB",
-      "mic_gain": 48,
-      "mic_eq_enabled": true,
+      "name": "Default",
+      "mic_gain": 50,
+      "mic_eq_enabled": false,
       "speech_processor_enabled": false,
-      "speech_processor_level": 47,
-      "ssb_tx_bpf": "300-2700",
+      "speech_processor_level": 35,
+      "ssb_tx_bpf": "100-2900",
       "normal_eq": {
         "eq1": {
-          "freq": 400,
-          "level": 7,
-          "bw": 1
+          "freq": "OFF",
+          "level": 0,
+          "bw": 5
         },
         "eq2": {
-          "freq": 800,
-          "level": 7,
-          "bw": 2
+          "freq": "OFF",
+          "level": 0,
+          "bw": 5
         },
         "eq3": {
-          "freq": 2000,
-          "level": 3,
-          "bw": 2
+          "freq": "OFF",
+          "level": 0,
+          "bw": 5
         }
       },
       "processor_eq": {
         "eq1": {
-          "freq": 300,
-          "level": 2,
-          "bw": 3
+          "freq": "OFF",
+          "level": 0,
+          "bw": 5
         },
         "eq2": {
-          "freq": 1000,
-          "level": 3,
-          "bw": 1
+          "freq": "OFF",
+          "level": 0,
+          "bw": 5
         },
         "eq3": {
-          "freq": 2200,
+          "freq": "OFF",
           "level": 0,
-          "bw": 2
+          "bw": 5
         }
       },
       "extended": {
@@ -56,179 +55,16 @@
       }
     },
     {
-      "name": "SSB DX",
-      "mode_group": "USB",
+      "name": "FM",
       "mic_gain": 50,
-      "mic_eq_enabled": true,
+      "mic_eq_enabled": false,
       "speech_processor_enabled": false,
       "speech_processor_level": 35,
       "ssb_tx_bpf": "100-2900",
       "normal_eq": {
         "eq1": {
           "freq": 400,
-          "level": -6,
-          "bw": 5
-        },
-        "eq2": {
-          "freq": 1300,
-          "level": 4,
-          "bw": 3
-        },
-        "eq3": {
-          "freq": 2500,
-          "level": 6,
-          "bw": 3
-        }
-      },
-      "processor_eq": {
-        "eq1": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        },
-        "eq2": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        },
-        "eq3": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        }
-      },
-      "extended": {
-        "ssb_lcut_freq": "OFF",
-        "ssb_lcut_slope": "6dB/oct",
-        "ssb_hcut_freq": "OFF",
-        "ssb_hcut_slope": "6dB/oct",
-        "am_carrier_level": 50,
-        "fm_carrier_level": 50,
-        "am_mic_sel": "MIC",
-        "fm_mic_sel": "MIC",
-        "data_tx_level": 50
-      }
-    },
-    {
-      "name": "AM Sprache",
-      "mode_group": "AM",
-      "mic_gain": 50,
-      "mic_eq_enabled": true,
-      "speech_processor_enabled": false,
-      "speech_processor_level": 35,
-      "ssb_tx_bpf": "100-2900",
-      "normal_eq": {
-        "eq1": {
-          "freq": 200,
-          "level": 0,
-          "bw": 5
-        },
-        "eq2": {
-          "freq": 1000,
-          "level": 2,
-          "bw": 4
-        },
-        "eq3": {
-          "freq": 2100,
-          "level": 2,
-          "bw": 3
-        }
-      },
-      "processor_eq": {
-        "eq1": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        },
-        "eq2": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        },
-        "eq3": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        }
-      },
-      "extended": {
-        "ssb_lcut_freq": "OFF",
-        "ssb_lcut_slope": "6dB/oct",
-        "ssb_hcut_freq": "OFF",
-        "ssb_hcut_slope": "6dB/oct",
-        "am_carrier_level": 50,
-        "fm_carrier_level": 50,
-        "am_mic_sel": "MIC",
-        "fm_mic_sel": "MIC",
-        "data_tx_level": 50
-      }
-    },
-    {
-      "name": "FM Relais",
-      "mode_group": "AM",
-      "mic_gain": 50,
-      "mic_eq_enabled": true,
-      "speech_processor_enabled": false,
-      "speech_processor_level": 35,
-      "ssb_tx_bpf": "100-2900",
-      "normal_eq": {
-        "eq1": {
-          "freq": 300,
-          "level": 0,
-          "bw": 5
-        },
-        "eq2": {
-          "freq": 1200,
-          "level": 0,
-          "bw": 4
-        },
-        "eq3": {
-          "freq": 2300,
-          "level": 0,
-          "bw": 3
-        }
-      },
-      "processor_eq": {
-        "eq1": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        },
-        "eq2": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        },
-        "eq3": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        }
-      },
-      "extended": {
-        "ssb_lcut_freq": "OFF",
-        "ssb_lcut_slope": "6dB/oct",
-        "ssb_hcut_freq": "OFF",
-        "ssb_hcut_slope": "6dB/oct",
-        "am_carrier_level": 50,
-        "fm_carrier_level": 50,
-        "am_mic_sel": "MIC",
-        "fm_mic_sel": "MIC",
-        "data_tx_level": 50
-      }
-    },
-    {
-      "name": "Neu",
-      "mode_group": "AM",
-      "mic_gain": 50,
-      "mic_eq_enabled": true,
-      "speech_processor_enabled": false,
-      "speech_processor_level": 35,
-      "ssb_tx_bpf": "100-2900",
-      "normal_eq": {
-        "eq1": {
-          "freq": 300,
-          "level": 1,
+          "level": 7,
           "bw": 3
         },
         "eq2": {
@@ -237,9 +73,9 @@
           "bw": 2
         },
         "eq3": {
-          "freq": 2100,
-          "level": 2,
-          "bw": 2
+          "freq": 1500,
+          "level": 5,
+          "bw": 5
         }
       },
       "processor_eq": {
@@ -267,61 +103,7 @@
         "am_carrier_level": 50,
         "fm_carrier_level": 50,
         "am_mic_sel": "MIC",
-        "fm_mic_sel": "MIC",
-        "data_tx_level": 50
-      }
-    },
-    {
-      "name": "FT991A 12",
-      "mode_group": "AM",
-      "mic_gain": 50,
-      "mic_eq_enabled": true,
-      "speech_processor_enabled": false,
-      "speech_processor_level": 35,
-      "ssb_tx_bpf": "100-2900",
-      "normal_eq": {
-        "eq1": {
-          "freq": 200,
-          "level": 0,
-          "bw": 5
-        },
-        "eq2": {
-          "freq": 700,
-          "level": 2,
-          "bw": 4
-        },
-        "eq3": {
-          "freq": 2100,
-          "level": 2,
-          "bw": 3
-        }
-      },
-      "processor_eq": {
-        "eq1": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        },
-        "eq2": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        },
-        "eq3": {
-          "freq": "OFF",
-          "level": 0,
-          "bw": 5
-        }
-      },
-      "extended": {
-        "ssb_lcut_freq": "OFF",
-        "ssb_lcut_slope": "6dB/oct",
-        "ssb_hcut_freq": "OFF",
-        "ssb_hcut_slope": "6dB/oct",
-        "am_carrier_level": 50,
-        "fm_carrier_level": 50,
-        "am_mic_sel": "MIC",
-        "fm_mic_sel": "MIC",
+        "fm_mic_sel": "REAR",
         "data_tx_level": 50
       }
     }

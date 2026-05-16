@@ -188,6 +188,14 @@ class MicGainCatTest(unittest.TestCase):
         # Es darf KEIN MG-Set abgesetzt worden sein.
         self.assertNotIn("MG040;", radio.sent)
 
+    def test_set_allowed_during_tx_without_lock(self) -> None:
+        radio = _FakeRadio()
+        radio.transmitting = True
+        ft = FT991CAT(radio)
+        ft.set_mic_gain(40, tx_lock=False)
+        self.assertEqual(radio.mic_gain, 40)
+        self.assertIn("MG040;", radio.sent)
+
     def test_set_clamps_out_of_range(self) -> None:
         radio = _FakeRadio()
         ft = FT991CAT(radio)

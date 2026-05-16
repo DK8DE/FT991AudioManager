@@ -20,7 +20,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gui.profile_widget import ProfileWidget  # noqa: E402
-from model import PresetStore  # noqa: E402
+from model import AudioProfile, PresetStore  # noqa: E402
+from model.preset_store import DEFAULT_PROFILE_NAME  # noqa: E402
 
 
 def _ensure_qapp():
@@ -40,6 +41,30 @@ def _make_widget(connected: bool = True) -> ProfileWidget:
     return ProfileWidget(cat, store)
 
 
+class InitialProfileSelectionTest(unittest.TestCase):
+    def test_startup_selects_last_profile_from_settings(self) -> None:
+        _ensure_qapp()
+        tmp_path = Path(tempfile.mkdtemp(prefix="ft991_test_")) / "presets.json"
+        store = PresetStore.load(tmp_path)
+        store.upsert(AudioProfile(name="Alpha"))
+        store.upsert(AudioProfile(name="Beta"))
+        store.save()
+        cat = MagicMock()
+        cat.is_connected.return_value = False
+        widget = ProfileWidget(cat, store, initial_last_profile="Beta")
+        self.assertEqual(widget.current_profile_name(), "Beta")
+
+    def test_unknown_last_profile_falls_back_to_default(self) -> None:
+        _ensure_qapp()
+        tmp_path = Path(tempfile.mkdtemp(prefix="ft991_test_")) / "presets.json"
+        store = PresetStore.load(tmp_path)
+        store.ensure_defaults()
+        cat = MagicMock()
+        cat.is_connected.return_value = False
+        widget = ProfileWidget(cat, store, initial_last_profile="NichtDa")
+        self.assertEqual(widget.current_profile_name(), DEFAULT_PROFILE_NAME)
+
+
 class AutoSyncStateTest(unittest.TestCase):
     def setUp(self) -> None:
         self.widget = _make_widget(connected=False)
@@ -49,10 +74,13 @@ class AutoSyncStateTest(unittest.TestCase):
         self.assertIn("aus", self.widget._sync_label.text())
         # connect
         self.widget._cat.is_connected.return_value = True
-        # Verhindere echten Worker-Start beim Connect-Auto-Read
+        # Verhindere echten Worker-Start beim Connect-Auto-Write
         self.widget._dispatch_action = MagicMock()
         self.widget.set_cat_available(True)
         self.assertIn("aktiv", self.widget._sync_label.text())
+        self.widget._dispatch_action.assert_called_once()
+        kind, _ = self.widget._dispatch_action.call_args.args
+        self.assertEqual(kind, "write_full")
         # disconnect
         self.widget._cat.is_connected.return_value = False
         self.widget.set_cat_available(False)
@@ -195,6 +223,7 @@ class OnModeChangedTest(unittest.TestCase):
         self.widget._last_radio_mode = RxMode.USB
         self.widget._user_mode_lock_until = 0.0
         self._switch_combo_to("USB")
+        self.widget._dispatch_action.reset_mock()
         before = _time.monotonic()
         self._switch_combo_to("AM")
         self.widget._dispatch_action.assert_called_once()

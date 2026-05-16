@@ -150,6 +150,8 @@ def sh_bandwidth_visible_for_mode(mode: Optional[RxMode]) -> bool:
     """True, wenn SH WIDTH am FT-991 für diese Betriebsart üblichweise Sinn ergibt."""
     if mode is None or mode is RxMode.UNKNOWN:
         return False
+    if mode == RxMode.DATA_FM:
+        return False
     return mode_group_for(mode) in frozenset({"SSB", "CW", "RTTY", "DATA"})
 
 

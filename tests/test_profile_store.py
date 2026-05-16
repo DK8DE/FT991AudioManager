@@ -8,17 +8,28 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from mapping.audio_mapping import MIC_GAIN_DEFAULT, SSB_BPF_DEFAULT_KEY
-from model import AudioProfile, EQBand, EQSettings, PresetStore
+from model import (
+    AudioProfile,
+    DEFAULT_PROFILE_NAME,
+    EQBand,
+    EQSettings,
+    PresetStore,
+    make_flat_default_profile,
+)
 
 
 class PresetStoreTest(unittest.TestCase):
-    def test_default_initialization_creates_seed_profiles(self) -> None:
+    def test_first_start_creates_flat_default(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "presets.json"
             store = PresetStore.load(path)
             self.assertTrue(path.exists())
-            self.assertGreaterEqual(len(store.profiles), 3)
-            self.assertIn("SSB Sprache", store.names())
+            self.assertEqual(store.names(), [DEFAULT_PROFILE_NAME])
+            p = store.find(DEFAULT_PROFILE_NAME)
+            assert p is not None
+            self.assertFalse(p.mic_eq_enabled)
+            self.assertFalse(p.speech_processor_enabled)
+            self.assertTrue(p.normal_eq.eq1.is_off())
 
     def test_save_and_reload(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -27,7 +38,6 @@ class PresetStoreTest(unittest.TestCase):
             store.upsert(
                 AudioProfile(
                     name="Test",
-                    mode_group="SSB",
                     normal_eq=EQSettings(
                         eq1=EQBand(freq=200, level=-3, bw=5),
                         eq2=EQBand(freq=1200, level=2, bw=4),
@@ -48,19 +58,53 @@ class PresetStoreTest(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "presets.json"
             store = PresetStore.load(path)
-            assert store.find("SSB Sprache") is not None
-            self.assertTrue(store.remove("SSB Sprache"))
-            self.assertFalse(store.remove("SSB Sprache"))
+            store.upsert(AudioProfile(name="Zusatz", normal_eq=EQSettings.default()))
+            self.assertTrue(store.remove(DEFAULT_PROFILE_NAME))
+            self.assertIsNone(store.find(DEFAULT_PROFILE_NAME))
 
-            reloaded = PresetStore.load(path)
-            self.assertIsNone(reloaded.find("SSB Sprache"))
+    def test_remove_last_restores_flat_default(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "presets.json"
+            store = PresetStore(path=path, profiles=[])
+            store.upsert(
+                AudioProfile(
+                    name="Einzelnes",
+                    normal_eq=EQSettings.default(),
+                )
+            )
+            self.assertTrue(store.remove("Einzelnes"))
+            self.assertEqual(store.names(), [DEFAULT_PROFILE_NAME])
+            p = store.find(DEFAULT_PROFILE_NAME)
+            assert p is not None
+            self.assertFalse(p.mic_eq_enabled)
+
+    def test_export_import_roundtrip(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "presets.json"
+            export_path = Path(tmp) / "export.json"
+            store = PresetStore.load(path)
+            store.upsert(AudioProfile(name="Extra", normal_eq=EQSettings.default()))
+            store.export_to_file(export_path)
+            store.replace_all([make_flat_default_profile()])
+            count = store.import_replace_all_from_file(export_path)
+            self.assertEqual(count, 2)
+            self.assertIn("Extra", store.names())
+            self.assertIn(DEFAULT_PROFILE_NAME, store.names())
+
+    def test_rename(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "presets.json"
+            store = PresetStore.load(path)
+            self.assertTrue(store.rename(DEFAULT_PROFILE_NAME, "Basis"))
+            self.assertIsNone(store.find(DEFAULT_PROFILE_NAME))
+            self.assertIsNotNone(store.find("Basis"))
 
     def test_corrupt_file_returns_defaults(self) -> None:
         with TemporaryDirectory() as tmp:
             path = Path(tmp) / "presets.json"
             path.write_text("{ not json", encoding="utf-8")
             store = PresetStore.load(path)
-            self.assertGreaterEqual(len(store.profiles), 1)
+            self.assertEqual(store.names(), [DEFAULT_PROFILE_NAME])
 
 
 class AudioProfileSerializationTest(unittest.TestCase):
@@ -77,16 +121,13 @@ class AudioProfileSerializationTest(unittest.TestCase):
         encoded = json.dumps(p.to_dict())
         decoded = AudioProfile.from_dict(json.loads(encoded))
         self.assertEqual(decoded.name, "X")
-        self.assertEqual(decoded.mode_group, "FM")
+        self.assertNotIn("mode_group", json.loads(encoded))
         self.assertEqual(decoded.normal_eq.eq1.freq, "OFF")
         self.assertEqual(decoded.normal_eq.eq2.freq, 1000)
-        # Grundwerte sind jetzt immer gesetzt (Defaults)
         self.assertEqual(decoded.mic_gain, MIC_GAIN_DEFAULT)
         self.assertEqual(decoded.ssb_tx_bpf, SSB_BPF_DEFAULT_KEY)
 
     def test_legacy_profile_without_basics_loads_with_defaults(self) -> None:
-        """Profile aus Version 0.2 hatten keine Grundwerte — wir fallen
-        auf Defaults zurück und brechen nichts."""
         legacy = {
             "name": "Legacy",
             "mode_group": "SSB",
@@ -130,9 +171,10 @@ class AudioProfileSerializationTest(unittest.TestCase):
         self.assertEqual(decoded.processor_eq.eq3.level, 5)
         self.assertEqual(decoded.advanced.get("ssb_hcut_freq"), 3000)
 
-    def test_invalid_mode_group_falls_back_to_usb(self) -> None:
-        decoded = AudioProfile.from_dict({"name": "x", "mode_group": "WTF"})
-        self.assertEqual(decoded.mode_group, "USB")
+    def test_mode_group_in_json_is_ignored(self) -> None:
+        decoded = AudioProfile.from_dict({"name": "x", "mode_group": "FM"})
+        self.assertEqual(decoded.name, "x")
+        self.assertEqual(decoded.mode_group, "SSB")
 
 
 if __name__ == "__main__":  # pragma: no cover

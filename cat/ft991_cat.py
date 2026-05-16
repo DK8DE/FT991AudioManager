@@ -56,6 +56,7 @@ from mapping.memory_tones import (
     tone_mode_needs_cn,
 )
 from mapping.memory_mapping import (
+    MEMORY_CHANNEL_MIN,
     MemoryChannel,
     format_mc_query,
     format_mc_set,
@@ -68,6 +69,12 @@ from mapping.sh_width_mapping import (
     format_sh_width_query,
     format_sh_width_set,
     parse_sh_width_response,
+)
+from mapping.radio_control_mapping import (
+    format_band_down,
+    format_band_up,
+    format_memory_channel_down,
+    format_memory_channel_up,
 )
 from mapping.rx_mapping import (
     AgcMode,
@@ -329,11 +336,14 @@ class FT991CAT:
                 f"EX{menu_number:03d} TX MAX POWER nicht numerisch: {raw!r}"
             ) from exc
 
-    def set_pc_power_watts(self, watts: int, *, max_watts: int = 100) -> None:
+    def set_pc_power_watts(
+        self, watts: int, *, max_watts: int = 100, tx_lock: bool = True
+    ) -> None:
         """Setzt die Sendeleistung über ``PC;`` (POWER CONTROL, Manual 1711-D)."""
         from mapping.tx_power_mapping import format_pc_set
 
-        self.ensure_rx()
+        if tx_lock:
+            self.ensure_rx()
         self._cat.send_command(
             format_pc_set(watts, max_watts=max_watts),
             read_response=False,
@@ -357,6 +367,40 @@ class FT991CAT:
     def read_antenna_tuner_status(self) -> str:
         """Liest ``AC;`` — Antwort ``ACxyz;``."""
         return self._cat.send_command("AC;")
+
+    def band_up(self) -> None:
+        """Nächstes Band (``BU0;``)."""
+        self.ensure_rx()
+        self._cat.send_command(format_band_up(), read_response=False)
+
+    def band_down(self) -> None:
+        """Vorheriges Band (``BD0;``)."""
+        self.ensure_rx()
+        self._cat.send_command(format_band_down(), read_response=False)
+
+    def ensure_memory_mode(self, *, initial_channel: Optional[int] = None) -> None:
+        """Wechselt in den Speicher-Modus, wenn ``MC;`` VFO meldet.
+
+        ``CH±`` wirkt nur im Memory-Modus. Aus VFO wird zuerst per
+        ``MCnnn;`` ein Kanal aktiviert (Standard: Kanal 001).
+        """
+        self.ensure_rx()
+        if self.read_active_memory_channel() is not None:
+            return
+        ch = MEMORY_CHANNEL_MIN if initial_channel is None else int(initial_channel)
+        self.select_memory_channel(ch)
+
+    def memory_channel_up(self, *, initial_channel: Optional[int] = None) -> None:
+        """Speicherkanal hoch (``CH0;``)."""
+        self.ensure_memory_mode(initial_channel=initial_channel)
+        self.ensure_rx()
+        self._cat.send_command(format_memory_channel_up(), read_response=False)
+
+    def memory_channel_down(self, *, initial_channel: Optional[int] = None) -> None:
+        """Speicherkanal runter (``CH1;``)."""
+        self.ensure_memory_mode(initial_channel=initial_channel)
+        self.ensure_rx()
+        self._cat.send_command(format_memory_channel_down(), read_response=False)
 
     # ------------------------------------------------------------------
     # VFO
@@ -623,9 +667,10 @@ class FT991CAT:
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
 
-    def set_mic_gain(self, value: int) -> None:
+    def set_mic_gain(self, value: int, *, tx_lock: bool = True) -> None:
         """Setzt den MIC-Gain (0..100). Geklemmt automatisch."""
-        self.ensure_rx()
+        if tx_lock:
+            self.ensure_rx()
         if value < MIC_GAIN_MIN or value > MIC_GAIN_MAX:
             # Klemmt format_three_digit ohnehin — wir loggen aber einmal.
             log = self.get_log()

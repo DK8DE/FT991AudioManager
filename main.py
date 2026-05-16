@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+# Vor jedem PySide6-QtMultimedia-Import (Audio-Player unter Windows).
+if sys.platform == "win32" and "QT_MEDIA_BACKEND" not in os.environ:
+    os.environ["QT_MEDIA_BACKEND"] = "windows"
 
 # Stellt sicher, dass das Projektverzeichnis im PYTHONPATH liegt, auch wenn
 # main.py per Doppelklick gestartet wird.

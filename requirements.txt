@@ -1,2 +1,5 @@
 PySide6>=6.6
+# Audio-Player: Qt Multimedia (MP3/WAV) — bei Import-Fehler:
+# pip install PySide6-Addons
+PySide6-Addons>=6.6
 pyserial>=3.5

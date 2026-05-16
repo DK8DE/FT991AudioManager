@@ -22,10 +22,18 @@ class MeterVerticalSlider(QSlider):
         super().__init__(Qt.Orientation.Vertical, parent)
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
-        super().paintEvent(event)
         pos = self.tickPosition()
-        if pos in (QSlider.TickPosition.NoTicks,):
+        if pos == QSlider.TickPosition.NoTicks:
+            super().paintEvent(event)
             return
+
+        # Nur unsere Ticks zeichnen — der Qt-Style (z. B. Fusion auf Windows)
+        # malt sonst zusätzlich Skalenstriche → doppelte Markierungen.
+        self.setTickPosition(QSlider.TickPosition.NoTicks)
+        try:
+            super().paintEvent(event)
+        finally:
+            self.setTickPosition(pos)
 
         interval = self.tickInterval()
         if interval <= 0:

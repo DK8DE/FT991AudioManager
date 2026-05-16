@@ -24,6 +24,8 @@ Beim Trennen wird der Thread sauber gestoppt.
 
 from __future__ import annotations
 
+import time
+
 import traceback
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
@@ -644,10 +646,10 @@ class DspSlider(QFrame):
             self._slider.valueChanged.connect(self._on_slider_changed)
             if tick_interval is not None and tick_interval > 0:
                 # Skalenstriche neben dem vertikalen Slider
-                self._slider.setTickPosition(QSlider.TickPosition.TicksRight)
+                self._slider.setTickPosition(QSlider.TickPosition.TicksLeft)
                 self._slider.setTickInterval(int(tick_interval))
             slider_row = QHBoxLayout()
-            slider_row.setContentsMargins(0, 0, 0, 0)
+            slider_row.setContentsMargins(4, 0, 2, 0)
             slider_row.addStretch(1)
             slider_row.addWidget(self._slider)
             slider_row.addStretch(1)
@@ -816,14 +818,14 @@ class AgcSlider(QFrame):
         self._slider.setMinimumHeight(130)
         self._slider.setSingleStep(1)
         self._slider.setPageStep(1)
-        self._slider.setTickPosition(QSlider.TicksRight)
+        self._slider.setTickPosition(QSlider.TickPosition.TicksLeft)
         self._slider.setTickInterval(1)
         self._slider.setInvertedAppearance(False)
         self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self._slider.valueChanged.connect(self._on_slider_changed)
 
         slider_row = QHBoxLayout()
-        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.setContentsMargins(4, 0, 2, 0)
         slider_row.addStretch(1)
         slider_row.addWidget(self._slider)
         slider_row.addStretch(1)
@@ -906,14 +908,14 @@ class SqlSlider(QFrame):
         self._slider.setMinimumHeight(130)
         self._slider.setSingleStep(1)
         self._slider.setPageStep(10)
-        self._slider.setTickPosition(QSlider.TickPosition.TicksRight)
+        self._slider.setTickPosition(QSlider.TickPosition.TicksLeft)
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
         self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self._slider.valueChanged.connect(self._on_slider_changed)
 
         slider_row = QHBoxLayout()
-        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.setContentsMargins(4, 0, 2, 0)
         slider_row.addStretch(1)
         slider_row.addWidget(self._slider)
         slider_row.addStretch(1)
@@ -986,7 +988,7 @@ class PowerSlider(QFrame):
         self._slider.setMinimumHeight(130)
         self._slider.setSingleStep(5)
         self._slider.setPageStep(10)
-        self._slider.setTickPosition(QSlider.TickPosition.TicksRight)
+        self._slider.setTickPosition(QSlider.TickPosition.TicksLeft)
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
         self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
@@ -994,7 +996,7 @@ class PowerSlider(QFrame):
         self._slider.valueChanged.connect(self._on_slider_changed)
 
         slider_row = QHBoxLayout()
-        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.setContentsMargins(4, 0, 2, 0)
         slider_row.addStretch(1)
         slider_row.addWidget(self._slider)
         slider_row.addStretch(1)
@@ -1095,7 +1097,7 @@ class MicGainSlider(QFrame):
         self._slider.setMinimumHeight(130)
         self._slider.setSingleStep(1)
         self._slider.setPageStep(5)
-        self._slider.setTickPosition(QSlider.TickPosition.TicksRight)
+        self._slider.setTickPosition(QSlider.TickPosition.TicksLeft)
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
         self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
@@ -1103,7 +1105,7 @@ class MicGainSlider(QFrame):
         self._slider.valueChanged.connect(self._on_slider_changed)
 
         slider_row = QHBoxLayout()
-        slider_row.setContentsMargins(0, 0, 0, 0)
+        slider_row.setContentsMargins(4, 0, 2, 0)
         slider_row.addStretch(1)
         slider_row.addWidget(self._slider)
         slider_row.addStretch(1)
@@ -1250,7 +1252,11 @@ class ScaledMeterBar(QWidget):
             lf.setBold(True)
             lf.setPointSizeF(lf.pointSizeF() * header_font_scale)
             self._label.setFont(lf)
-            outer.addWidget(self._label)
+            if flex_horizontal:
+                # Beschriftung wird in :class:`_ScaledBarCanvas` über dem Balken gezeichnet.
+                self._label.hide()
+            else:
+                outer.addWidget(self._label)
         else:
             self._label = None
 
@@ -1397,6 +1403,13 @@ class ScaledMeterBar(QWidget):
         self._value_label.setText("—")
         self._canvas.update()
 
+    def _canvas_header_height(self) -> int:
+        """Oberer Rand im Canvas — Platz für die gemalte TX-Überschrift."""
+        if not self._flex_horizontal or self._label is None:
+            return 6
+        fm = QFontMetrics(self._label.font())
+        return fm.height() + 8
+
 
 class _ScaledBarCanvas(QWidget):
     """Reines Mal-Widget für :class:`ScaledMeterBar`. Greift via Eltern-
@@ -1420,10 +1433,25 @@ class _ScaledBarCanvas(QWidget):
     def _paint(self, painter: QPainter, p: "ScaledMeterBar") -> None:
         height = self.height()
         bar_x = p._scale_width
-        bar_top = 6
+        bar_top = p._canvas_header_height()
         bar_bottom = height - 6
-        bar_height = bar_bottom - bar_top
+        bar_height = max(0, bar_bottom - bar_top)
         bar_w = p._bar_width
+
+        if p._label is not None and p._flex_horizontal:
+            if not p._enabled:
+                painter.setPen(QPen(QColor("#777777")))
+            else:
+                painter.setPen(QPen(QColor("#e8e8e8")))
+            painter.setFont(p._label.font())
+            painter.drawText(
+                bar_x,
+                0,
+                bar_w,
+                bar_top,
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                p._label.text(),
+            )
 
         # Hintergrund-Bar
         border_color = QColor("#3A3A3A") if p._enabled else QColor("#2A2A2A")
@@ -1637,6 +1665,9 @@ class TxBandwidthPanel(QWidget):
         self._applying_remote = False
         #: Maus/Touch auf dem Schieberegler gedrückt — CAT erst bei Loslassen.
         self._slider_pointer_down = False
+        #: Nach Nutzeränderung alte Poll-Werte kurz ignorieren (bis Funkgerät nachzieht).
+        self._user_p2_lock: Optional[int] = None
+        self._user_p2_lock_until: float = 0.0
 
         v = QVBoxLayout(self)
         v.setContentsMargins(0, 0, 0, 0)
@@ -1677,6 +1708,24 @@ class TxBandwidthPanel(QWidget):
         self._slider.valueChanged.connect(self._on_slider_value)
         v.addWidget(self._slider)
 
+    def _note_user_p2_change(self, p2: int) -> None:
+        self._user_p2_lock = sh_snap_p2_to_supported(int(p2), self._mode)
+        self._user_p2_lock_until = time.monotonic() + 3.0
+
+    def _ignore_remote_p2(self, p2: int) -> bool:
+        if self._slider_pointer_down or self._slider.hasFocus():
+            return True
+        if self._user_p2_lock is None:
+            return False
+        now = time.monotonic()
+        if now >= self._user_p2_lock_until:
+            self._user_p2_lock = None
+            return False
+        if sh_snap_p2_to_supported(int(p2), self._mode) != self._user_p2_lock:
+            return True
+        self._user_p2_lock = None
+        return False
+
     def _on_slider_pressed(self) -> None:
         if not self._applying_remote:
             self._slider_pointer_down = True
@@ -1687,6 +1736,7 @@ class TxBandwidthPanel(QWidget):
         if self._applying_remote or not was_dragging:
             return
         snapped = sh_snap_p2_to_supported(self._slider.value(), self._mode)
+        self._note_user_p2_change(snapped)
         self.p2_changed.emit(snapped)
 
     def _on_slider_value(self, val: int) -> None:
@@ -1702,6 +1752,7 @@ class TxBandwidthPanel(QWidget):
         # Während Maus/Touch gehalten wird: nur Anzeige — ein SH-Write kommt
         # in _on_slider_released. Tastatur/Mausrad: sofort (kein Press-Event).
         if not self._applying_remote and not self._slider_pointer_down:
+            self._note_user_p2_change(int(val))
             self.p2_changed.emit(int(val))
 
     def _refresh_face(self) -> None:
@@ -1729,6 +1780,8 @@ class TxBandwidthPanel(QWidget):
 
     def set_p2(self, p2: int, *, remote: bool) -> None:
         p2 = sh_snap_p2_to_supported(int(p2), self._mode)
+        if remote and self._ignore_remote_p2(p2):
+            return
         self._applying_remote = True
         try:
             self._slider.blockSignals(True)
@@ -1963,8 +2016,8 @@ class MeterWidget(QWidget):
         bars_frame.setObjectName("panelFrame")
         bars_frame.setFrameShape(QFrame.StyledPanel)
         bars_outer = QVBoxLayout(bars_frame)
-        bars_outer.setContentsMargins(6, 4, 6, 4)
-        bars_outer.setSpacing(3)
+        bars_outer.setContentsMargins(6, 6, 6, 4)
+        bars_outer.setSpacing(4)
 
         tx_meters_heading = QLabel("TX-Meter")
         tx_meters_heading.setAlignment(Qt.AlignCenter)
@@ -2404,13 +2457,15 @@ class MeterWidget(QWidget):
         max_w = po_max_watts_for_freq(self._last_vfo_a_hz)
 
         def _write() -> None:
-            self._ft.set_pc_power_watts(int(watts), max_watts=max_w)
+            self._ft.set_pc_power_watts(
+                int(watts), max_watts=max_w, tx_lock=False
+            )
 
         self._safe_write(_write, where="POWER schreiben")
 
     def _on_mic_gain_chosen(self, value: int) -> None:
         self._safe_write(
-            lambda: self._ft.set_mic_gain(int(value)),
+            lambda: self._ft.set_mic_gain(int(value), tx_lock=False),
             where="MIC Gain schreiben",
         )
 

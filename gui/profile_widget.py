@@ -12,14 +12,17 @@ einfriert. Vor jedem Schreibvorgang wird der TX-Status geprüft.
 
 from __future__ import annotations
 
+import json
 import time
 import traceback
 from copy import deepcopy
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -50,7 +53,6 @@ from mapping.rx_mapping import (
     ALL_OPERATING_MODES,
     RxMode,
     coarse_mode_group_for,
-    normalize_profile_mode_group,
     rx_mode_from_selection,
 )
 from model import (
@@ -59,6 +61,7 @@ from model import (
     ExtendedSettings,
     PresetStore,
 )
+from model.preset_store import DEFAULT_PROFILE_NAME
 
 from .audio_basics_widget import AudioBasicsValues, AudioBasicsWidget
 from .eq_editor_widget import EQEditorWidget
@@ -118,9 +121,7 @@ class _ProfileIoWorker(QObject):
         #: Mode-Wechsel in der GUI.
         self._target_mode = target_mode
         self._step = 0
-        self._total = _total_steps_for(
-            profile.mode_group if profile is not None else live_mode_group
-        )
+        self._total = _total_steps_for(live_mode_group)
         # Felder, die beim Lesen aufgrund unerwarteter Rohwerte
         # auf Default fielen (zur Anzeige in der GUI).
         self._skipped: list[str] = []
@@ -232,7 +233,6 @@ class _ProfileIoWorker(QObject):
 
         return AudioProfile(
             name=self._live_name,
-            mode_group=self._live_mode_group,
             mic_gain=mic_gain,
             mic_eq_enabled=mic_eq_enabled,
             speech_processor_enabled=processor_enabled,
@@ -286,8 +286,6 @@ class _ProfileIoWorker(QObject):
         # zum Profil passt — sonst sind die Extended-Werte nicht
         # vergleichbar und wir schreiben zur Sicherheit alles.
         baseline = self._baseline
-        if baseline is not None and baseline.mode_group != profile.mode_group:
-            baseline = None
 
         if log is not None:
             mode = "Diff" if baseline is not None else "voll"
@@ -350,7 +348,7 @@ class _ProfileIoWorker(QObject):
 
         # Erweiterte Einstellungen schreiben (mode-spezifisch).
         written += self._ft.write_extended_for_mode(
-            coarse_mode_group_for(profile.mode_group),
+            coarse_mode_group_for(self._live_mode_group),
             profile.extended.as_keyed_dict(),
             progress=self._eq_progress("Erweitert schreiben"),
             tx_lock=False,
@@ -388,17 +386,22 @@ class ProfileWidget(QWidget):
     #: CAT-Verbindung weggebrochen ist (USB/Strom). Das Hauptfenster fängt
     #: das ab und reagiert (LED, Reconnect-Watcher) — ohne Fehler-Dialog.
     connection_lost = Signal()
+    active_profile_changed = Signal(str)
 
     def __init__(
         self,
         serial_cat: SerialCAT,
         preset_store: PresetStore,
         *,
+        initial_last_profile: Optional[str] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._cat = serial_cat
         self._store = preset_store
+        self._startup_profile_name: Optional[str] = (
+            initial_last_profile.strip() if initial_last_profile else None
+        )
         self._suppress_dirty = False
         self._dirty = False
         #: Speicherkanal-Editor blockiert CAT-Auto-Writes (Deadlock-Vermeidung).
@@ -458,7 +461,7 @@ class ProfileWidget(QWidget):
         self._follow_radio_mode_combo: bool = False
 
         self._build_ui()
-        self._reload_profile_list(select_first=True)
+        self._reload_profile_list()
 
     # ------------------------------------------------------------------
     # UI
@@ -546,10 +549,28 @@ class ProfileWidget(QWidget):
         self.save_as_button.clicked.connect(self._on_save_as_clicked)
         toolbar_layout.addWidget(self.save_as_button)
 
+        self.rename_button = QPushButton("Umbenennen…")
+        self.rename_button.setSizePolicy(button_policy)
+        self.rename_button.clicked.connect(self._on_rename_clicked)
+        toolbar_layout.addWidget(self.rename_button)
+
         self.delete_button = QPushButton("EQ-Profil löschen")
         self.delete_button.setSizePolicy(button_policy)
         self.delete_button.clicked.connect(self._on_delete_clicked)
         toolbar_layout.addWidget(self.delete_button)
+
+        toolbar_layout.addSpacing(12)
+
+        self.export_button = QPushButton("Exportieren…")
+        self.export_button.setSizePolicy(button_policy)
+        self.export_button.clicked.connect(self._on_export_clicked)
+        toolbar_layout.addWidget(self.export_button)
+
+        self.import_button = QPushButton("Importieren…")
+        self.import_button.setSizePolicy(button_policy)
+        self.import_button.clicked.connect(self._on_import_clicked)
+        toolbar_layout.addWidget(self.import_button)
+
         toolbar_layout.addStretch(1)
 
         scroll = QScrollArea()
@@ -641,11 +662,10 @@ class ProfileWidget(QWidget):
         if available:
             self._sync_label.setText("Live-Sync: aktiv")
             self._sync_label.setStyleSheet("color: #2ea043;")
-            # Beim Connect direkt ein Read anstoßen — die GUI soll mit den
-            # aktuellen Geräte-Werten starten. Der erste Mode-Wechsel hat
-            # ggf. schon einen Read angefordert; doppelte Reads sind durch
-            # die Pending-Queue serialisiert.
-            self._schedule_action("read")
+            # Beim Connect das aktive EQ-Profil ins Gerät schreiben (nicht
+            # umgekehrt vom Radio lesen — sonst würde das zuletzt gewählte
+            # Profil sofort wieder überschrieben).
+            self.request_apply_active_profile()
         else:
             self._sync_label.setText("Live-Sync: aus")
             self._sync_label.setStyleSheet("color: gray;")
@@ -665,9 +685,29 @@ class ProfileWidget(QWidget):
     # Profilauswahl
     # ------------------------------------------------------------------
 
+    def current_profile_name(self) -> Optional[str]:
+        return self._current_profile_name
+
+    @staticmethod
+    def _resolve_profile_name(
+        names: list[str],
+        *,
+        prefer: Optional[str] = None,
+        previously: Optional[str] = None,
+    ) -> Optional[str]:
+        if not names:
+            return None
+        for candidate in (prefer, previously, DEFAULT_PROFILE_NAME):
+            if candidate and candidate in names:
+                return candidate
+        return names[0]
+
     def _reload_profile_list(self, *, select_first: bool = False) -> None:
+        self._store.ensure_defaults()
         names = self._store.names()
         previously = self._current_profile_name
+        prefer = self._startup_profile_name
+        self._startup_profile_name = None
         self._suppress_dirty = True
         self.profile_combo.blockSignals(True)
         self.profile_combo_eq.blockSignals(True)
@@ -678,8 +718,13 @@ class ProfileWidget(QWidget):
                 self.profile_combo.addItem(name)
                 self.profile_combo_eq.addItem(name)
             if names:
-                target = previously if (previously in names and not select_first) else names[0]
-                idx = self.profile_combo.findText(target)
+                if select_first and not prefer:
+                    target = names[0]
+                else:
+                    target = self._resolve_profile_name(
+                        names, prefer=prefer, previously=previously
+                    )
+                idx = self.profile_combo.findText(target or "")
                 if idx >= 0:
                     self.profile_combo.setCurrentIndex(idx)
                     self.profile_combo_eq.setCurrentIndex(idx)
@@ -697,6 +742,10 @@ class ProfileWidget(QWidget):
         self._dirty = False
         self._refresh_status()
 
+    def _notify_active_profile(self) -> None:
+        if self._current_profile_name:
+            self.active_profile_changed.emit(self._current_profile_name)
+
     def _apply_profile_to_editors(self, name: str) -> None:
         profile = self._store.find(name)
         if profile is None:
@@ -704,10 +753,6 @@ class ProfileWidget(QWidget):
         self._current_profile_name = profile.name
         self._suppress_dirty = True
         try:
-            mode_label = normalize_profile_mode_group(profile.mode_group)
-            idx = self.mode_combo.findText(mode_label)
-            if idx >= 0:
-                self.mode_combo.setCurrentIndex(idx)
             self.basics.set_values(
                 AudioBasicsValues(
                     mic_gain=profile.mic_gain,
@@ -720,11 +765,14 @@ class ProfileWidget(QWidget):
             self.normal_eq_editor.set_settings(profile.normal_eq)
             self.processor_eq_editor.set_settings(profile.processor_eq)
             self.extended_editor.set_values(profile.extended)
-            self._apply_mode_relevance(coarse_mode_group_for(profile.mode_group))
+            self._apply_mode_relevance(
+                coarse_mode_group_for(self.mode_combo.currentText())
+            )
         finally:
             self._suppress_dirty = False
         self._dirty = False
         self._refresh_status()
+        self._notify_active_profile()
 
     def _apply_mode_relevance(self, mode_group: str) -> None:
         """Versteckt alle UI-Sektionen, die in ``mode_group`` keinen Effekt haben."""
@@ -755,8 +803,9 @@ class ProfileWidget(QWidget):
             if self._current_profile_name
             else None
         )
-        selection = profile.mode_group if profile else self.mode_combo.currentText()
-        self._apply_mode_relevance(coarse_mode_group_for(selection))
+        self._apply_mode_relevance(
+            coarse_mode_group_for(self.mode_combo.currentText())
+        )
 
     def _update_eq_active_path(self) -> None:
         """Markiert je nach Speech-Processor-Zustand, welcher EQ gerade greift.
@@ -823,8 +872,7 @@ class ProfileWidget(QWidget):
                 self._user_mode_lock_until = time.monotonic() + 4.0
                 self._last_radio_mode = target_mode
                 self._schedule_action("set_mode_and_read", target_mode)
-        if not self._follow_radio_mode_combo:
-            self._mark_dirty()
+        # Betriebsart ist nur GUI-Hilfe — kein „Profil geändert“.
 
     def _set_editors_enabled(self, enabled: bool) -> None:
         for w in (
@@ -901,7 +949,6 @@ class ProfileWidget(QWidget):
             new_profile.name = name
         else:
             new_profile = AudioProfile(name=name)
-        new_profile.mode_group = self.mode_combo.currentText()
         basics = self.basics.get_values()
         new_profile.mic_gain = basics.mic_gain
         new_profile.mic_eq_enabled = basics.mic_eq_enabled
@@ -982,22 +1029,114 @@ class ProfileWidget(QWidget):
         self._current_profile_name = None
         self._reload_profile_list(select_first=True)
 
+    def _on_rename_clicked(self) -> None:
+        if not self._current_profile_name:
+            return
+        old_name = self._current_profile_name
+        new_name, ok = QInputDialog.getText(
+            self,
+            "EQ-Profil umbenennen",
+            "Neuer Name:",
+            text=old_name,
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name or new_name == old_name:
+            return
+        if self._store.find(new_name) is not None:
+            QMessageBox.warning(
+                self,
+                "Name vergeben",
+                f"Ein EQ-Profil mit dem Namen „{new_name}“ existiert bereits.",
+            )
+            return
+        if self._dirty:
+            self._save_current_profile_inplace()
+        if not self._store.rename(old_name, new_name):
+            QMessageBox.warning(self, "Umbenennen", "Umbenennen fehlgeschlagen.")
+            return
+        self._current_profile_name = new_name
+        self._reload_profile_list()
+        self._dirty = False
+        self._refresh_status()
+
+    def _on_export_clicked(self) -> None:
+        if not self._store.profiles:
+            QMessageBox.information(
+                self, "Export", "Es sind keine EQ-Profile zum Exportieren vorhanden."
+            )
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "EQ-Profile exportieren",
+            "eq_profile_export.json",
+            "JSON-Dateien (*.json);;Alle Dateien (*.*)",
+        )
+        if not path:
+            return
+        try:
+            self._store.export_to_file(Path(path))
+        except OSError as exc:
+            QMessageBox.critical(self, "Export fehlgeschlagen", str(exc))
+            return
+        QMessageBox.information(
+            self,
+            "Export",
+            f"{len(self._store.profiles)} EQ-Profil(e) exportiert nach:\n{path}",
+        )
+
+    def _on_import_clicked(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "EQ-Profile importieren",
+            "",
+            "JSON-Dateien (*.json);;Alle Dateien (*.*)",
+        )
+        if not path:
+            return
+        answer = QMessageBox.warning(
+            self,
+            "EQ-Profile importieren",
+            (
+                "Alle vorhandenen EQ-Profile werden durch den Inhalt der "
+                "gewählten JSON-Datei ersetzt.\n\n"
+                "Ungespeicherte Änderungen am aktuellen Profil gehen verloren.\n\n"
+                "Fortfahren?"
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            count = self._store.import_replace_all_from_file(Path(path))
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            QMessageBox.critical(self, "Import fehlgeschlagen", str(exc))
+            return
+        self._current_profile_name = None
+        self._last_synced_profile = None
+        self._dirty = False
+        self._reload_profile_list(select_first=True)
+        QMessageBox.information(
+            self,
+            "Import",
+            f"{count} EQ-Profil(e) importiert und gespeichert.",
+        )
+
     # ------------------------------------------------------------------
     # CAT-Operationen (Worker-Thread)
     # ------------------------------------------------------------------
 
+    def request_apply_active_profile(self) -> bool:
+        """Schreibt das aktive EQ-Profil ins Gerät (still, z. B. nach Connect)."""
+        if not self._cat.is_connected() or not self._current_profile_name:
+            return False
+        self._schedule_action("write_full")
+        return True
+
     def request_auto_read(self) -> bool:
-        """Stößt einen Read-Vorgang an, sofern die Voraussetzungen stimmen.
-
-        Wird vom Hauptfenster direkt nach einem erfolgreichen Connect (inkl.
-        Auto-Reconnect) gerufen, damit die GUI immer mit dem aktuellen
-        Geräte-Zustand startet.
-
-        Gibt ``True`` zurück, wenn der Read sofort gestartet oder als
-        Pending eingereiht wurde; ``False``, wenn keine Verbindung besteht.
-        Es werden **keine Dialoge** angezeigt — Auto-Aktionen sollen still
-        bleiben.
-        """
+        """Liest den Geräte-Stand in die Editoren (manuell / nach Moduswechsel)."""
         if not self._cat.is_connected():
             return False
         self._schedule_action("read")
@@ -1203,9 +1342,7 @@ class ProfileWidget(QWidget):
         dialog: Optional[QProgressDialog] = None
         title = "EQ-Profil ins Gerät schreiben…" if write else "EQ-Profil aus Gerät lesen…"
         if not silent:
-            total_steps = _total_steps_for(
-                profile.mode_group if profile is not None else self.mode_combo.currentText()
-            )
+            total_steps = _total_steps_for(self.mode_combo.currentText())
             dialog = QProgressDialog(title, "Abbrechen", 0, total_steps, self)
             dialog.setWindowTitle(title)
             dialog.setWindowModality(Qt.WindowModal)
@@ -1281,12 +1418,9 @@ class ProfileWidget(QWidget):
         self._dirty = False
         self._auto_write_timer.stop()
         # Baseline für künftige Diff-Writes setzen — der Read war gerade
-        # die Ground Truth. ``profile.mode_group`` ist im Worker bereits auf
-        # den aktuellen UI-Mode gesetzt worden.
+        # die Ground Truth (Betriebsart kommt aus der GUI-Combo, nicht aus dem Profil).
         self._last_synced_profile = deepcopy(profile)
-        # Mode-Gruppe vom Profil reflektiert das, was wir gerade gelesen
-        # haben — egal, ob das vom MD0-Poll oder vom Auto-Read kam.
-        self._last_radio_mode = rx_mode_from_selection(profile.mode_group)
+        self._last_radio_mode = rx_mode_from_selection(self.mode_combo.currentText())
 
         if skipped_list and not self._worker_silent:
             bullets = "\n".join(f"• {item}" for item in skipped_list)
@@ -1391,7 +1525,10 @@ class ProfileWidget(QWidget):
         for btn in (
             self.save_button,
             self.save_as_button,
+            self.rename_button,
             self.delete_button,
+            self.export_button,
+            self.import_button,
             self.profile_combo,
             self.profile_combo_eq,
         ):

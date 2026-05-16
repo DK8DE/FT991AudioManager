@@ -144,10 +144,12 @@ def decode_carrier_level(raw: str) -> int:
 # ----------------------------------------------------------------------
 # Mikrofon-Wahl (Front MIC / Rear DATA) — laut Manual EX045 / EX074
 # (EX106 — SSB MIC SELECT — wird von der App nicht verwaltet.)
+# Menü 072 am Gerät: DATA-Port / USB-Audio (CAT EX072, gleiche Kodierung 0/1).
 # ----------------------------------------------------------------------
 
 AM_MIC_SEL_MENU = 45
 FM_MIC_SEL_MENU = 74
+DATA_PORT_MENU = 72
 
 
 class MicSource(str, Enum):

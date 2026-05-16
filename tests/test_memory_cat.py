@@ -186,6 +186,30 @@ class ReadActiveMemoryChannelTest(unittest.TestCase):
         self.assertIsNone(ft.read_active_memory_channel())
 
 
+class EnsureMemoryModeTest(unittest.TestCase):
+    _TX_RX = {"TX;": "TX0;"}
+
+    def test_skips_mc_when_already_in_memory(self) -> None:
+        cat = _FakeSerialCAT({**self._TX_RX, "MC;": "MC012;"})
+        ft = FT991CAT(cat)
+        ft.ensure_memory_mode()
+        self.assertEqual([c for c in cat.commands if c.startswith("MC")], ["MC;"])
+
+    def test_selects_channel_from_vfo_before_ch_up(self) -> None:
+        cat = _FakeSerialCAT({**self._TX_RX, "MC;": "?;", "MC005;": "MC005;"})
+        ft = FT991CAT(cat)
+        ft.memory_channel_up(initial_channel=5)
+        self.assertIn("MC005;", cat.commands)
+        self.assertIn("CH0;", cat.commands)
+
+    def test_defaults_to_channel_one_from_vfo(self) -> None:
+        cat = _FakeSerialCAT({**self._TX_RX, "MC;": "?;", "MC001;": "MC001;"})
+        ft = FT991CAT(cat)
+        ft.memory_channel_down()
+        self.assertIn("MC001;", cat.commands)
+        self.assertIn("CH1;", cat.commands)
+
+
 class SwitchToVfoModeTest(unittest.TestCase):
     def test_reads_fa_and_writes_back(self) -> None:
         cat = _FakeSerialCAT({"FA;": "FA014250000;"})

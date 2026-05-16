@@ -3,8 +3,9 @@
 Neuer schlanker Aufbau (ab 0.5.1):
 
 - Oben **rechts**: VFO-A/B und RX/TX-Anzeige; darunter ein **großer
-  Meter-Bereich** (S-Meter + DSP links, AF/RF + TX-Meter rechts); unten
-  **Mode-Gruppe**, **EQ-Profil** und **Speicherkanal**.
+  Meter-Bereich** (S-Meter + DSP links, AF/RF + TX-Meter rechts);
+  darunter **Tune / CH± / Band±**; unten **Mode-Gruppe**, **EQ-Profil**
+  und **Speicherkanal**.
 - **EQ-Profil- und Mode-Auswahl** bleiben im Hauptfenster; der Equalizer-Editor
   (Grundwerte, EQ, Erweitert, Speichern) liegt in **Bearbeiten → Equalizer**.
 - Verbindung: **Datei → Verbinden** / **Datei → Trennen**.
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
+    QLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -49,8 +51,10 @@ from cat import (
 from mapping.memory_mapping import MemoryChannel
 from mapping.rx_mapping import RxMode, coarse_mode_group_for
 from model import AppSettings, PresetStore
+from rig_bridge import RigBridgeManager
 
 from .app_icon import app_icon
+from .audio_player_window import AudioPlayerWindow
 from .equalizer_window import EqualizerWindow
 from .log_widget import LogWindow
 from .calibration_dialog import open_calibration_dialog
@@ -58,6 +62,7 @@ from .memory_editor_dialog import open_memory_editor
 from .memory_loader import MemoryChannelLoader
 from .meter_widget import MeterWidget
 from .profile_widget import ProfileWidget
+from .radio_control_bar import RadioControlBar
 from .settings_dialog import ConnectionSettingsDialog
 from .theme import apply_theme
 from mapping.amateur_bands import amateur_band_for_hz
@@ -67,6 +72,7 @@ from .vfo_triplet_widget import VfoTripletWidget
 _VFO_CAPTION_STYLE_IDLE = "color: #888888; font-weight: bold;"
 _VFO_CAPTION_STYLE_IN_BAND = "color: #5ddc7a; font-weight: bold;"
 _VFO_CAPTION_STYLE_OUT_OF_BAND = "color: #ff6b6b; font-weight: bold;"
+_VFO_CAPTION_TO_FREQ_GAP_PX = 10
 _VFO_FREQ_COLOR = "#FFFFFF"
 
 
@@ -88,10 +94,16 @@ class MainWindow(QMainWindow):
         self._settings = settings
         self._cat_log = CatLog()
         self._cat = SerialCAT(log=self._cat_log)
+        self._rig_bridge = RigBridgeManager(
+            settings.rig_bridge.to_dict(),
+            get_cat=lambda: self._cat,
+            log_write=self._rig_bridge_log_write,
+        )
         self._preset_store = PresetStore.load()
 
         self._log_window: Optional[LogWindow] = None
         self._equalizer_window: Optional[EqualizerWindow] = None
+        self._audio_player_window: Optional[AudioPlayerWindow] = None
         self._memory_editor: Optional[QWidget] = None
         self._calibration_dialog: Optional[QWidget] = None
         self._last_identity_info: str = ""
@@ -252,7 +264,14 @@ class MainWindow(QMainWindow):
         layout.setSpacing(8)
 
         # Profil-Logik (Koordinator); Combos werden unten eingebettet.
-        self.profile_widget = ProfileWidget(self._cat, self._preset_store)
+        self.profile_widget = ProfileWidget(
+            self._cat,
+            self._preset_store,
+            initial_last_profile=self._settings.ui.last_profile,
+        )
+        self.profile_widget.active_profile_changed.connect(
+            self._on_active_profile_changed
+        )
         self.profile_widget.hide()
         self.profile_widget.set_cat_available(False)
         self.profile_widget.set_hide_extended_in_ssb(
@@ -304,21 +323,69 @@ class MainWindow(QMainWindow):
         top_row = QHBoxLayout(top_bar)
         top_row.setContentsMargins(10, 6, 10, 6)
         top_row.setSpacing(12)
+
+        for triplet in (self._vfo_a_triplet, self._vfo_b_triplet):
+            triplet.setSizePolicy(
+                QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred
+            )
+
+        for cap in (self._vfo_a_caption, self._vfo_b_caption):
+            cap.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+
+        vfo_a_box = QWidget()
+        vfo_a_box.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        vfo_a_row = QHBoxLayout(vfo_a_box)
+        vfo_a_row.setContentsMargins(0, 0, 0, 0)
+        vfo_a_row.setSpacing(0)
+        vfo_a_row.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        vfo_a_row.addWidget(self._vfo_a_caption)
+        vfo_a_row.addSpacing(_VFO_CAPTION_TO_FREQ_GAP_PX)
+        vfo_a_row.addWidget(self._vfo_a_triplet)
+        vfo_a_row.addSpacing(8)
+        vfo_a_row.addWidget(self._vfo_ab_button)
+
+        vfo_b_box = QWidget()
+        vfo_b_box.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
+        vfo_b_row = QHBoxLayout(vfo_b_box)
+        vfo_b_row.setContentsMargins(0, 0, 0, 0)
+        vfo_b_row.setSpacing(0)
+        vfo_b_row.setSizeConstraint(QLayout.SizeConstraint.SetFixedSize)
+        vfo_b_row.addWidget(self._vfo_b_caption)
+        vfo_b_row.addSpacing(_VFO_CAPTION_TO_FREQ_GAP_PX)
+        vfo_b_row.addWidget(self._vfo_b_triplet)
+
+        top_row.addWidget(vfo_a_box, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         top_row.addStretch(1)
-        top_row.addWidget(self._vfo_a_caption)
-        top_row.addWidget(self._vfo_a_triplet)
-        top_row.addWidget(self._vfo_ab_button)
-        top_row.addSpacing(12)
-        top_row.addWidget(self._vfo_b_caption)
-        top_row.addWidget(self._vfo_b_triplet)
-        top_row.addSpacing(10)
+        top_row.addWidget(vfo_b_box, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        top_row.addStretch(1)
         self.meter_widget.tx_led.setParent(top_bar)
         self.meter_widget.tx_label.setParent(top_bar)
-        top_row.addWidget(self.meter_widget.tx_led)
-        top_row.addWidget(self.meter_widget.tx_label)
+        top_row.addWidget(
+            self.meter_widget.tx_led, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        top_row.addWidget(
+            self.meter_widget.tx_label,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         layout.addWidget(top_bar)
 
         layout.addWidget(self.meter_widget, stretch=1)
+
+        self._radio_control_bar = RadioControlBar()
+        self._radio_control_bar.tune_clicked.connect(self._on_tune_clicked)
+        self._radio_control_bar.channel_up_clicked.connect(
+            self._on_memory_channel_up_clicked
+        )
+        self._radio_control_bar.channel_down_clicked.connect(
+            self._on_memory_channel_down_clicked
+        )
+        self._radio_control_bar.band_up_clicked.connect(self._on_band_up_clicked)
+        self._radio_control_bar.band_down_clicked.connect(self._on_band_down_clicked)
+        self._radio_control_bar.audio_player_clicked.connect(
+            self._on_audio_player_action
+        )
+        layout.addWidget(self._radio_control_bar)
 
         # ----- Unten: Mode + EQ-Profil; Speicherkanal darunter (volle Breite) --
         bottom_bar = QFrame()
@@ -406,6 +473,11 @@ class MainWindow(QMainWindow):
         equalizer_action.setShortcut("Ctrl+Shift+E")
         equalizer_action.triggered.connect(self._on_equalizer_action)
         edit_menu.addAction(equalizer_action)
+
+        audio_player_action = QAction("&Audio-Player…", self)
+        audio_player_action.setShortcut("Ctrl+Shift+A")
+        audio_player_action.triggered.connect(self._on_audio_player_action)
+        edit_menu.addAction(audio_player_action)
 
         edit_menu.addSeparator()
 
@@ -513,11 +585,8 @@ class MainWindow(QMainWindow):
             return False
         self._refresh_header_status(connected=True, info=self._last_identity_info)
         self._on_connection_changed(True)
-        # Direkt nach erfolgreicher Verbindung die aktuellen Werte einmal
-        # vom Radio lesen — ohne Dialoge, dafür mit Fortschrittsbalken.
-        # ``request_auto_read`` ist tolerant (kein Crash, wenn schon ein
-        # Worker läuft).
-        QTimer.singleShot(0, self.profile_widget.request_auto_read)
+        # EQ-Profil wird in ``set_cat_available(True)`` per write_full
+        # ins Gerät übertragen (siehe ProfileWidget).
         # Speicherkanäle parallel im Hintergrund laden. Der Loader nutzt
         # denselben SerialCAT (mit RLock), arbeitet aber zwischen den
         # Profile-Lese-Roundtrips, sodass die GUI flüssig bleibt.
@@ -632,12 +701,84 @@ class MainWindow(QMainWindow):
                     self._connection_footer_label.setText("Kein Port konfiguriert")
 
     # ------------------------------------------------------------------
+    # Radio-Steuerung (Tune / Kanal / Band)
+    # ------------------------------------------------------------------
+
+    def _run_radio_control(
+        self,
+        action: str,
+        *,
+        sync_memory_combo: bool = False,
+    ) -> None:
+        if not self._cat.is_connected():
+            return
+        ft = FT991CAT(self._cat)
+        initial_ch: Optional[int] = None
+        if action in ("ch_up", "ch_down"):
+            data = self.memory_combo.currentData()
+            if isinstance(data, int) and data >= 1:
+                initial_ch = data
+        try:
+            if action == "tune":
+                ft.start_antenna_tuner()
+            elif action == "ch_up":
+                ft.memory_channel_up(initial_channel=initial_ch)
+            elif action == "ch_down":
+                ft.memory_channel_down(initial_channel=initial_ch)
+            elif action == "band_up":
+                ft.band_up()
+            elif action == "band_down":
+                ft.band_down()
+            else:
+                return
+        except CatConnectionLostError:
+            self._on_connection_lost()
+            return
+        except CatError as exc:
+            sb = self.statusBar()
+            if sb is not None:
+                sb.showMessage(str(exc), 5000)
+            return
+        if sync_memory_combo:
+            QTimer.singleShot(200, self._sync_memory_combo_from_radio)
+
+    def _on_tune_clicked(self) -> None:
+        self._run_radio_control("tune")
+
+    def _on_memory_channel_up_clicked(self) -> None:
+        self._run_radio_control("ch_up", sync_memory_combo=True)
+
+    def _on_memory_channel_down_clicked(self) -> None:
+        self._run_radio_control("ch_down", sync_memory_combo=True)
+
+    def _on_band_up_clicked(self) -> None:
+        self._run_radio_control("band_up")
+
+    def _on_band_down_clicked(self) -> None:
+        self._run_radio_control("band_down")
+
+    # ------------------------------------------------------------------
     # Slots
     # ------------------------------------------------------------------
+
+    def _rig_bridge_log_write(self, level: str, msg: str) -> None:
+        lvl = (level or "INFO").upper()
+        if lvl == "WARN":
+            self._cat_log.log_warn(msg)
+        elif lvl == "ERROR":
+            self._cat_log.log_error(msg)
+        else:
+            self._cat_log.log_info(msg)
 
     def _on_connection_changed(self, connected: bool) -> None:
         self.profile_widget.set_cat_available(connected)
         self.meter_widget.on_connection_changed(connected)
+        self._radio_control_bar.set_controls_enabled(connected)
+        if connected:
+            self._rig_bridge.update_config(self._settings.rig_bridge.to_dict())
+            self._rig_bridge.on_app_connected()
+        else:
+            self._rig_bridge.on_app_disconnected()
         if not connected:
             self._mode_label.setText("Mode: —")
             self._vfo_a_display_hz = 0
@@ -663,6 +804,7 @@ class MainWindow(QMainWindow):
 
     def _on_tx_status_changed(self, transmitting: bool) -> None:
         self._tx_label.setText("TX: AN" if transmitting else "TX: aus")
+        self._rig_bridge.update_from_radio(ptt=transmitting)
         if transmitting:
             self._tx_label.setStyleSheet("color: #ff6060; font-weight: bold;")
         else:
@@ -687,7 +829,9 @@ class MainWindow(QMainWindow):
         """Vom MeterWidget bei jedem Slow-Path-RX-Sample gerufen."""
         if isinstance(mode, RxMode):
             self._mode_label.setText(f"Mode: {mode.value}")
+            self._rig_bridge.update_from_radio(mode=mode.value)
         if frequency_hz > 0:
+            self._rig_bridge.update_from_radio(frequency_hz=frequency_hz)
             self._vfo_a_display_hz = frequency_hz
             self._vfo_a_triplet.set_frequency_hz(frequency_hz)
             self._update_vfo_caption_band_color(self._vfo_a_caption, frequency_hz)
@@ -946,6 +1090,29 @@ class MainWindow(QMainWindow):
     def _on_equalizer_window_closed(self) -> None:
         pass
 
+    def _ensure_audio_player_window(self) -> AudioPlayerWindow:
+        if self._audio_player_window is None:
+            self._audio_player_window = AudioPlayerWindow(
+                self._settings,
+                self._cat,
+                parent=self,
+            )
+            self._audio_player_window.closed.connect(
+                self._on_audio_player_window_closed
+            )
+        return self._audio_player_window
+
+    def _on_audio_player_action(self) -> None:
+        win = self._ensure_audio_player_window()
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def _on_audio_player_window_closed(self) -> None:
+        if self._audio_player_window is not None:
+            self._audio_player_window.persist_settings()
+            self._persist_settings()
+
     def _on_memory_editor_action(self) -> None:
         if not self._cat.is_connected():
             QMessageBox.information(
@@ -1013,7 +1180,12 @@ class MainWindow(QMainWindow):
         self.meter_widget.ensure_polling()
 
     def _on_settings_action(self) -> None:
-        dialog = ConnectionSettingsDialog(self._settings, self._cat, parent=self)
+        dialog = ConnectionSettingsDialog(
+            self._settings,
+            self._cat,
+            get_rig_bridge=lambda: self._rig_bridge,
+            parent=self,
+        )
         dialog.settings_changed.connect(self._persist_settings)
         dialog.exec()
         # Nach dem Schließen die Anzeige in der Statusleiste aktualisieren
@@ -1100,7 +1272,14 @@ class MainWindow(QMainWindow):
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _on_active_profile_changed(self, name: str) -> None:
+        self._settings.ui.last_profile = name
+        self._persist_settings()
+
     def _persist_settings(self) -> None:
+        name = self.profile_widget.current_profile_name()
+        if name:
+            self._settings.ui.last_profile = name
         # Polling-Intervalle live ans Meter-Widget durchreichen, damit eine
         # Änderung im Settings-Dialog sofort greift — auch wenn gerade
         # gepollt wird.
@@ -1122,6 +1301,10 @@ class MainWindow(QMainWindow):
         if app is not None:
             app.removeEventFilter(self)
         try:
+            self._rig_bridge.on_app_disconnected()
+        except Exception:
+            pass
+        try:
             self.meter_widget.stop_polling()
         finally:
             try:
@@ -1136,6 +1319,9 @@ class MainWindow(QMainWindow):
                 if self._equalizer_window is not None:
                     self._equalizer_window.force_close()
                     self._equalizer_window = None
+                if self._audio_player_window is not None:
+                    self._audio_player_window.force_close()
+                    self._audio_player_window = None
                 self._persist_settings()
                 super().closeEvent(event)
 

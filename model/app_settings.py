@@ -9,7 +9,7 @@ Format (Auszug, wie in der Spezifikation)::
         "timeout_ms": 1000
       },
       "ui": {
-        "last_profile": "SSB Sprache",
+        "last_profile": "Default",
         "auto_apply_profile": false,
         "show_advanced": false
       }
@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Optional
 
 from ._app_paths import app_data_dir
+from .audio_player_settings import AudioPlayerSettings
+from .rig_bridge_settings import RigBridgeSettings
 
 
 DEFAULT_BAUDRATE = 38400
@@ -88,6 +90,8 @@ class AppSettings:
     cat: CatSettings = field(default_factory=CatSettings)
     polling: PollingSettings = field(default_factory=PollingSettings)
     ui: UiSettings = field(default_factory=UiSettings)
+    rig_bridge: RigBridgeSettings = field(default_factory=RigBridgeSettings)
+    audio_player: AudioPlayerSettings = field(default_factory=AudioPlayerSettings)
 
     # ------------------------------------------------------------------
     # Laden / Speichern
@@ -116,6 +120,8 @@ class AppSettings:
         cat_raw = data.get("cat", {}) or {}
         polling_raw = data.get("polling", {}) or {}
         ui_raw = data.get("ui", {}) or {}
+        rig_bridge_raw = data.get("rig_bridge", {}) or {}
+        audio_player_raw = data.get("audio_player", {}) or {}
 
         cat = CatSettings(
             port=cat_raw.get("port"),
@@ -145,7 +151,15 @@ class AppSettings:
             log_window_geometry=str(ui_raw.get("log_window_geometry") or ""),
             hide_extended_in_ssb=bool(ui_raw.get("hide_extended_in_ssb", True)),
         )
-        return cls(cat=cat, polling=polling, ui=ui)
+        rig_bridge = RigBridgeSettings.from_dict(rig_bridge_raw)
+        audio_player = AudioPlayerSettings.from_dict(audio_player_raw)
+        return cls(
+            cat=cat,
+            polling=polling,
+            ui=ui,
+            rig_bridge=rig_bridge,
+            audio_player=audio_player,
+        )
 
     def save(self, path: Optional[Path] = None) -> None:
         path = path or self.default_path()
@@ -154,6 +168,8 @@ class AppSettings:
             "cat": asdict(self.cat),
             "polling": asdict(self.polling),
             "ui": asdict(self.ui),
+            "rig_bridge": self.rig_bridge.to_dict(),
+            "audio_player": self.audio_player.to_dict(),
         }
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)

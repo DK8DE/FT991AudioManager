@@ -1,4 +1,7 @@
-"""Audio-Profil: Sammelt alle Audio-Einstellungen einer Betriebsart.
+"""Audio-Profil: Sammelt EQ- und Audio-Einstellungen (ohne Betriebsart).
+
+Die Betriebsart (AM/FM/SSB/…) wird **nicht** im Profil gespeichert, sondern
+nur über die Mode-Combo in Hauptfenster und Equalizer gesteuert.
 
 Ein Profil enthält ab Version 0.3 **immer** den vollständigen Satz an
 Audio-Werten:
@@ -29,11 +32,7 @@ from mapping.audio_mapping import (
     SSB_BPF_DEFAULT_KEY,
 )
 
-from mapping.rx_mapping import (
-    ALL_OPERATING_MODES,
-    LEGACY_PROFILE_MODE_GROUPS,
-    normalize_profile_mode_group,
-)
+from mapping.rx_mapping import ALL_OPERATING_MODES, LEGACY_PROFILE_MODE_GROUPS
 
 from .eq_band import EQSettings
 from .extended_settings import ExtendedSettings
@@ -49,6 +48,8 @@ VALID_MODE_GROUPS = tuple(
 @dataclass
 class AudioProfile:
     name: str
+    #: Nur intern/legacy — wird **nicht** in ``presets.json`` gespeichert.
+    #: Die Betriebsart (AM/FM/SSB/…) steuert nur die GUI-Combos.
     mode_group: str = "SSB"
 
     # Parametric MIC EQ (Normal-EQ, ohne Processor)
@@ -76,7 +77,6 @@ class AudioProfile:
     def to_dict(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "name": self.name,
-            "mode_group": self.mode_group,
             "mic_gain": int(self.mic_gain),
             "mic_eq_enabled": bool(self.mic_eq_enabled),
             "speech_processor_enabled": bool(self.speech_processor_enabled),
@@ -93,9 +93,7 @@ class AudioProfile:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AudioProfile":
         name = str(data.get("name") or "Unbenannt")
-        mode_group = normalize_profile_mode_group(
-            str(data.get("mode_group") or "SSB")
-        )
+        # ``mode_group`` in alten JSON-Dateien wird ignoriert (nur GUI-Umschalter).
 
         normal_eq_data = data.get("normal_eq")
         normal_eq = (
@@ -119,7 +117,6 @@ class AudioProfile:
 
         return cls(
             name=name,
-            mode_group=mode_group,
             normal_eq=normal_eq,
             processor_eq=processor_eq,
             mic_gain=_coerce_int(data.get("mic_gain"), MIC_GAIN_DEFAULT),

@@ -5,13 +5,13 @@ Format::
     {
       "version": 1,
       "profiles": [
-        { "name": "SSB Sprache", "mode_group": "SSB", ... },
+        { "name": "Default", ... },
         ...
       ]
     }
 
-Die Klasse :class:`PresetStore` hält die Liste der Profile, kennt Standard-
-Vorlagen für SSB/AM/FM und schreibt jede Änderung sofort auf Platte.
+Beim ersten Start (keine Datei) und wenn die Liste leer wird, wird genau
+ein neutrales Profil ``Default`` angelegt (EQ aus, Processor aus).
 """
 
 from __future__ import annotations
@@ -22,53 +22,34 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from ._app_paths import app_data_dir
+from mapping.audio_mapping import MIC_GAIN_DEFAULT, PROCESSOR_LEVEL_DEFAULT, SSB_BPF_DEFAULT_KEY
+
 from .audio_profile import AudioProfile
-from .eq_band import EQBand, EQSettings
+from .eq_band import EQSettings
+from .extended_settings import ExtendedSettings
 
 
 PRESET_FILE_VERSION = 1
+DEFAULT_PROFILE_NAME = "Default"
+
+
+def make_flat_default_profile() -> AudioProfile:
+    """Ein neutrales Startprofil: EQ/Processor aus, Bänder OFF, Level 0."""
+    return AudioProfile(
+        name=DEFAULT_PROFILE_NAME,
+        normal_eq=EQSettings.default(),
+        processor_eq=EQSettings.default(),
+        mic_gain=MIC_GAIN_DEFAULT,
+        mic_eq_enabled=False,
+        speech_processor_enabled=False,
+        speech_processor_level=PROCESSOR_LEVEL_DEFAULT,
+        ssb_tx_bpf=SSB_BPF_DEFAULT_KEY,
+        extended=ExtendedSettings(),
+    )
 
 
 def _make_default_profiles() -> List[AudioProfile]:
-    """Liefert eine Hand voll vernünftiger Start-Presets."""
-    return [
-        AudioProfile(
-            name="SSB Sprache",
-            mode_group="SSB",
-            normal_eq=EQSettings(
-                eq1=EQBand(freq=300, level=-3, bw=5),
-                eq2=EQBand(freq=1200, level=2, bw=4),
-                eq3=EQBand(freq=2500, level=4, bw=3),
-            ),
-        ),
-        AudioProfile(
-            name="SSB DX",
-            mode_group="SSB",
-            normal_eq=EQSettings(
-                eq1=EQBand(freq=400, level=-6, bw=5),
-                eq2=EQBand(freq=1300, level=4, bw=3),
-                eq3=EQBand(freq=2500, level=6, bw=3),
-            ),
-        ),
-        AudioProfile(
-            name="AM Sprache",
-            mode_group="AM",
-            normal_eq=EQSettings(
-                eq1=EQBand(freq=200, level=0, bw=5),
-                eq2=EQBand(freq=1000, level=2, bw=4),
-                eq3=EQBand(freq=2100, level=2, bw=3),
-            ),
-        ),
-        AudioProfile(
-            name="FM Relais",
-            mode_group="FM",
-            normal_eq=EQSettings(
-                eq1=EQBand(freq=300, level=0, bw=5),
-                eq2=EQBand(freq=1200, level=0, bw=4),
-                eq3=EQBand(freq=2300, level=0, bw=3),
-            ),
-        ),
-    ]
+    return [make_flat_default_profile()]
 
 
 @dataclass
@@ -143,10 +124,70 @@ class PresetStore:
         for i, p in enumerate(self.profiles):
             if p.name == name:
                 del self.profiles[i]
+                if not self.profiles:
+                    self.profiles = _make_default_profiles()
+                self.save()
+                return True
+        return False
+
+    def ensure_defaults(self) -> bool:
+        """Legt Standard-Profile an, wenn die Liste leer ist."""
+        if self.profiles:
+            return False
+        self.profiles = _make_default_profiles()
+        self.save()
+        return True
+
+    def rename(self, old_name: str, new_name: str) -> bool:
+        """Benennt ein Profil um (Name muss eindeutig sein)."""
+        new_name = new_name.strip()
+        if not new_name or new_name == old_name:
+            return False
+        if self.find(new_name) is not None:
+            return False
+        for i, p in enumerate(self.profiles):
+            if p.name == old_name:
+                updated = AudioProfile.from_dict({**p.to_dict(), "name": new_name})
+                self.profiles[i] = updated
                 self.save()
                 return True
         return False
 
     def replace_all(self, profiles: Iterable[AudioProfile]) -> None:
         self.profiles = list(profiles)
+        if not self.profiles:
+            self.profiles = _make_default_profiles()
         self.save()
+
+    def export_to_file(self, path: Path) -> None:
+        """Schreibt alle Profile nach ``path`` (JSON, gleiches Format wie ``presets.json``)."""
+        payload = {
+            "version": PRESET_FILE_VERSION,
+            "profiles": [p.to_dict() for p in self.profiles],
+        }
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+
+    @staticmethod
+    def profiles_from_export_file(path: Path) -> List[AudioProfile]:
+        """Liest Profile aus einer Export-JSON-Datei."""
+        with Path(path).open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        raw_profiles = data.get("profiles", []) if isinstance(data, dict) else []
+        profiles: List[AudioProfile] = []
+        for entry in raw_profiles:
+            if isinstance(entry, dict):
+                profiles.append(AudioProfile.from_dict(entry))
+        if not profiles:
+            raise ValueError("Die Datei enthält keine gültigen EQ-Profile.")
+        return profiles
+
+    def import_replace_all_from_file(self, path: Path) -> int:
+        """Ersetzt alle lokalen Profile durch den Inhalt der Export-Datei."""
+        profiles = self.profiles_from_export_file(path)
+        self.profiles = profiles
+        self.save()
+        return len(profiles)

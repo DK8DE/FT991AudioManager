@@ -49,6 +49,7 @@ class ShWidthMappingTest(unittest.TestCase):
         self.assertTrue(sh_bandwidth_visible_for_mode(RxMode.CW_U))
         self.assertTrue(sh_bandwidth_visible_for_mode(RxMode.DATA_USB))
         self.assertFalse(sh_bandwidth_visible_for_mode(RxMode.FM))
+        self.assertFalse(sh_bandwidth_visible_for_mode(RxMode.DATA_FM))
 
     def test_cw_p2_not_full_range(self) -> None:
         self.assertNotIn(21, sh_supported_p2_indices(RxMode.CW_U))
