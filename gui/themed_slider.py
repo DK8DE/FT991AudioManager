@@ -9,11 +9,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Direktstart: ``python gui/themed_slider.py`` — Projektroot ins PYTHONPATH.
-if __package__ in (None, ""):
-    _root = Path(__file__).resolve().parent.parent
-    if str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
+# Direktstart von beliebigem CWD: ``python gui/themed_slider.py`` oder
+# ``python -m gui.themed_slider`` (aus ft991_audio_manager/).
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen

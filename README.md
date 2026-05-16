@@ -45,8 +45,9 @@ geschrieben.
 - Pro Betriebsart (SSB / AM / FM / DATA / CW / RTTY / C4FM) wird nur das
   angezeigt, was im jeweiligen Modus auch wirkt — der Rest wird komplett
   ausgeblendet.
-- **Profile** speichern, laden, exportieren, löschen — gespeichert wird in
-  `data/presets.json` neben der EXE bzw. dem Projekt-Root.
+- **Profile** speichern, laden, exportieren, löschen — in der Entwicklung
+  unter `data/presets.json`, in der installierten EXE unter
+  `%APPDATA%\FT991AudioManager\presets.json`.
 - **Auto-Sync**: GUI-Änderungen werden debounced ans Radio geschrieben,
   Diffs gegen den Baseline-Profilstand vermeiden überflüssige Befehle.
   Beim Wechsel der Mode-Gruppe in der GUI wird automatisch der Operating
@@ -104,7 +105,7 @@ geschrieben.
 - **Bearbeiten → Kalibrierung…**: geführte Messung auf **10 m** (FM),
   Stützpunkte **Watt ↔ CAT-Rohwert** für die **POWER**-Anzeige und den
   POWER-Slider
-- Ergebnis in `data/po_calibration.json` (neben EXE bzw. Projekt-Root)
+- Ergebnis in `po_calibration.json` im User-Datenordner (siehe unten)
 
 ### Rig-Bridge (für andere CAT-Programme)
 
@@ -137,7 +138,7 @@ Radio parallel nutzen, während der Audio-Profilmanager läuft.
 ### UI / Komfort
 
 - **Dark Mode** als Standard (eigenes Theme, optional Light Mode),
-  persistiert in `data/settings.json`.
+  persistiert in `settings.json` im User-Datenordner.
 - **Einstellungs-Dialog** (wie RotorTcpBridge): linke Tab-Liste, rechter Inhalt
   - **CAT-Verbindung**: COM-Port, Baudrate, Timeout, Auto-Connect,
     TX-/RX-Polling, EQ-Profil-Anzeige
@@ -194,6 +195,10 @@ Die Versionsnummer steht zentral in [`version.py`](version.py)
 
 Das Skript legt bei Bedarf `.venv-build/` an, installiert Abhängigkeiten +
 PyInstaller und erzeugt `dist\FT991AudioManager\` (onedir, ohne Konsole).
+Es werden nur die benötigten Qt-Teile eingebunden (**Widgets** +
+**Multimedia** für den Audio-Player, kein QML/WebEngine/3D) und danach
+`qml/`, `translations/` sowie überflüssige Qt-Plugins entfernt — typisch
+**ca. 80–120 MB** statt >600 MB mit dem früheren Voll-PySide6-Bundle.
 
 Nützliche Schalter:
 
@@ -201,10 +206,18 @@ Nützliche Schalter:
 - `.\build.ps1 -KeepConsole` — EXE mit sichtbarer Konsole (Debug)
 - `.\build.ps1 -Python C:\Pfad\zu\python.exe` — explizites Python
 
-Beim ersten Start legt die App neben der EXE an:
+**User-Daten** (installierte EXE, Windows):
 
-- `data\settings.json` (Defaults: Dark Mode an, Polling 100 ms, …)
-- `data\presets.json` (vier Beispiel-Profile)
+`%APPDATA%\FT991AudioManager\`
+
+- `settings.json` (Defaults: Dark Mode an, Polling 100 ms, …)
+- `presets.json` (wird beim ersten Start angelegt)
+- optional: `po_calibration.json`, `memory_backups\`, `memory_exports\`
+
+Liegt noch ein alter Ordner `data\` neben der EXE (frühere Versionen),
+werden vorhandene Dateien beim ersten Start nach AppData **kopiert**.
+
+In der **Entwicklung** bleibt alles unter `<Projekt-Root>\data\`.
 
 ### Inno-Setup-Installer (`installer.ps1`)
 

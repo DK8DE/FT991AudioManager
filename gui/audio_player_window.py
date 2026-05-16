@@ -119,8 +119,11 @@ class AudioPlayerWindow(QMainWindow):
         self.list_files = QListWidget()
         self.list_files.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.list_files.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.list_files.currentRowChanged.connect(self._on_list_row_changed)
         self.list_files.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self.list_files.model().layoutChanged.connect(self._on_list_reordered)
+        model = self.list_files.model()
+        model.rowsMoved.connect(self._on_list_reordered)
+        model.layoutChanged.connect(self._on_list_reordered)
         list_l.addWidget(self.list_files)
         root.addWidget(list_box, stretch=1)
 
@@ -294,7 +297,8 @@ class AudioPlayerWindow(QMainWindow):
         finally:
             self.list_files.blockSignals(False)
 
-    def _on_list_reordered(self, *args) -> None:
+    def _sync_playlist_from_list(self) -> None:
+        """Liste -> Namen -> Controller (immer vor play() aufrufen)."""
         self._playlist_names = [
             self.list_files.item(i).text()
             for i in range(self.list_files.count())
@@ -302,6 +306,13 @@ class AudioPlayerWindow(QMainWindow):
         ]
         self._settings.audio_player.playlist_order = list(self._playlist_names)
         self._push_playlist_to_controller()
+
+    def _on_list_reordered(self, *args) -> None:
+        self._sync_playlist_from_list()
+
+    def _on_list_row_changed(self, row: int) -> None:
+        if row >= 0:
+            self._controller.set_index(row)
 
     def _push_playlist_to_controller(self) -> None:
         if not self._folder.is_dir():
@@ -342,6 +353,7 @@ class AudioPlayerWindow(QMainWindow):
             self._controller.pause()
 
     def _on_play(self) -> None:
+        self._sync_playlist_from_list()
         row = self.list_files.currentRow()
         if row < 0 and self.list_files.count() > 0:
             row = 0
@@ -349,8 +361,11 @@ class AudioPlayerWindow(QMainWindow):
         self._controller.play(row if row >= 0 else None)
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
+        self._sync_playlist_from_list()
         row = self.list_files.row(item)
-        self._controller.play(row)
+        if row >= 0:
+            self.list_files.setCurrentRow(row)
+            self._controller.play(row)
 
     def _on_state_changed(self, state: PlayerState) -> None:
         self._update_transport_buttons()
@@ -403,12 +418,7 @@ class AudioPlayerWindow(QMainWindow):
         self.lbl_status.setText(message)
 
     def persist_settings(self) -> None:
-        self._playlist_names = [
-            self.list_files.item(i).text()
-            for i in range(self.list_files.count())
-            if self.list_files.item(i) is not None
-        ]
-        self._settings.audio_player.playlist_order = list(self._playlist_names)
+        self._sync_playlist_from_list()
         self._settings.audio_player.folder_path = (
             str(self._folder) if self._folder.is_dir() else ""
         )

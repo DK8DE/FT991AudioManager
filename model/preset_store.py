@@ -1,4 +1,4 @@
-"""Persistenter Speicher für Audioprofile (``data/presets.json``).
+"""Persistenter Speicher für Audioprofile (``presets.json`` im User-Datenordner).
 
 Format::
 

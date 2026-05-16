@@ -1,4 +1,4 @@
-"""Persistenz der PO-Kalibrierung (``data/po_calibration.json``)."""
+"""Persistenz der PO-Kalibrierung (``po_calibration.json`` im User-Datenordner)."""
 
 from __future__ import annotations
 

@@ -59,10 +59,13 @@ Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 Name: "desktopicon"; Description: "Desktop-Verknüpfung erstellen"; GroupDescription: "Zusätzliche Symbole:"; Flags: unchecked
 
 [Files]
-; PyInstaller onedir: EXE, _internal\, logo.ico, logo.svg
+; PyInstaller onedir: EXE + _internal\ (logo.ico liegt dort in _internal\, nicht im App-Root)
 Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; Icon für Verknüpfungen, Deinstaller und Qt (Taskleiste): fest neben der EXE
+Source: "{#MyAppIcon}"; DestDir: "{app}"; DestName: "logo.ico"; Flags: ignoreversion
 
 [Icons]
+; IconFilename muss auf eine existierende .ico zeigen — nicht nur auf die EXE
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\logo.ico"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyExeName}"; Tasks: desktopicon; IconFilename: "{app}\logo.ico"
 

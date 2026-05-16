@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
@@ -15,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from model._app_paths import resource_dir
+from model._app_paths import installed_icon_path, resource_dir
 from version import APP_AUTHOR, APP_COPYRIGHT, APP_DATE, APP_NAME, APP_VERSION
 
 _BOX_STYLE = (
@@ -29,8 +31,13 @@ _BOX_STYLE = (
 
 
 def _logo_pixmap(target_dip: int = 88) -> QPixmap:
-    for name in ("logo.ico", "logo.svg"):
-        path = resource_dir() / name
+    candidates: list[Path] = []
+    ico = installed_icon_path()
+    if ico is not None:
+        candidates.append(ico)
+    root = resource_dir()
+    candidates.extend([root / "logo.ico", root / "logo.svg"])
+    for path in candidates:
         if path.is_file():
             pm = QPixmap(str(path))
             if not pm.isNull():

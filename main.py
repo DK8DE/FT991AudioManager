@@ -8,7 +8,7 @@ from pathlib import Path
 
 # Vor jedem PySide6-QtMultimedia-Import (Audio-Player unter Windows).
 if sys.platform == "win32" and "QT_MEDIA_BACKEND" not in os.environ:
-    os.environ["QT_MEDIA_BACKEND"] = "windows"
+    os.environ["QT_MEDIA_BACKEND"] = "ffmpeg"
 
 # Stellt sicher, dass das Projektverzeichnis im PYTHONPATH liegt, auch wenn
 # main.py per Doppelklick gestartet wird.
@@ -27,7 +27,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName("FT-991A Audio-Profilmanager")
-    app.setOrganizationName("FT991-Audio-Manager")
+    app.setOrganizationName("DK8DE Jörg Körner
     # App-Icon zentral setzen: vererbt sich auf alle Top-Level-Fenster
     # (Title-Bar + Windows-Taskbar / macOS-Dock / Linux-Panel).
     app.setWindowIcon(app_icon())

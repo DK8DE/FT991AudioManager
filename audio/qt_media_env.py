@@ -15,4 +15,6 @@ def ensure_qt_media_backend() -> None:
     if os.environ.get("QT_MEDIA_BACKEND"):
         return
     if sys.platform == "win32":
-        os.environ["QT_MEDIA_BACKEND"] = "windows"
+        # ffmpeg: zuverlaessiger fuer MP3/WAV in PyInstaller-Bundles;
+        # windows (WMF) kann auf manchen Systemen kratzen/haengen bleiben.
+        os.environ["QT_MEDIA_BACKEND"] = "ffmpeg"

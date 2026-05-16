@@ -1,4 +1,4 @@
-"""Persistente App-Einstellungen (``data/settings.json``).
+"""Persistente App-Einstellungen (``settings.json`` im User-Datenordner).
 
 Format (Auszug, wie in der Spezifikation)::
 
@@ -101,8 +101,8 @@ class AppSettings:
     def default_path(cls) -> Path:
         """Pfad zur ``settings.json``.
 
-        - Im Source-Layout: ``<Projekt-Root>/data/settings.json``
-        - In einer mit PyInstaller gepackten EXE: ``<EXE-Dir>/data/settings.json``
+        - Entwicklung: ``<Projekt-Root>/data/settings.json``
+        - Installierte EXE: ``%APPDATA%\\FT991AudioManager\\settings.json`` (bzw. XDG/macOS-Äquivalent)
         """
         return app_data_dir() / "settings.json"
 

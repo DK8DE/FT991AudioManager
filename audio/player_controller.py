@@ -106,6 +106,7 @@ class PlayerController(QObject):
         self._ptt_thread.start()
 
         self._expect_ptt_on: Optional[bool] = None
+        self._pending_media_play = False
 
         self._player: Optional[QMediaPlayer] = None
         self._audio_out: Optional[QAudioOutput] = None
@@ -142,9 +143,20 @@ class PlayerController(QObject):
     def state(self) -> PlayerState:
         return self._state
 
+    @property
+    def current_path(self) -> Optional[Path]:
+        return self._current_path()
+
     def set_playlist(self, paths: list[Path]) -> None:
+        """Playlist ersetzen; Index an dieselbe Datei koppeln (wichtig nach Drag & Drop)."""
+        current = self._current_path()
         self._paths = list(paths)
-        if self._index >= len(self._paths):
+        if current is not None:
+            try:
+                self._index = self._paths.index(current)
+            except ValueError:
+                self._index = min(self._index, max(0, len(self._paths) - 1))
+        elif self._index >= len(self._paths):
             self._index = max(0, len(self._paths) - 1)
 
     def set_index(self, index: int) -> None:
@@ -194,6 +206,14 @@ class PlayerController(QObject):
         return self._state not in (PlayerState.IDLE, PlayerState.PAUSED_RX)
 
     def play(self, index: Optional[int] = None) -> None:
+        if not self._paths:
+            self.error.emit("Keine Audiodateien in der Liste.")
+            return
+        if index is not None:
+            if index < 0 or index >= len(self._paths):
+                self.error.emit("Ungültiger Dateiindex.")
+                return
+            self._index = index
         if not _MULTIMEDIA_AVAILABLE or not self._media_ok:
             self.error.emit(
                 "Audio-Wiedergabe nicht verfügbar. Unter Windows PySide6-Addons "
@@ -203,11 +223,6 @@ class PlayerController(QObject):
         if not self._cat.is_connected():
             self.error.emit("CAT nicht verbunden — bitte zuerst verbinden.")
             return
-        if not self._paths:
-            self.error.emit("Keine Audiodateien in der Liste.")
-            return
-        if index is not None:
-            self._index = index
         if self._state == PlayerState.PAUSED_RX:
             self._resume_after_pause = True
             self._begin_pre_roll()
@@ -231,8 +246,11 @@ class PlayerController(QObject):
         self._gap_timer.stop()
         self._tick_timer.stop()
         self._resume_after_pause = False
+        self._pending_media_play = False
         if self._player is not None:
             self._player.stop()
+            # Quelle leeren — sonst feuert setSource(dieselbe Datei) oft kein LoadedMedia erneut.
+            self._player.setSource(QUrl())
         if self._state in (PlayerState.IDLE, PlayerState.PAUSED_RX):
             self._set_state(PlayerState.IDLE)
             self.status_message.emit("Gestoppt")
@@ -312,11 +330,15 @@ class PlayerController(QObject):
         self.status_message.emit("Sendung — Wiedergabe")
         if self._resume_after_pause:
             self._resume_after_pause = False
+            self._pending_media_play = False
             self._player.play()
+            self._tick_timer.start()
         else:
-            self._player.setSource(QUrl.fromLocalFile(str(path.resolve())))
-            self._player.play()
-        self._tick_timer.start()
+            url = QUrl.fromLocalFile(str(path.resolve()))
+            if self._try_play_loaded_url(url):
+                return
+            self._pending_media_play = True
+            self._player.setSource(url)
 
     def _on_rx_ready(self) -> None:
         action = self._after_rx
@@ -349,9 +371,45 @@ class PlayerController(QObject):
             return
         self._begin_pre_roll()
 
+    def _try_play_loaded_url(self, url: QUrl) -> bool:
+        """Dieselbe URL erneut abspielen, wenn Qt kein erneutes LoadedMedia sendet."""
+        if self._player is None:
+            return False
+        if self._player.source() != url:
+            return False
+        if self._player.mediaStatus() not in (
+            QMediaPlayer.MediaStatus.LoadedMedia,
+            QMediaPlayer.MediaStatus.BufferedMedia,
+            QMediaPlayer.MediaStatus.EndOfMedia,
+        ):
+            return False
+        self._pending_media_play = False
+        self._player.setPosition(0)
+        self._player.play()
+        self._tick_timer.start()
+        return True
+
     def _on_media_status(self, status) -> None:
         if not _MULTIMEDIA_AVAILABLE or self._player is None:
             return
+
+        if self._pending_media_play and self._state == PlayerState.PLAYING:
+            if status in (
+                QMediaPlayer.MediaStatus.LoadedMedia,
+                QMediaPlayer.MediaStatus.BufferedMedia,
+            ):
+                self._pending_media_play = False
+                self._player.play()
+                self._tick_timer.start()
+                return
+            if status == QMediaPlayer.MediaStatus.InvalidMedia:
+                self._pending_media_play = False
+                self.error.emit(
+                    self._player.errorString() or "Audiodatei konnte nicht geladen werden."
+                )
+                self.stop()
+                return
+
         if status != QMediaPlayer.MediaStatus.EndOfMedia:
             return
         if self._state != PlayerState.PLAYING:

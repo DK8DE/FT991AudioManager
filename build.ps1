@@ -187,7 +187,6 @@ try {
 
     Write-Step "Baue $AppName (onedir, $WindowFlag)"
     $IconIco = Join-Path $Here "logo.ico"
-    $IconSvg = Join-Path $Here "logo.svg"
     if (-not (Test-Path $IconIco)) {
         throw "logo.ico nicht gefunden unter $IconIco"
     }
@@ -211,9 +210,18 @@ try {
     Invoke-Checked "PyInstaller-Build fehlgeschlagen" $VenvPython @PyInstallerArgs
 
     # ------------------------------------------------------------------
-    # Ergebnis melden
+    # PySide6-Bundle verschlanken (qml/, translations/, unnoetige plugins/)
     # ------------------------------------------------------------------
     $OutDir = Join-Path $Here "dist\$AppName"
+    $TrimScript = Join-Path $Here "pyinstaller_bundle_trim.ps1"
+    if (Test-Path $TrimScript) {
+        Write-Step "Verschlank PySide6-Bundle"
+        & $TrimScript -DistAppDir $OutDir
+    }
+
+    # ------------------------------------------------------------------
+    # Ergebnis melden
+    # ------------------------------------------------------------------
     $ExePath = Join-Path $OutDir "$AppName.exe"
     if (-not (Test-Path $ExePath)) {
         # Diagnose-Hilfe: Wenn die PyInstaller-EXE im build\-Tree
@@ -242,15 +250,32 @@ try {
     Write-Host "===========================================================" -ForegroundColor Green
     Write-Host " Build erfolgreich" -ForegroundColor Green
     Write-Host "===========================================================" -ForegroundColor Green
+    $totalMb = [math]::Round(
+        ((Get-ChildItem $OutDir -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB,
+        1
+    )
     Write-Host " EXE   : $ExePath" -ForegroundColor Green
-    Write-Host " Ordner: $OutDir" -ForegroundColor Green
+    Write-Host " Ordner: $OutDir  ($totalMb MB gesamt)" -ForegroundColor Green
+    Copy-Item -Path $IconIco -Destination (Join-Path $OutDir "logo.ico") -Force
+    Write-Host " Icon  : $(Join-Path $OutDir 'logo.ico') (neben EXE, fuer Installer/Shell)" -ForegroundColor Green
+
+    $mmPluginDir = Join-Path $OutDir '_internal\PySide6\plugins\multimedia'
+    if (-not (Test-Path $mmPluginDir)) {
+        Write-Host ' WARNUNG: Qt-Multimedia-Plugins fehlen - Audio-Player defekt!' -ForegroundColor Yellow
+    } else {
+        $hasFfmpeg = Test-Path (Join-Path $mmPluginDir 'ffmpegmediaplugin.dll')
+        $hasWmf = Test-Path (Join-Path $mmPluginDir 'windowsmediaplugin.dll')
+        if (-not $hasFfmpeg -and -not $hasWmf) {
+            Write-Host ' WARNUNG: ffmpegmediaplugin.dll / windowsmediaplugin.dll fehlen!' -ForegroundColor Yellow
+        }
+    }
     Write-Host ""
     Write-Host " Den Ordner '$OutDir' komplett auf einen anderen Rechner" -ForegroundColor Green
     Write-Host " kopieren -- die EXE laeuft dort ohne Python-Installation." -ForegroundColor Green
     Write-Host ""
-    Write-Host " Beim ersten Start legt die App neben der EXE an:" -ForegroundColor Green
-    Write-Host "   data\settings.json   (Defaults: Dark Mode an)" -ForegroundColor Green
-    Write-Host "   data\presets.json    (4 Beispiel-Profile)" -ForegroundColor Green
+    Write-Host " User-Daten (installierte EXE):" -ForegroundColor Green
+    Write-Host "   %APPDATA%\FT991AudioManager\settings.json" -ForegroundColor Green
+    Write-Host "   %APPDATA%\FT991AudioManager\presets.json" -ForegroundColor Green
     Write-Host ""
     Write-Host " Installer: .\installer.ps1 -SkipBuild" -ForegroundColor Green
     Write-Host "===========================================================" -ForegroundColor Green

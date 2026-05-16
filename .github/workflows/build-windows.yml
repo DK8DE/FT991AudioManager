@@ -118,7 +118,7 @@ jobs:
           - Yaesu FT-991 / FT-991A mit CAT (USB/Serial)
 
           ### Konfiguration
-          Beim ersten Start legt die App neben der Installation ``data\settings.json`` und ``data\presets.json`` an.
+          Konfiguration unter ``%APPDATA%\FT991AudioManager\`` (nicht unter Program Files).
           "@ | Set-Content -Path RELEASE_NOTES.md -Encoding utf8
 
       - name: Create GitHub Release
