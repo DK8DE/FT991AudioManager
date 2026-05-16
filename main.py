@@ -27,7 +27,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName("FT-991A Audio-Profilmanager")
-    app.setOrganizationName("DK8DE Jörg Körner
+    app.setOrganizationName("DK8DE Jörg Körner")
     # App-Icon zentral setzen: vererbt sich auf alle Top-Level-Fenster
     # (Title-Bar + Windows-Taskbar / macOS-Dock / Linux-Panel).
     app.setWindowIcon(app_icon())

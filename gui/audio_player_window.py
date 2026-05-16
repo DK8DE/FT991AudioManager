@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QByteArray, Qt, QThread, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -47,6 +48,12 @@ def _format_ms(ms: int) -> str:
     s = ms // 1000
     m, s = divmod(s, 60)
     return f"{m}:{s:02d}"
+
+
+def _double_font(base: QFont) -> QFont:
+    f = QFont(base)
+    f.setPointSizeF(f.pointSizeF() * 2)
+    return f
 
 
 class AudioPlayerWindow(QMainWindow):
@@ -201,6 +208,9 @@ class AudioPlayerWindow(QMainWindow):
         time_row = QHBoxLayout()
         self.lbl_elapsed = QLabel("0:00")
         self.lbl_remaining = QLabel("-0:00")
+        time_font = _double_font(self.lbl_elapsed.font())
+        self.lbl_elapsed.setFont(time_font)
+        self.lbl_remaining.setFont(time_font)
         time_row.addWidget(self.lbl_elapsed)
         time_row.addStretch(1)
         time_row.addWidget(self.lbl_remaining)
