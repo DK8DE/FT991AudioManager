@@ -251,6 +251,8 @@ try {
     Write-Host " Beim ersten Start legt die App neben der EXE an:" -ForegroundColor Green
     Write-Host "   data\settings.json   (Defaults: Dark Mode an)" -ForegroundColor Green
     Write-Host "   data\presets.json    (4 Beispiel-Profile)" -ForegroundColor Green
+    Write-Host ""
+    Write-Host " Installer: .\installer.ps1 -SkipBuild" -ForegroundColor Green
     Write-Host "===========================================================" -ForegroundColor Green
 }
 finally {

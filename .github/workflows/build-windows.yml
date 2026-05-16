@@ -1,0 +1,134 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller>=6.0
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm --clean FT991AudioManager.spec
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FT991AudioManager-Windows
+          path: dist/FT991AudioManager/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Version aus Tag (ohne führendes v)
+        id: ver
+        shell: pwsh
+        run: |
+          $t = "${{ github.ref_name }}"
+          $v = $t -replace '^v',''
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Release-Version: $v (Tag: $t)"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller>=6.0
+
+      - name: Build with PyInstaller
+        run: pyinstaller --noconfirm --clean FT991AudioManager.spec
+
+      - name: Install Inno Setup 6
+        run: choco install innosetup -y --no-progress
+
+      - name: Compile installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.version }}"
+          $candidates = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          )
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw "ISCC.exe nicht gefunden (Inno Setup 6)." }
+          Write-Host "ISCC: $iscc /DMyAppVersion=$ver"
+          & $iscc /DMyAppVersion=$ver "${{ github.workspace }}\Installer.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup ExitCode $LASTEXITCODE" }
+          $setup = Join-Path "${{ github.workspace }}" "dist\installer\FT991AudioManager-Setup-$ver.exe"
+          if (-not (Test-Path $setup)) { throw "Installer fehlt: $setup" }
+
+      - name: Create ZIP package
+        run: |
+          cd dist
+          7z a -tzip FT991AudioManager-${{ github.ref_name }}-Windows.zip FT991AudioManager\
+
+      - name: Generate Release Notes
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.ver.outputs.version }}"
+          @"
+          # FT-991A Audio-Profilmanager ${{ github.ref_name }}
+
+          ## Windows
+
+          ### Setup-Programm (empfohlen)
+          - Datei: ``FT991AudioManager-Setup-$ver.exe``
+          - Installiert nach ``Program Files\FT991AudioManager`` inkl. Startmenü-Verknüpfung.
+
+          ### Portable (ZIP)
+          - Datei: ``FT991AudioManager-${{ github.ref_name }}-Windows.zip``
+          - Entpacken und ``FT991AudioManager.exe`` starten.
+
+          ### Systemvoraussetzungen
+          - Windows 10/11 (64-bit)
+          - Python nicht erforderlich (standalone EXE)
+          - Yaesu FT-991 / FT-991A mit CAT (USB/Serial)
+
+          ### Konfiguration
+          Beim ersten Start legt die App neben der Installation ``data\settings.json`` und ``data\presets.json`` an.
+          "@ | Set-Content -Path RELEASE_NOTES.md -Encoding utf8
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "FT-991A Audio-Profilmanager ${{ github.ref_name }}"
+          body_path: RELEASE_NOTES.md
+          files: |
+            dist/FT991AudioManager-${{ github.ref_name }}-Windows.zip
+            dist/installer/FT991AudioManager-Setup-${{ steps.ver.outputs.version }}.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

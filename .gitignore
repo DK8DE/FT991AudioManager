@@ -9,7 +9,9 @@ build/
 dist/
 *.egg-info/
 *.egg
+_version_info.txt
 *.spec
+!FT991AudioManager.spec
 
 # Virtuelle Umgebungen
 .venv/
