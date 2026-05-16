@@ -177,33 +177,35 @@ try {
         throw "main.py nicht gefunden unter $MainPy"
     }
 
+    $VersionFile = Join-Path $Here "version.py"
+    if (Test-Path $VersionFile) {
+        $verContent = Get-Content -Path $VersionFile -Raw -Encoding UTF8
+        if ($verContent -match 'APP_VERSION\s*=\s*"([^"]+)"') {
+            Write-Host " Version: $($Matches[1])" -ForegroundColor Cyan
+        }
+    }
+
     Write-Step "Baue $AppName (onedir, $WindowFlag)"
     $IconIco = Join-Path $Here "logo.ico"
     $IconSvg = Join-Path $Here "logo.svg"
     if (-not (Test-Path $IconIco)) {
         throw "logo.ico nicht gefunden unter $IconIco"
     }
+    $SpecFile = Join-Path $Here "$AppName.spec"
+    if (-not (Test-Path $SpecFile)) {
+        throw "$AppName.spec nicht gefunden unter $SpecFile"
+    }
     $PyInstallerArgs = @(
         "-m", "PyInstaller",
         "--noconfirm",
         "--clean",
-        $WindowFlag,
-        "--name", $AppName,
-        "--icon", $IconIco,
-        "--paths", $Here,
-        "--hidden-import", "serial.tools.list_ports",
-        "--collect-submodules", "PySide6",
-        # Beide Icon-Dateien ins Bundle aufnehmen: logo.ico fuer Windows,
-        # logo.svg fuer plattformuebergreifende Verwendung. Auf Windows
-        # ist der --add-data-Separator ein Semikolon, das Ziel "." legt
-        # die Datei in den Bundle-Root (= sys._MEIPASS).
-        "--add-data", "$IconIco;.",
-        "--add-data", "$IconSvg;.",
         "--distpath", (Join-Path $Here "dist"),
-        "--workpath", (Join-Path $Here "build"),
-        "--specpath", $Here,
-        $MainPy
+        "--workpath", (Join-Path $Here "build")
     )
+    if ($KeepConsole) {
+        $PyInstallerArgs += "--console"
+    }
+    $PyInstallerArgs += $SpecFile
     # @-Splatting beim Aufruf, sonst sieht Python alle Argumente als
     # einen einzigen Modul-Namen-String. Siehe Doku zu Invoke-Checked.
     Invoke-Checked "PyInstaller-Build fehlgeschlagen" $VenvPython @PyInstallerArgs

@@ -115,6 +115,21 @@ class ModeMappingTest(unittest.TestCase):
         self.assertTrue(mode_group_supports_dnr_dnf("AM"))
         self.assertTrue(mode_group_supports_dnr_dnf("DATA"))
 
+    def test_agc_slider_only_lsb_usb_data_lsb(self) -> None:
+        from mapping.rx_mapping import (
+            RxMode,
+            agc_slider_visible_for_mode,
+        )
+
+        self.assertTrue(agc_slider_visible_for_mode(RxMode.LSB))
+        self.assertTrue(agc_slider_visible_for_mode(RxMode.USB))
+        self.assertTrue(agc_slider_visible_for_mode(RxMode.DATA_LSB))
+        self.assertFalse(agc_slider_visible_for_mode(RxMode.DATA_USB))
+        self.assertFalse(agc_slider_visible_for_mode(RxMode.FM))
+        self.assertFalse(agc_slider_visible_for_mode(RxMode.C4FM))
+        self.assertFalse(agc_slider_visible_for_mode(RxMode.AM))
+        self.assertFalse(agc_slider_visible_for_mode(None))
+
 
 class FrequencyMappingTest(unittest.TestCase):
     def test_query(self) -> None:

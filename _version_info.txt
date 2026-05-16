@@ -1,0 +1,27 @@
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 0, 0, 0),
+    prodvers=(1, 0, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable('040704b0', [
+        StringStruct('CompanyName',      'Jörg Körner DK8DE'),
+        StringStruct('FileDescription',  'FT-991A Audio-Profilmanager'),
+        StringStruct('FileVersion',      '1.0'),
+        StringStruct('InternalName',     'FT991AudioManager'),
+        StringStruct('LegalCopyright',   '2026 Jörg Körner DK8DE'),
+        StringStruct('OriginalFilename', 'FT991AudioManager.exe'),
+        StringStruct('ProductName',      'FT-991A Audio-Profilmanager'),
+        StringStruct('ProductVersion',   '1.0'),
+      ])
+    ]),
+    VarFileInfo([VarStruct('Translation', [0x0407, 1200])])
+  ]
+)

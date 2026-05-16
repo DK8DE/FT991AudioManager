@@ -49,10 +49,13 @@ from cat import (
     SerialCAT,
 )
 from mapping.memory_mapping import MemoryChannel
-from mapping.rx_mapping import RxMode, coarse_mode_group_for
+from mapping.rx_mapping import RxMode, coarse_mode_group_for, rx_mode_from_selection
 from model import AppSettings, PresetStore
 from rig_bridge import RigBridgeManager
 
+from version import APP_NAME, APP_VERSION
+
+from .about_window import AboutWindow
 from .app_icon import app_icon
 from .audio_player_window import AudioPlayerWindow
 from .equalizer_window import EqualizerWindow
@@ -85,7 +88,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, settings: AppSettings, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("FT-991A Audio-Profilmanager")
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         # Doppelt setzen ist Absicht: QApplication.setWindowIcon() reicht
         # auf Windows/macOS, aber manche Linux-Window-Manager (X11) lesen
         # das Icon nur vom konkreten Toplevel.
@@ -230,9 +233,11 @@ class MainWindow(QMainWindow):
         return super().eventFilter(_watched, event)
 
     def _sync_meter_dsp_mode_visibility(self) -> None:
-        """NB/DNR/DNF ausblenden, wenn die gewählte Modusgruppe sie nicht nutzt (z. B. FM)."""
-        mg = coarse_mode_group_for(self.profile_widget.mode_combo.currentText())
-        self.meter_widget.apply_dsp_mode_relevance(mg)
+        """DSP-Slider ausblenden, wenn die Betriebsart sie am FT-991 nicht nutzt."""
+        text = self.profile_widget.mode_combo.currentText()
+        mg = coarse_mode_group_for(text)
+        mode = rx_mode_from_selection(text)
+        self.meter_widget.apply_dsp_mode_relevance(mg, operating_mode=mode)
 
     def _apply_startup_window_geometry(self) -> None:
         """Fenster auf :attr:`MAIN_START_*` setzen und auf dem Bildschirm zentrieren."""
@@ -506,9 +511,9 @@ class MainWindow(QMainWindow):
 
         # === Hilfe ====================================================
         help_menu = menu.addMenu("&Hilfe")
-        about_action = QAction("Ü&ber", self)
-        about_action.triggered.connect(self._show_about)
-        help_menu.addAction(about_action)
+        version_action = QAction("&Version", self)
+        version_action.triggered.connect(self._show_about)
+        help_menu.addAction(version_action)
 
     # ------------------------------------------------------------------
     # Verbinden / Trennen
@@ -1249,24 +1254,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _show_about(self) -> None:
-        QMessageBox.about(
-            self,
-            "Über",
-            (
-                "<b>FT-991A Audio-Profilmanager</b><br>"
-                "<br>"
-                "Komfortable Steuerung der TX-Audio-Einstellungen<br>"
-                "des Yaesu FT-991 / FT-991A über CAT.<br>"
-                "<br>"
-                "<b>Autor:</b> Jörg Körner (DK8DE)<br>"
-                "<b>Lizenz:</b> "
-                "<a href=\"https://www.apache.org/licenses/LICENSE-2.0\">"
-                "Apache License 2.0</a><br>"
-                "<br>"
-                "<a href=\"https://github.com/DK8DE/FT991AudioManager\">"
-                "github.com/DK8DE/FT991AudioManager</a>"
-            ),
-        )
+        AboutWindow(self).exec()
 
     # ------------------------------------------------------------------
     # Lifecycle

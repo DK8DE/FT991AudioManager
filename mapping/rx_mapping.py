@@ -27,7 +27,7 @@ Quelle: Manual 1711-D (FT-991 CAT Operation Reference Book).
 from __future__ import annotations
 
 from enum import Enum
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 
 # ----------------------------------------------------------------------
@@ -292,6 +292,19 @@ _MODE_GROUPS_WITHOUT_DNR_DNF: frozenset[str] = frozenset({"FM", "C4FM"})
 def mode_group_supports_dnr_dnf(mode_group: str) -> bool:
     """True, wenn NB-, DNR- und DNF-Slider für diese Modusgruppe angezeigt werden."""
     return mode_group.strip().upper() not in _MODE_GROUPS_WITHOUT_DNR_DNF
+
+
+#: Betriebsarten mit nutzbarem ``GT``/AGC am FT-991 (SSB/Data-LSB).
+_MODES_WITH_AGC_SLIDER: frozenset[RxMode] = frozenset(
+    {RxMode.LSB, RxMode.USB, RxMode.DATA_LSB}
+)
+
+
+def agc_slider_visible_for_mode(mode: Optional[RxMode]) -> bool:
+    """True, wenn der AGC-Slider in der Meter-Zeile angezeigt werden soll."""
+    if mode is None or mode is RxMode.UNKNOWN:
+        return False
+    return mode in _MODES_WITH_AGC_SLIDER
 
 
 def is_valid_profile_mode_group(text: str) -> bool:

@@ -6,6 +6,15 @@ zeichnet die Markierungen nach dem Standard-Slider in ``#9F9F9F``.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Direktstart: ``python gui/themed_slider.py`` — Projektroot ins PYTHONPATH.
+if __package__ in (None, ""):
+    _root = Path(__file__).resolve().parent.parent
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSlider, QStyle, QStyleOptionSlider
@@ -82,3 +91,24 @@ class MeterVerticalSlider(QSlider):
                 x1 = groove.left() - 2
                 painter.drawLine(x1 - _TICK_LEN, y, x1, y)
         painter.end()
+
+
+if __name__ == "__main__":
+    from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+
+    from gui.theme import apply_theme
+
+    app = QApplication(sys.argv)
+    apply_theme(app, dark=True)
+    win = QWidget()
+    layout = QVBoxLayout(win)
+    slider = MeterVerticalSlider()
+    slider.setRange(0, 100)
+    slider.setTickPosition(QSlider.TickPosition.TicksLeft)
+    slider.setTickInterval(10)
+    slider.setMinimumHeight(200)
+    layout.addWidget(slider)
+    win.setWindowTitle("MeterVerticalSlider — Vorschau")
+    win.resize(120, 280)
+    win.show()
+    sys.exit(app.exec())

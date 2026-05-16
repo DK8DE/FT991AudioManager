@@ -94,6 +94,7 @@ from mapping.rx_mapping import (
     AgcMode,
     RxMode,
     agc_mode_to_slider_pos,
+    agc_slider_visible_for_mode,
     format_frequency_hz,
     mode_group_supports_dnr_dnf,
 )
@@ -2086,12 +2087,15 @@ class MeterWidget(QWidget):
         # zur unteren Hauptfenster-Leiste.
         self.status_label.hide()
 
-    def apply_dsp_mode_relevance(self, mode_group: str) -> None:
-        """Blendet NB/DNR/DNF aus, wenn die Modusgruppe sie nicht verwendet (FM, C4FM)."""
+    def apply_dsp_mode_relevance(
+        self, mode_group: str, *, operating_mode: Optional[RxMode] = None
+    ) -> None:
+        """Blendet DSP-Slider aus, wenn die Betriebsart sie am FT-991 nicht nutzt."""
         show = mode_group_supports_dnr_dnf(mode_group)
         self.nb_slider.setVisible(show)
         self.nr_slider.setVisible(show)
         self.an_slider.setVisible(show)
+        self._sync_agc_slider_visibility(operating_mode)
 
     # ------------------------------------------------------------------
     # Lebenszyklus des Pollers
@@ -2315,6 +2319,7 @@ class MeterWidget(QWidget):
 
         if sample.mode is not None:
             self._last_mode_for_bw = sample.mode
+            self._sync_agc_slider_visibility()
         self._tx_bw_panel.set_rx_mode(self._last_mode_for_bw)
         if sample.tx_bandwidth_sh is not None:
             self._tx_bw_panel.set_p2(sample.tx_bandwidth_sh, remote=True)
@@ -2331,6 +2336,12 @@ class MeterWidget(QWidget):
                 sample.frequency_hz or 0,
                 sample.frequency_b_hz or 0,
             )
+
+    def _sync_agc_slider_visibility(
+        self, mode: Optional[RxMode] = None
+    ) -> None:
+        effective = mode if mode is not None else self._last_mode_for_bw
+        self.agc_slider.setVisible(agc_slider_visible_for_mode(effective))
 
     def _sync_tx_bw_frame_visibility(self) -> None:
         if not self._cat.is_connected():
