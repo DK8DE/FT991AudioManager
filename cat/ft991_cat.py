@@ -74,6 +74,8 @@ from mapping.rx_mapping import (
     AgcMode,
     RxMode,
     format_af_gain_query,
+    format_af_gain_set,
+    format_rf_gain_set,
     format_agc_query,
     format_agc_set,
     format_auto_notch_query,
@@ -839,6 +841,16 @@ class FT991CAT:
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
 
+    def write_af_gain(self, level: int) -> None:
+        """Setzt den AF-Gain / Lautstärke (``AG0nnn;``, 0..255).
+
+        Anmerkung: Beim FT-991/991A ist der AF-Knopf ein analoger
+        Potentiometer — der hier geschriebene Wert wird ggf. von der
+        Knopfstellung sofort wieder überschrieben. Wir versuchen es
+        trotzdem (kein Verify, kein Echo).
+        """
+        self._cat.send_command(format_af_gain_set(level), read_response=False)
+
     def read_rf_gain(self) -> int:
         """Liest den RF-Gain (``RG0nnn;``, 0..255)."""
         response = self._cat.send_command(format_rf_gain_query())
@@ -846,6 +858,10 @@ class FT991CAT:
             return parse_rf_gain_response(response)
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
+
+    def write_rf_gain(self, level: int) -> None:
+        """Setzt den RF-Gain (``RG0nnn;``, 0..255)."""
+        self._cat.send_command(format_rf_gain_set(level), read_response=False)
 
     def read_agc(self) -> AgcMode:
         """Liest den AGC-Modus (``GT0n;``)."""

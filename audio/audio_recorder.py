@@ -257,33 +257,40 @@ class AudioRecorder(QObject):
         recorder.setOutputLocation(QUrl.fromLocalFile(str(target.resolve())))
 
     def _verify_mp3_support(self, fmt) -> None:
-        """Wirft ``RuntimeError``, wenn das aktive Backend MP3 nicht encoden kann.
+        """Stellt sicher, dass das Backend MP3-Encoding kann.
 
-        Qt's ``QMediaFormat.resolveForEncoding(NoFlags)`` liefert die vom
-        Backend tatsaechlich unterstuetzten File-Format/Codec-Werte. Wenn
-        das nicht MP3 ist, wuerde ``record()`` zwar starten und eine Datei
-        anlegen — aber ohne MP3-Encoder kaeme nichts darin an.
+        ``QMediaFormat.resolveForEncoding(NoFlags)`` aendert das Format
+        in-place und liefert in PySide6 ``None`` zurueck. Wir lesen
+        anschliessend ``fileFormat()`` / ``audioCodec()`` aus dem
+        Original-Objekt und vergleichen.
+
+        Bricht der Call ueberhaupt nicht durch (alte Qt-Version ohne die
+        API), gehen wir davon aus, dass das Backend das gewuenschte
+        Format unterstuetzt.
         """
         QMF = self._QMediaFormat
         assert QMF is not None
         try:
-            resolve = fmt.resolveForEncoding(
-                QMF.ResolveFlags.NoFlags
-            )
+            fmt.resolveForEncoding(QMF.ResolveFlags.NoFlags)
         except (AttributeError, TypeError):
-            # Aelteres Qt ohne resolveForEncoding — wir versuchen es trotzdem.
             return
-        if resolve.fileFormat() != QMF.FileFormat.MP3:
+
+        try:
+            resolved_file_format = fmt.fileFormat()
+            resolved_audio_codec = fmt.audioCodec()
+        except AttributeError:
+            return
+
+        if resolved_file_format != QMF.FileFormat.MP3:
             raise RuntimeError(
                 "MP3-Encoding wird vom aktiven Qt-Multimedia-Backend nicht "
-                "unterstuetzt (oft im Bundle mit FFmpeg-Backend). Bitte "
-                "Umgebungsvariable QT_MEDIA_BACKEND=windows setzen und "
-                "Programm neu starten."
+                "unterstuetzt. Bitte Umgebungsvariable "
+                "QT_MEDIA_BACKEND=windows setzen und Programm neu starten."
             )
-        if resolve.audioCodec() != QMF.AudioCodec.MP3:
+        if resolved_audio_codec != QMF.AudioCodec.MP3:
             raise RuntimeError(
                 "MP3-Audiocodec nicht verfuegbar (Backend liefert "
-                f"{resolve.audioCodec()}). Bitte QT_MEDIA_BACKEND=windows "
+                f"{resolved_audio_codec}). Bitte QT_MEDIA_BACKEND=windows "
                 "setzen und Programm neu starten."
             )
 

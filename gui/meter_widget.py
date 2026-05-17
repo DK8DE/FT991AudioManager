@@ -1624,6 +1624,83 @@ class MiniLevelBar(QWidget):
             self._value_label.setText(f"{raw}")
 
 
+class GainLevelSlider(QWidget):
+    """Horizontaler Slider 0..raw_max mit Label links und Wert rechts.
+
+    Wird vom User gezogen → :attr:`value_set` (live). Programmatisch
+    nachgezogen via :meth:`set_value` (ohne Signal-Feedback).
+    """
+
+    #: User hat den Slider bewegt. Ueber ``isSliderDown()`` kann man im
+    #: Empfaenger entscheiden, ob waehrend des Ziehens jeder Tick raus
+    #: soll oder erst beim Loslassen.
+    value_set = Signal(int)
+
+    def __init__(
+        self,
+        label: str,
+        raw_max: int,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._raw_max = raw_max
+        self._value: Optional[int] = None
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        self._label = QLabel(label)
+        font = self._label.font()
+        font.setPointSizeF(font.pointSizeF() * 0.9)
+        self._label.setFont(font)
+        self._label.setMinimumWidth(22)
+        layout.addWidget(self._label)
+
+        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider.setRange(0, raw_max)
+        self.slider.setSingleStep(1)
+        self.slider.setPageStep(max(1, raw_max // 16))
+        self.slider.valueChanged.connect(self._on_slider_value_changed)
+        layout.addWidget(self.slider, stretch=1)
+
+        self._value_label = QLabel("—")
+        self._value_label.setFont(font)
+        self._value_label.setMinimumWidth(36)
+        self._value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        layout.addWidget(self._value_label)
+
+    def _on_slider_value_changed(self, value: int) -> None:
+        self._value_label.setText(f"{int(value)}")
+        if not self.slider.signalsBlocked():
+            self.value_set.emit(int(value))
+
+    def set_value(self, raw: Optional[int]) -> None:
+        """Programmatischer Update — feuert kein ``value_set``."""
+        if raw == self._value:
+            return
+        self._value = raw
+        if raw is None:
+            self.slider.blockSignals(True)
+            try:
+                self.slider.setValue(0)
+            finally:
+                self.slider.blockSignals(False)
+            self._value_label.setText("—")
+            return
+        v = max(0, min(self._raw_max, int(raw)))
+        self.slider.blockSignals(True)
+        try:
+            self.slider.setValue(v)
+        finally:
+            self.slider.blockSignals(False)
+        self._value_label.setText(f"{v}")
+
+    def is_active(self) -> bool:
+        """True, solange der User den Slider gerade zieht."""
+        return self.slider.isSliderDown()
+
+
 # ----------------------------------------------------------------------
 # TX-Bandbreite (CAT SH WIDTH) — symmetrischer Balken + P2-Slider
 # ----------------------------------------------------------------------
@@ -1814,6 +1891,10 @@ class MeterWidget(QWidget):
     tx_status_changed = Signal(bool)
     #: Genauer TX-Status (0=RX, 1=CAT-TX, 2=MIC-PTT) — feuert nur bei Änderung.
     tx_state_changed = Signal(int)
+    #: User hat den AF-Gain-Slider bewegt — Wert (0..255) per CAT schreiben.
+    af_gain_set_requested = Signal(int)
+    #: User hat den RF-Gain-Slider bewegt — Wert (0..255) per CAT schreiben.
+    rf_gain_set_requested = Signal(int)
     connection_lost = Signal()
     #: ``(mode, frequency_a_hz, frequency_b_hz)`` — VFO/Modes vom Poller fürs Header/Profil.
     rx_info_changed = Signal(object, int, int)
@@ -2003,8 +2084,12 @@ class MeterWidget(QWidget):
         gain_layout.setContentsMargins(6, 4, 6, 4)
         gain_layout.setSpacing(2)
 
-        self.af_gain_bar = MiniLevelBar("AF", 255)
-        self.rf_gain_bar = MiniLevelBar("RF", 255)
+        self.af_gain_bar = GainLevelSlider("AF", 255)
+        self.rf_gain_bar = GainLevelSlider("RF", 255)
+        self.af_gain_bar.setToolTip("Lautstärke (CAT AG0)")
+        self.rf_gain_bar.setToolTip("RF Gain (CAT RG0)")
+        self.af_gain_bar.value_set.connect(self.af_gain_set_requested.emit)
+        self.rf_gain_bar.value_set.connect(self.rf_gain_set_requested.emit)
         if self._integrated_main_layout:
             for gb in (self.af_gain_bar, self.rf_gain_bar):
                 gp = gb.sizePolicy()
@@ -2350,9 +2435,9 @@ class MeterWidget(QWidget):
         if sample.squelch is not None:
             self.smeter_bar.set_squelch(sample.squelch)
             self.sql_slider.set_value(sample.squelch)
-        if sample.af_gain is not None:
+        if sample.af_gain is not None and not self.af_gain_bar.is_active():
             self.af_gain_bar.set_value(sample.af_gain)
-        if sample.rf_gain is not None:
+        if sample.rf_gain is not None and not self.rf_gain_bar.is_active():
             self.rf_gain_bar.set_value(sample.rf_gain)
         if sample.agc is not None:
             self.agc_slider.set_mode(sample.agc)

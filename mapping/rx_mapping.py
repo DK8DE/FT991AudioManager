@@ -439,6 +439,11 @@ def parse_af_gain_response(response: str) -> int:
     return _parse_three_digit_value(response, "AG0", 255)
 
 
+def format_af_gain_set(level: int) -> str:
+    """``AG0nnn;`` mit ``nnn`` = 0..255 (geklemmt)."""
+    return f"AG0{_clamp(level, 0, 255):03d};"
+
+
 def format_rf_gain_query() -> str:
     return "RG0;"
 
@@ -446,6 +451,11 @@ def format_rf_gain_query() -> str:
 def parse_rf_gain_response(response: str) -> int:
     """``RG0nnn;`` -> 0..255."""
     return _parse_three_digit_value(response, "RG0", 255)
+
+
+def format_rf_gain_set(level: int) -> str:
+    """``RG0nnn;`` mit ``nnn`` = 0..255 (geklemmt)."""
+    return f"RG0{_clamp(level, 0, 255):03d};"
 
 
 # ----------------------------------------------------------------------

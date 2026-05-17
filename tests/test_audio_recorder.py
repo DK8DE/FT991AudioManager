@@ -61,13 +61,13 @@ def _install_fake_backend(rec: AudioRecorder) -> tuple[MagicMock, MagicMock, Mag
     recorder_cls.EncodingMode = _Enum.EncodingMode
     recorder_cls.Quality = _Enum.Quality
 
-    # resolveForEncoding gibt ein neues "Format"-Mock zurueck, das MP3 meldet
-    # — damit der MP3-Support-Check im Recorder gruen wird.
-    resolved_fmt = MagicMock(name="ResolvedQMediaFormat")
-    resolved_fmt.fileFormat.return_value = _Enum.FileFormat.MP3
-    resolved_fmt.audioCodec.return_value = _Enum.AudioCodec.MP3
+    # resolveForEncoding aendert das Format in-place — wir mocken nur,
+    # dass die anschliessenden fileFormat()/audioCodec()-Reads MP3
+    # melden, damit der MP3-Support-Check im Recorder gruen wird.
     fmt_instance = MagicMock(name="QMediaFormat")
-    fmt_instance.resolveForEncoding.return_value = resolved_fmt
+    fmt_instance.resolveForEncoding.return_value = None
+    fmt_instance.fileFormat.return_value = _Enum.FileFormat.MP3
+    fmt_instance.audioCodec.return_value = _Enum.AudioCodec.MP3
     fmt_cls = MagicMock(return_value=fmt_instance)
     fmt_cls.FileFormat = _Enum.FileFormat
     fmt_cls.AudioCodec = _Enum.AudioCodec

@@ -393,6 +393,8 @@ class MainWindow(QMainWindow):
         self._radio_control_bar.audio_recorder_clicked.connect(
             self._on_audio_recorder_action
         )
+        self.meter_widget.af_gain_set_requested.connect(self._on_af_gain_slider_changed)
+        self.meter_widget.rf_gain_set_requested.connect(self._on_rf_gain_slider_changed)
         layout.addWidget(self._radio_control_bar)
 
         # ----- Unten: Mode + EQ-Profil; Speicherkanal darunter (volle Breite) --
@@ -722,6 +724,32 @@ class MainWindow(QMainWindow):
             return
         try:
             FT991CAT(self._cat).start_antenna_tuner()
+        except CatConnectionLostError:
+            self._on_connection_lost()
+        except CatError as exc:
+            sb = self.statusBar()
+            if sb is not None:
+                sb.showMessage(str(exc), 5000)
+
+    def _on_af_gain_slider_changed(self, level: int) -> None:
+        """User hat den AF-Slider bewegt — CAT AG0 schreiben."""
+        if not self._cat.is_connected():
+            return
+        try:
+            FT991CAT(self._cat).write_af_gain(int(level))
+        except CatConnectionLostError:
+            self._on_connection_lost()
+        except CatError as exc:
+            sb = self.statusBar()
+            if sb is not None:
+                sb.showMessage(str(exc), 5000)
+
+    def _on_rf_gain_slider_changed(self, level: int) -> None:
+        """User hat den RF-Slider bewegt — CAT RG0 schreiben."""
+        if not self._cat.is_connected():
+            return
+        try:
+            FT991CAT(self._cat).write_rf_gain(int(level))
         except CatConnectionLostError:
             self._on_connection_lost()
         except CatError as exc:

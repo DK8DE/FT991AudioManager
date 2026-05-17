@@ -72,6 +72,17 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyExeName}"; Tasks: deskt
 [Run]
 Filename: "{app}\{#MyExeName}"; Description: "{#MyAppName} starten"; Flags: nowait postinstall skipifsilent unchecked
 
+[UninstallDelete]
+; Programmordner restlos entfernen — auch Dateien, die der Installer
+; nicht kennt (z. B. Logs, gecachte Daten, ggf. lokale data\settings.json,
+; PyInstaller-Reste).
+; %APPDATA%\FT991AudioManager bleibt davon unberuehrt — das liegt
+; ausserhalb von {app} und wird vom Inno-Uninstaller nie angefasst.
+Type: filesandordirs; Name: "{app}\_internal"
+Type: filesandordirs; Name: "{app}\data"
+Type: filesandordirs; Name: "{app}\logs"
+Type: filesandordirs; Name: "{app}"
+
 [Code]
 procedure UninstallOldVersion();
 var
