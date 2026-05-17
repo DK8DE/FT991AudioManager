@@ -242,14 +242,22 @@ Nur Installer (EXE bereits gebaut):
 `InstallerSmall.png` ins Projektroot legen und die entsprechenden Zeilen in
 [`Installer.iss`](Installer.iss) aktivieren.
 
-### Release-Tag
+### Release-Tag (GitHub: ZIP + Windows-Installer)
 
 ```powershell
 .\release.ps1
 ```
 
 Liest `APP_VERSION` aus `version.py`, setzt Git-Tag `v<Version>` und pusht
-nach `origin` (für GitHub Actions Release-Build, falls konfiguriert).
+nach `origin`. GitHub Actions (`.github/workflows/build-windows.yml`) baut
+dann automatisch:
+
+- `FT991AudioManager-Setup-<Version>.exe` (Inno Setup)
+- `FT991AudioManager-v<Version>-Windows.zip` (portable)
+
+Vorher Version in `version.py` erhöhen, committen und `main` pushen, damit der
+Tag auf dem aktuellen Stand liegt. Fortschritt unter **Actions**, Assets unter
+**Releases** auf GitHub.
 
 ## Projektstruktur
 

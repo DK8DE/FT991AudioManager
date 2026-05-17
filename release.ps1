@@ -1,10 +1,17 @@
 <#
 .SYNOPSIS
-    Liest APP_VERSION aus version.py und triggert per Git-Tag einen Release-Build.
+    Liest APP_VERSION aus version.py und triggert per Git-Tag einen GitHub-Actions-Release-Build.
 
 .DESCRIPTION
-    Erzeugt den Tag v<APP_VERSION> und führt "git push origin <Tag>" aus.
-    Vorher APP_VERSION und APP_DATE in version.py anpassen.
+    Der Workflow (.github/workflows/build-windows.yml) startet den Release-Job nur bei einem
+    Push eines Tags, der mit "v" beginnt (z. B. v1.1). Auf GitHub werden dann erzeugt:
+
+      - FT991AudioManager-Setup-<Version>.exe  (Inno Setup, empfohlen)
+      - FT991AudioManager-v<Version>-Windows.zip (portable)
+
+    Das Skript erzeugt den Tag v<APP_VERSION> und fuehrt "git push origin <Tag>" aus.
+    Vorher APP_VERSION und APP_DATE in version.py anpassen; Aenderungen committen und
+    auf main pushen, damit der Tag auf dem richtigen Stand liegt.
 
 .PARAMETER Remote
     Git-Remote-Name (Standard: origin).
@@ -13,7 +20,7 @@
     Zeigt nur Version, Tag und die geplanten Befehle; kein git tag / git push.
 
 .PARAMETER Force
-    Bei schmutzigem Arbeitsverzeichnis keine Rückfrage.
+    Bei schmutzigem Arbeitsverzeichnis keine Rueckfrage.
 
 .EXAMPLE
     .\release.ps1
@@ -33,6 +40,8 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = $PSScriptRoot
 $VersionFile = Join-Path $ProjectRoot "version.py"
+$WorkflowFile = Join-Path $ProjectRoot ".github\workflows\build-windows.yml"
+
 if (-not (Test-Path $VersionFile)) {
     throw "version.py nicht gefunden: $VersionFile"
 }
@@ -46,7 +55,10 @@ if ($appVersion -eq "") {
     throw "APP_VERSION ist leer."
 }
 
+# Workflow: tags v* - Inno-Version ohne fuehrendes v, Git-Tag mit v
 $tag = "v$appVersion"
+$setupName = "FT991AudioManager-Setup-$appVersion.exe"
+$zipName = "FT991AudioManager-$tag-Windows.zip"
 
 Push-Location $ProjectRoot
 try {
@@ -54,20 +66,37 @@ try {
         throw "Kein Git-Repository im Projektroot: $ProjectRoot"
     }
 
+    if (-not (Test-Path $WorkflowFile)) {
+        throw "Release-Workflow fehlt: $WorkflowFile`nOhne diese Datei baut GitHub keinen Installer."
+    }
+    $wfRaw = Get-Content -Path $WorkflowFile -Raw -Encoding UTF8
+    if ($wfRaw -notmatch 'innosetup|ISCC') {
+        Write-Warning "build-windows.yml: kein Inno-Setup-Schritt erkannt - Installer auf GitHub evtl. nicht verfuegbar."
+    }
+
     $dirty = (git status --porcelain 2>$null)
     if ($dirty -and -not $Force -and -not $DryRun) {
-        Write-Warning "Arbeitsverzeichnis ist nicht leer. Der Tag zeigt nur auf den letzten Commit."
+        Write-Warning "Arbeitsverzeichnis ist nicht leer (uncommittete Aenderungen). Der Tag zeigt nur auf den letzten Commit, nicht auf ungespeicherte Dateien."
         $null = Read-Host "Enter zum Fortfahren oder Strg+C zum Abbrechen"
     }
     elseif ($dirty -and $DryRun) {
-        Write-Warning "Arbeitsverzeichnis ist nicht leer: vor echtem Release committen."
+        Write-Warning "Arbeitsverzeichnis ist nicht leer: vor echtem Release committen, sonst fehlen Aenderungen im Tag."
     }
 
     $head = (git rev-parse --short HEAD 2>$null)
+    $remoteUrl = (git remote get-url $Remote 2>$null)
+
     Write-Host "Projekt:     $ProjectRoot" -ForegroundColor Cyan
     Write-Host "APP_VERSION: $appVersion" -ForegroundColor Cyan
     Write-Host "Git-Tag:     $tag  (HEAD: $head)" -ForegroundColor Cyan
     Write-Host "Remote:      $Remote" -ForegroundColor Cyan
+    if ($remoteUrl) {
+        Write-Host "Repo-URL:    $remoteUrl" -ForegroundColor Cyan
+    }
+    Write-Host ""
+    Write-Host "Nach dem Push erstellt GitHub Actions:" -ForegroundColor Cyan
+    Write-Host "  - dist/installer/$setupName" -ForegroundColor Cyan
+    Write-Host "  - dist/$zipName" -ForegroundColor Cyan
     Write-Host ""
 
     $existingLocal = git tag -l $tag 2>$null
@@ -87,20 +116,29 @@ try {
     }
 
     if ($DryRun) {
-        Write-Host "[DryRun] git tag -a $tag -m `"Release $tag`"" -ForegroundColor Yellow
-        Write-Host "[DryRun] git push $Remote $tag" -ForegroundColor Yellow
+        Write-Host '[DryRun] Geplante Befehle:' -ForegroundColor Magenta
+        if (-not $existingLocal) {
+            Write-Host "  git tag $tag" -ForegroundColor Magenta
+        }
+        Write-Host "  git push $Remote $tag" -ForegroundColor Magenta
+        Write-Host "`nKeine Aenderungen ausgefuehrt." -ForegroundColor Magenta
         return
     }
 
-    git tag -a $tag -m "Release $tag"
-    if ($LASTEXITCODE -ne 0) {
-        throw "git tag fehlgeschlagen."
+    if (-not $existingLocal) {
+        Write-Host "git tag $tag ..." -ForegroundColor Green
+        git tag $tag
+        if ($LASTEXITCODE -ne 0) { throw "git tag fehlgeschlagen (Exit $LASTEXITCODE)." }
     }
+
+    Write-Host "git push $Remote $tag ..." -ForegroundColor Green
     git push $Remote $tag
-    if ($LASTEXITCODE -ne 0) {
-        throw "git push fehlgeschlagen."
-    }
-    Write-Host "Release-Tag $tag wurde nach $Remote gepusht." -ForegroundColor Green
+    if ($LASTEXITCODE -ne 0) { throw "git push fehlgeschlagen (Exit $LASTEXITCODE)." }
+
+    Write-Host ""
+    Write-Host "Fertig. GitHub Actions sollte jetzt den Release-Workflow starten (ZIP + Inno Setup)." -ForegroundColor Green
+    Write-Host "Auf GitHub: Repository oeffnen, Tab Actions, Workflow Build Windows EXE, danach Releases." -ForegroundColor Green
+    Write-Host "Erwartete Assets: $setupName und $zipName" -ForegroundColor Green
 }
 finally {
     Pop-Location
