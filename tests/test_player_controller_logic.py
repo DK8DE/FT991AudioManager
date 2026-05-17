@@ -21,105 +21,116 @@ class _FakeCat:
         return self._connected
 
 
+def _disable_multimedia(ctrl: PlayerController) -> None:
+    ctrl._media_ok = False
+    ctrl._player = None
+
+
 class PlayerControllerLogicTest(unittest.TestCase):
     def test_play_without_multimedia_emits_error(self) -> None:
-        with patch("audio.player_controller._MULTIMEDIA_IMPORT", False):
-            with patch("audio.player_controller._MULTIMEDIA_AVAILABLE", False):
-                cat = _FakeCat()
-                ctrl = PlayerController(cat)  # type: ignore[arg-type]
-                try:
-                    errors: list[str] = []
-                    ctrl.error.connect(errors.append)
-                    ctrl.set_playlist([Path("a.mp3")])
-                    ctrl.play()
-                    self.assertTrue(errors)
-                    self.assertEqual(ctrl.state, PlayerState.IDLE)
-                finally:
-                    ctrl.shutdown()
+        with patch("audio.player_controller.qt_multimedia_types", return_value=None):
+            cat = _FakeCat()
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                _disable_multimedia(ctrl)
+                errors: list[str] = []
+                ctrl.error.connect(errors.append)
+                ctrl.set_playlist([Path("a.mp3")])
+                ctrl.play()
+                self.assertTrue(errors)
+                self.assertEqual(ctrl.state, PlayerState.IDLE)
+            finally:
+                ctrl.shutdown()
 
     def test_play_without_cat_emits_error(self) -> None:
         cat = _FakeCat(connected=False)
         mock_player = MagicMock()
-        mock_player.error.return_value = 0  # NoError
-        with patch("audio.player_controller._MULTIMEDIA_IMPORT", True):
-            with patch("audio.player_controller._MULTIMEDIA_AVAILABLE", True):
-                with patch("audio.player_controller.QMediaPlayer", return_value=mock_player):
-                    with patch("audio.player_controller.QAudioOutput"):
-                        with patch(
-                            "audio.player_controller._player_backend_ok",
-                            return_value=True,
-                        ):
-                            ctrl = PlayerController(cat)  # type: ignore[arg-type]
-                            try:
-                                errors: list[str] = []
-                                ctrl.error.connect(errors.append)
-                                ctrl.set_playlist([Path("a.mp3")])
-                                ctrl.play()
-                                self.assertTrue(errors)
-                                self.assertIn("nicht verbunden", errors[0].lower())
-                            finally:
-                                ctrl.shutdown()
+        mock_player.error.return_value = 0
+
+        def _fake_init(self: PlayerController) -> None:
+            import audio.player_controller as pc
+
+            pc._MULTIMEDIA_IMPORT = True
+            pc._MULTIMEDIA_AVAILABLE = True
+            self._media_ok = True
+            self._player = mock_player
+            self._QMediaPlayer = MagicMock()
+            self._QMediaPlayer.Error.NoError = 0
+            self._audio_out = MagicMock()
+
+        with patch.object(PlayerController, "_init_multimedia", _fake_init):
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                errors: list[str] = []
+                ctrl.error.connect(errors.append)
+                ctrl.set_playlist([Path("a.mp3")])
+                ctrl.play()
+                self.assertTrue(errors)
+                self.assertIn("nicht verbunden", errors[0].lower())
+            finally:
+                ctrl.shutdown()
 
     def test_set_playlist_keeps_current_file_after_reorder(self) -> None:
-        with patch("audio.player_controller._MULTIMEDIA_IMPORT", False):
-            with patch("audio.player_controller._MULTIMEDIA_AVAILABLE", False):
-                cat = _FakeCat()
-                ctrl = PlayerController(cat)  # type: ignore[arg-type]
-                try:
-                    a, b, c = Path("a.mp3"), Path("b.mp3"), Path("c.mp3")
-                    ctrl.set_playlist([a, b, c])
-                    ctrl.set_index(1)
-                    ctrl.set_playlist([c, b, a])
-                    self.assertEqual(ctrl.current_path, b)
-                finally:
-                    ctrl.shutdown()
+        with patch("audio.player_controller.qt_multimedia_types", return_value=None):
+            cat = _FakeCat()
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                a, b, c = Path("a.mp3"), Path("b.mp3"), Path("c.mp3")
+                ctrl.set_playlist([a, b, c])
+                ctrl.set_index(1)
+                ctrl.set_playlist([c, b, a])
+                self.assertEqual(ctrl.current_path, b)
+            finally:
+                ctrl.shutdown()
 
     def test_play_rejects_invalid_index(self) -> None:
-        with patch("audio.player_controller._MULTIMEDIA_IMPORT", False):
-            with patch("audio.player_controller._MULTIMEDIA_AVAILABLE", False):
-                cat = _FakeCat()
-                ctrl = PlayerController(cat)  # type: ignore[arg-type]
-                try:
-                    errors: list[str] = []
-                    ctrl.error.connect(errors.append)
-                    ctrl.set_playlist([Path("a.mp3")])
-                    ctrl.play(5)
-                    self.assertTrue(errors)
-                    self.assertIn("index", errors[0].lower())
-                finally:
-                    ctrl.shutdown()
+        with patch("audio.player_controller.qt_multimedia_types", return_value=None):
+            cat = _FakeCat()
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                _disable_multimedia(ctrl)
+                errors: list[str] = []
+                ctrl.error.connect(errors.append)
+                ctrl.set_playlist([Path("a.mp3")])
+                ctrl.play(5)
+                self.assertTrue(errors)
+                self.assertIn("index", errors[0].lower())
+            finally:
+                ctrl.shutdown()
 
-    def test_stop_clears_media_source(self) -> None:
+    def test_stop_keeps_media_source_for_preview_seek(self) -> None:
         cat = _FakeCat()
         mock_player = MagicMock()
         mock_player.error.return_value = 0
-        with patch("audio.player_controller._MULTIMEDIA_IMPORT", True):
-            with patch("audio.player_controller._MULTIMEDIA_AVAILABLE", True):
-                with patch("audio.player_controller.QMediaPlayer", return_value=mock_player):
-                    with patch("audio.player_controller.QAudioOutput"):
-                        with patch(
-                            "audio.player_controller._player_backend_ok",
-                            return_value=True,
-                        ):
-                            ctrl = PlayerController(cat)  # type: ignore[arg-type]
-                            try:
-                                from PySide6.QtCore import QUrl
 
-                                ctrl.stop()
-                                mock_player.setSource.assert_called_with(QUrl())
-                            finally:
-                                ctrl.shutdown()
+        def _fake_init(self: PlayerController) -> None:
+            import audio.player_controller as pc
+
+            pc._MULTIMEDIA_IMPORT = True
+            pc._MULTIMEDIA_AVAILABLE = True
+            self._media_ok = True
+            self._player = mock_player
+            self._QMediaPlayer = MagicMock()
+            self._QMediaPlayer.Error.NoError = 0
+            self._audio_out = MagicMock()
+
+        with patch.object(PlayerController, "_init_multimedia", _fake_init):
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                ctrl.stop()
+                mock_player.setSource.assert_not_called()
+            finally:
+                ctrl.shutdown()
 
     def test_stop_from_idle(self) -> None:
-        with patch("audio.player_controller._MULTIMEDIA_IMPORT", False):
-            with patch("audio.player_controller._MULTIMEDIA_AVAILABLE", False):
-                cat = _FakeCat()
-                ctrl = PlayerController(cat)  # type: ignore[arg-type]
-                try:
-                    ctrl.stop()
-                    self.assertEqual(ctrl.state, PlayerState.IDLE)
-                finally:
-                    ctrl.shutdown()
+        with patch("audio.player_controller.qt_multimedia_types", return_value=None):
+            cat = _FakeCat()
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                ctrl.stop()
+                self.assertEqual(ctrl.state, PlayerState.IDLE)
+            finally:
+                ctrl.shutdown()
 
 
 if __name__ == "__main__":  # pragma: no cover

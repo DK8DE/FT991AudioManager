@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from mapping.rx_mapping import mic_gain_slider_visible_for_mode_group
 from mapping.audio_mapping import (
     MIC_GAIN_DEFAULT,
     MIC_GAIN_MAX,
@@ -82,7 +83,8 @@ class AudioBasicsWidget(QGroupBox):
         universal.setVerticalSpacing(6)
         outer.addWidget(self._universal_container)
 
-        universal.addWidget(QLabel("MIC Gain:"), 0, 0)
+        self._mic_gain_title = QLabel("MIC Gain:")
+        universal.addWidget(self._mic_gain_title, 0, 0)
         self.mic_gain_slider = QSlider(Qt.Horizontal)
         self.mic_gain_slider.setMinimum(MIC_GAIN_MIN)
         self.mic_gain_slider.setMaximum(MIC_GAIN_MAX)
@@ -211,6 +213,10 @@ class AudioBasicsWidget(QGroupBox):
         is_ssb = mode_group.upper() == "SSB"
         self._processor_container.setVisible(is_ssb)
         self._bpf_container.setVisible(is_ssb)
+        show_mic = mic_gain_slider_visible_for_mode_group(mode_group)
+        self._mic_gain_title.setVisible(show_mic)
+        self.mic_gain_slider.setVisible(show_mic)
+        self.mic_gain_label.setVisible(show_mic)
 
     def _emit_changed(self, *_args: object) -> None:
         self.changed.emit()

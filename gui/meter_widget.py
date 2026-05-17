@@ -70,6 +70,8 @@ from cat.cat_errors import (
     CatCommandUnsupportedError,
     CatConnectionLostError,
     CatError,
+    is_cat_protocol_error,
+    is_cat_protocol_error_message,
 )
 from cat.ft991_cat import FT991CAT
 from mapping.meter_mapping import (
@@ -78,6 +80,8 @@ from mapping.meter_mapping import (
     MeterKind,
     SMETER_RAW_MAX,
     SMETER_TICKS,
+    format_smeter_label,
+    smeter_bar_fraction,
     format_meter_value,
     format_po_watts,
     meter_choices,
@@ -95,8 +99,11 @@ from mapping.rx_mapping import (
     RxMode,
     agc_mode_to_slider_pos,
     agc_slider_visible_for_mode,
+    mic_gain_slider_visible_for_mode,
+    mic_gain_slider_visible_for_mode_group,
     format_frequency_hz,
     mode_group_supports_dnr_dnf,
+    should_apply_data_rtty_dsp_preset,
 )
 from mapping.sh_width_mapping import (
     SH_P2_MAX,
@@ -124,6 +131,8 @@ class TxMeterSample:
     frequency_hz: Optional[int] = None
     #: Sendeleistung (CAT ``PC;``), wenn im TX-Poll gelesen.
     pc_power_watts: Optional[int] = None
+    #: TX-Status laut ``TX;`` — 0=RX, 1=CAT-TX, 2=MIC-PTT.
+    tx_state: int = 0
 
 
 # Rückwärtskompatibler Alias — vor 0.6 hieß die Klasse so.
@@ -205,6 +214,7 @@ class MeterPoller(QObject):
         self._active = False
         self._error_streak = 0
         self._last_tx: Optional[bool] = None
+        self._current_tx_state: int = 0
         self._rx_tick = 0           # Zähler für Slow-Path
         self._force_full_rx = True  # Beim Start einmal alle RX-Werte lesen
         # Set der RX-Slow-Path-Reads, die das Geraet nicht versteht
@@ -267,7 +277,9 @@ class MeterPoller(QObject):
 
         try:
             ft = FT991CAT(self._cat)
-            tx = ft.get_tx_status()
+            tx_state = ft.read_tx_state()
+            tx = tx_state != 0
+            self._current_tx_state = tx_state
             if tx:
                 next_delay = self._poll_tx(ft)
             else:
@@ -349,6 +361,7 @@ class MeterPoller(QObject):
                 values=values,
                 frequency_hz=freq_hz,
                 pc_power_watts=pc_power,
+                tx_state=self._current_tx_state,
             )
         )
         # Beim nächsten RX direkt einen vollen Slow-Path-Read machen.
@@ -366,7 +379,13 @@ class MeterPoller(QObject):
             MeterKind.COMP: 0, MeterKind.ALC: 0,
             MeterKind.PO: 0, MeterKind.SWR: 0,
         }
-        self.tx_sample.emit(TxMeterSample(transmitting=False, values=zero_values))
+        self.tx_sample.emit(
+            TxMeterSample(
+                transmitting=False,
+                values=zero_values,
+                tx_state=self._current_tx_state,
+            )
+        )
 
         smeter = ft.read_smeter()
 
@@ -1513,13 +1532,13 @@ class _ScaledBarCanvas(QWidget):
 
 
 def make_smeter_bar(*, flex_horizontal: bool = False) -> ScaledMeterBar:
-    return ScaledMeterBar(
+    bar = ScaledMeterBar(
         label_text="",
         raw_max=SMETER_RAW_MAX,
         ticks=SMETER_TICKS,
-        warn=0.50,             # S9 (raw 84) -> orange-Übergang
-        danger=0.55,           # S9+ -> rot startet
-        value_formatter=lambda raw: _format_smeter_text(raw),
+        warn=0.50,             # ~S9
+        danger=0.55,           # S9+ -> rot
+        value_formatter=lambda raw: format_smeter_label(raw),
         show_squelch=True,
         bar_width=22,
         scale_width=38,
@@ -1528,6 +1547,8 @@ def make_smeter_bar(*, flex_horizontal: bool = False) -> ScaledMeterBar:
         tick_font_scale=0.78,
         flex_horizontal=flex_horizontal,
     )
+    bar._fill_fraction_fn = smeter_bar_fraction
+    return bar
 
 
 def make_tx_meter_bar(
@@ -1551,17 +1572,6 @@ def make_tx_meter_bar(
         tick_font_scale=0.72,
         flex_horizontal=flex_horizontal,
     )
-
-
-def _format_smeter_text(raw: int) -> str:
-    """Kombiniert S-Punkt und Rohwert: ``"S7 • 56"``."""
-    label = "S0"
-    for tick_raw, tick_label in SMETER_TICKS:
-        if raw >= tick_raw:
-            label = tick_label
-        else:
-            break
-    return f"{label} • {raw}"
 
 
 # ----------------------------------------------------------------------
@@ -1802,6 +1812,8 @@ class MeterWidget(QWidget):
     """Kompakter Meter-Bereich: S-Meter oben, DSP-Status, AF/RF, TX-Bars unten."""
 
     tx_status_changed = Signal(bool)
+    #: Genauer TX-Status (0=RX, 1=CAT-TX, 2=MIC-PTT) — feuert nur bei Änderung.
+    tx_state_changed = Signal(int)
     connection_lost = Signal()
     #: ``(mode, frequency_a_hz, frequency_b_hz)`` — VFO/Modes vom Poller fürs Header/Profil.
     rx_info_changed = Signal(object, int, int)
@@ -1835,6 +1847,7 @@ class MeterWidget(QWidget):
         self._rx_interval_ms = max(self._tx_interval_ms,
                                    min(MAX_INTERVAL_MS, int(rx_interval_ms)))
         self._last_tx: Optional[bool] = None
+        self._last_tx_state: Optional[int] = None
         #: Letzte vom Radio gemeldete VFO-A-Frequenz (Hz). Wird aus dem
         #: RX-Status-Sample übernommen und beim TX-Sample geprüft, um
         #: die SWR-Anzeige auf VHF/UHF zu unterdrücken (siehe
@@ -2095,7 +2108,43 @@ class MeterWidget(QWidget):
         self.nb_slider.setVisible(show)
         self.nr_slider.setVisible(show)
         self.an_slider.setVisible(show)
-        self._sync_agc_slider_visibility(operating_mode)
+        self._sync_mode_dependent_slider_visibility(operating_mode, mode_group)
+        if should_apply_data_rtty_dsp_preset(mode_group, operating_mode):
+            self.apply_data_rtty_dsp_preset()
+
+    def apply_data_rtty_dsp_preset(self) -> None:
+        """DATA/RTTY: SQL 0, NB aus/0, DNR aus/0, AGC AUTO (GUI + CAT)."""
+        self.sql_slider.set_value(0)
+        self.nb_slider.set_state(False)
+        self.nb_slider.set_level(0)
+        self.nr_slider.set_state(False)
+        self.nr_slider.set_level(0)
+        self.agc_slider.set_mode(AgcMode.AUTO)
+
+        if not self._cat.is_connected():
+            return
+
+        self._safe_write(lambda: self._ft.write_squelch(0), where="SQL (DATA/RTTY)")
+        self._safe_write(
+            lambda: self._ft.write_noise_blanker(False),
+            where="NB aus (DATA/RTTY)",
+        )
+        self._safe_write(
+            lambda: self._ft.write_noise_blanker_level(0),
+            where="NB-Level 0 (DATA/RTTY)",
+        )
+        self._safe_write(
+            lambda: self._ft.write_noise_reduction(False),
+            where="DNR aus (DATA/RTTY)",
+        )
+        self._safe_write(
+            lambda: self._ft.write_noise_reduction_level(0),
+            where="DNR-Level 0 (DATA/RTTY)",
+        )
+        self._safe_write(
+            lambda: self._ft.write_agc(AgcMode.AUTO),
+            where="AGC AUTO (DATA/RTTY)",
+        )
 
     # ------------------------------------------------------------------
     # Lebenszyklus des Pollers
@@ -2162,7 +2211,10 @@ class MeterWidget(QWidget):
         self.tx_label.setText("—")
         if self._last_tx:
             self.tx_status_changed.emit(False)
+        if self._last_tx_state not in (None, 0):
+            self.tx_state_changed.emit(0)
         self._last_tx = None
+        self._last_tx_state = None
 
     def pause_polling(self) -> None:
         """Pausiert den Poller, *ohne* den Thread zu zerstoeren.
@@ -2275,6 +2327,10 @@ class MeterWidget(QWidget):
         if self._last_tx is None or self._last_tx != transmitting:
             self._last_tx = transmitting
             self.tx_status_changed.emit(transmitting)
+        tx_state = int(getattr(sample, "tx_state", 0) or 0)
+        if self._last_tx_state is None or self._last_tx_state != tx_state:
+            self._last_tx_state = tx_state
+            self.tx_state_changed.emit(tx_state)
 
     def _on_rx_sample(self, sample: object) -> None:
         if not isinstance(sample, RxStatusSample):
@@ -2319,7 +2375,7 @@ class MeterWidget(QWidget):
 
         if sample.mode is not None:
             self._last_mode_for_bw = sample.mode
-            self._sync_agc_slider_visibility()
+            self._sync_mode_dependent_slider_visibility()
         self._tx_bw_panel.set_rx_mode(self._last_mode_for_bw)
         if sample.tx_bandwidth_sh is not None:
             self._tx_bw_panel.set_p2(sample.tx_bandwidth_sh, remote=True)
@@ -2337,11 +2393,20 @@ class MeterWidget(QWidget):
                 sample.frequency_b_hz or 0,
             )
 
-    def _sync_agc_slider_visibility(
-        self, mode: Optional[RxMode] = None
+    def _sync_mode_dependent_slider_visibility(
+        self,
+        mode: Optional[RxMode] = None,
+        mode_group: Optional[str] = None,
     ) -> None:
         effective = mode if mode is not None else self._last_mode_for_bw
         self.agc_slider.setVisible(agc_slider_visible_for_mode(effective))
+        if effective is not None:
+            show_mic = mic_gain_slider_visible_for_mode(effective)
+        elif mode_group is not None:
+            show_mic = mic_gain_slider_visible_for_mode_group(mode_group)
+        else:
+            show_mic = False
+        self.mic_gain_slider.setVisible(show_mic)
 
     def _sync_tx_bw_frame_visibility(self) -> None:
         if not self._cat.is_connected():
@@ -2361,7 +2426,15 @@ class MeterWidget(QWidget):
             where="SH WIDTH",
         )
 
+    def _log_cat_warn(self, text: str) -> None:
+        log = self._cat.get_log()
+        if log is not None:
+            log.log_warn(text)
+
     def _on_poller_error(self, message: str) -> None:
+        if is_cat_protocol_error_message(message):
+            self._log_cat_warn(f"Meter-Poller: {message}")
+            return
         self.status_label.setStyleSheet("color: #c62828;")
         self.status_label.setText(f"Meter-Fehler: {message}")
         self.status_label.show()
@@ -2415,7 +2488,14 @@ class MeterWidget(QWidget):
             writer()
         except CatConnectionLostError:
             self.connection_lost.emit()
-        except (CatError, OSError) as exc:
+        except CatError as exc:
+            if is_cat_protocol_error(exc):
+                self._log_cat_warn(f"{where}: {exc}")
+                return
+            self.status_label.setStyleSheet("color: #c62828;")
+            self.status_label.setText(f"{where}: {exc}")
+            self.status_label.show()
+        except OSError as exc:
             self.status_label.setStyleSheet("color: #c62828;")
             self.status_label.setText(f"{where}: {exc}")
             self.status_label.show()

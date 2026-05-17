@@ -70,7 +70,7 @@
         "eq2": {
           "freq": 700,
           "level": 6,
-          "bw": 2
+          "bw": 1
         },
         "eq3": {
           "freq": 1500,
@@ -103,7 +103,7 @@
         "am_carrier_level": 50,
         "fm_carrier_level": 50,
         "am_mic_sel": "MIC",
-        "fm_mic_sel": "REAR",
+        "fm_mic_sel": "MIC",
         "data_tx_level": 50
       }
     }

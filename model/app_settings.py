@@ -25,6 +25,7 @@ from typing import Optional
 
 from ._app_paths import app_data_dir
 from .audio_player_settings import AudioPlayerSettings
+from .audio_recorder_settings import AudioRecorderSettings
 from .rig_bridge_settings import RigBridgeSettings
 
 
@@ -92,6 +93,7 @@ class AppSettings:
     ui: UiSettings = field(default_factory=UiSettings)
     rig_bridge: RigBridgeSettings = field(default_factory=RigBridgeSettings)
     audio_player: AudioPlayerSettings = field(default_factory=AudioPlayerSettings)
+    audio_recorder: AudioRecorderSettings = field(default_factory=AudioRecorderSettings)
 
     # ------------------------------------------------------------------
     # Laden / Speichern
@@ -122,6 +124,7 @@ class AppSettings:
         ui_raw = data.get("ui", {}) or {}
         rig_bridge_raw = data.get("rig_bridge", {}) or {}
         audio_player_raw = data.get("audio_player", {}) or {}
+        audio_recorder_raw = data.get("audio_recorder", {}) or {}
 
         cat = CatSettings(
             port=cat_raw.get("port"),
@@ -153,12 +156,14 @@ class AppSettings:
         )
         rig_bridge = RigBridgeSettings.from_dict(rig_bridge_raw)
         audio_player = AudioPlayerSettings.from_dict(audio_player_raw)
+        audio_recorder = AudioRecorderSettings.from_dict(audio_recorder_raw)
         return cls(
             cat=cat,
             polling=polling,
             ui=ui,
             rig_bridge=rig_bridge,
             audio_player=audio_player,
+            audio_recorder=audio_recorder,
         )
 
     def save(self, path: Optional[Path] = None) -> None:
@@ -170,6 +175,7 @@ class AppSettings:
             "ui": asdict(self.ui),
             "rig_bridge": self.rig_bridge.to_dict(),
             "audio_player": self.audio_player.to_dict(),
+            "audio_recorder": self.audio_recorder.to_dict(),
         }
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)

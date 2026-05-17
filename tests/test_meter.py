@@ -13,6 +13,7 @@ from cat.serial_cat import SerialCAT
 from mapping.meter_mapping import (
     METER_INFO,
     SMETER_TICKS,
+    format_smeter_label,
     MeterKind,
     classify_value,
     format_meter_value,
@@ -88,7 +89,28 @@ class MeterMappingTest(unittest.TestCase):
         values = [v for v, _ in SMETER_TICKS]
         self.assertEqual(values, sorted(values))
         self.assertEqual(values[0], 0)
-        self.assertEqual(values[-1], 255)
+        self.assertLessEqual(values[-1], 255)
+
+    def test_smeter_panel_scale(self) -> None:
+        from mapping.meter_mapping import (
+            SMETER_RAW_S9,
+            SMETER_RAW_S9P60,
+            smeter_bar_fraction,
+            smeter_raw_to_db,
+        )
+
+        self.assertAlmostEqual(smeter_raw_to_db(SMETER_RAW_S9), 0.0, places=1)
+        self.assertAlmostEqual(smeter_raw_to_db(138), 38.0, places=1)
+        self.assertAlmostEqual(smeter_raw_to_db(144), 40.0, places=1)
+        self.assertAlmostEqual(smeter_raw_to_db(SMETER_RAW_S9P60), 60.0, places=1)
+        self.assertEqual(format_smeter_label(SMETER_RAW_S9), "S9 · 104")
+        self.assertEqual(format_smeter_label(138), "S9+38 · 138")
+        self.assertEqual(format_smeter_label(144), "S9+40 · 144")
+        self.assertEqual(format_smeter_label(SMETER_RAW_S9P60), "S9+60 · 204")
+        self.assertIn("S1", format_smeter_label(12))
+        self.assertEqual(format_smeter_label(193), "S9+56 · 193")
+        self.assertGreater(smeter_bar_fraction(144), smeter_bar_fraction(SMETER_RAW_S9))
+        self.assertEqual(SMETER_TICKS[-1], (SMETER_RAW_S9P60, "+60"))
 
     def test_parse_tx(self) -> None:
         self.assertFalse(parse_tx_response("TX0;"))

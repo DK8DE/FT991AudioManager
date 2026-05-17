@@ -33,6 +33,31 @@ class CatProtocolError(CatError):
     """Antwort vom Funkgerät entspricht nicht dem erwarteten Format."""
 
 
+def is_cat_protocol_error(exc: BaseException) -> bool:
+    """True bei Antwort-/Paket-Problemen — nur ins CAT-Log, nicht in die Haupt-GUI."""
+    return isinstance(exc, CatProtocolError)
+
+
+def is_cat_protocol_error_message(text: str) -> bool:
+    """Wie :func:`is_cat_protocol_error`, für bereits formatierte Fehlertexte."""
+    if not text:
+        return False
+    lower = text.casefold()
+    markers = (
+        "stale-frame",
+        "keine passende antwort",
+        "kennt befehl",
+        "antwort '?;'",
+        "unerwarteter rohwert",
+        "ungültige antwort",
+        "entspricht nicht dem format",
+        "nicht-parsebar",
+        "unerwartete rohwerte",
+        "unerwartete antwort",
+    )
+    return any(marker in lower for marker in markers)
+
+
 class CatCommandUnsupportedError(CatProtocolError):
     """Das Funkgerät hat ``?;`` zurückgeliefert.
 

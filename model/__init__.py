@@ -2,6 +2,12 @@
 
 from .app_settings import AppSettings, CatSettings, PollingSettings, UiSettings
 from .audio_player_settings import AudioPlayerSettings, merge_playlist_order, scan_audio_files
+from .audio_recorder_settings import (
+    AudioRecorderSettings,
+    build_recording_filename,
+    default_recordings_folder,
+    scan_recordings,
+)
 from .rig_bridge_settings import RigBridgeSettings
 from .audio_profile import AudioProfile, VALID_MODE_GROUPS
 from .eq_band import EQBand, EQSettings
@@ -13,8 +19,12 @@ __all__ = [
     "AppSettings",
     "AudioPlayerSettings",
     "AudioProfile",
+    "AudioRecorderSettings",
+    "build_recording_filename",
+    "default_recordings_folder",
     "merge_playlist_order",
     "scan_audio_files",
+    "scan_recordings",
     "CatSettings",
     "EQBand",
     "EQSettings",

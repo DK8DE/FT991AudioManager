@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import enum
+import os
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -12,23 +13,12 @@ from cat import SerialCAT
 from model.audio_player_settings import PlaybackMode
 
 from .cat_ptt_worker import CatPttWorker
-from .qt_media_env import ensure_qt_media_backend
+from .qt_multimedia_lazy import qt_multimedia_types
 
-ensure_qt_media_backend()
+_MULTIMEDIA_IMPORT = False
+_MULTIMEDIA_AVAILABLE = False
 
-try:
-    from PySide6.QtMultimedia import QAudioOutput, QMediaDevices, QMediaPlayer
-
-    _MULTIMEDIA_IMPORT = True
-except ImportError:  # pragma: no cover
-    QAudioOutput = None  # type: ignore[misc, assignment]
-    QMediaDevices = None  # type: ignore[misc, assignment]
-    QMediaPlayer = None  # type: ignore[misc, assignment]
-    _MULTIMEDIA_IMPORT = False
-
-_MULTIMEDIA_AVAILABLE = _MULTIMEDIA_IMPORT
-
-AfterRx = Literal["idle", "paused", "gap", "stop"]
+AfterRx = Literal["idle", "paused", "gap", "stop", "contest_pause", "single_voice"]
 
 
 class PlayerState(enum.Enum):
@@ -39,6 +29,9 @@ class PlayerState(enum.Enum):
     PAUSED_RX = "paused_rx"
     WAITING_RX = "waiting_rx"
     GAP = "gap"
+    #: Lange Hörpause im Kontest-Loop — Funkgerät wird auf Sprach-Mode
+    #: geschaltet, damit Stationen antworten können.
+    LISTEN_PAUSE = "listen_pause"
     STOPPING = "stopping"
 
 
@@ -46,17 +39,19 @@ def multimedia_available() -> bool:
     return bool(_MULTIMEDIA_IMPORT and _MULTIMEDIA_AVAILABLE)
 
 
-def _player_backend_ok(player: object) -> bool:
-    if not _MULTIMEDIA_IMPORT or player is None:
+def _player_backend_ok(player: object, qmedia_player_cls: type) -> bool:
+    if player is None:
         return False
     err = player.error()  # type: ignore[union-attr]
-    return err == QMediaPlayer.Error.NoError  # type: ignore[union-attr]
+    return err == qmedia_player_cls.Error.NoError  # type: ignore[union-attr]
 
 
 def list_audio_output_devices() -> list[tuple[str, str]]:
     """(id, Anzeigename) — leere id = System-Standard."""
-    if not _MULTIMEDIA_AVAILABLE:
+    mm = qt_multimedia_types()
+    if mm is None:
         return [("", "Qt Multimedia nicht verfügbar")]
+    _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
     out: list[tuple[str, str]] = [("", "System-Standard")]
     for dev in QMediaDevices.audioOutputs():
         out.append((dev.id().data().decode("utf-8", errors="replace"), dev.description()))
@@ -71,6 +66,8 @@ class PlayerController(QObject):
     current_file_changed = Signal(str)
     error = Signal(str)
     status_message = Signal(str)
+    #: Sprach-Mode (USB/LSB/FM) — nach Stopp oder Einzeldatei-Ende.
+    voice_mode_requested = Signal()
 
     def __init__(self, serial_cat: SerialCAT, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -85,6 +82,9 @@ class PlayerController(QObject):
         self._after_rx: AfterRx = "idle"
         self._output_device_id = ""
         self._volume_percent = 100
+        #: Kontest-Loop: dieselbe Datei wiederholen mit langer Hörpause.
+        self._contest_mode = False
+        self._contest_listen_pause_ms = 5000
 
         self._pre_roll_timer = QTimer(self)
         self._pre_roll_timer.setSingleShot(True)
@@ -93,6 +93,10 @@ class PlayerController(QObject):
         self._gap_timer = QTimer(self)
         self._gap_timer.setSingleShot(True)
         self._gap_timer.timeout.connect(self._on_gap_done)
+
+        self._contest_pause_timer = QTimer(self)
+        self._contest_pause_timer.setSingleShot(True)
+        self._contest_pause_timer.timeout.connect(self._on_contest_pause_done)
 
         self._tick_timer = QTimer(self)
         self._tick_timer.setInterval(200)
@@ -107,37 +111,58 @@ class PlayerController(QObject):
 
         self._expect_ptt_on: Optional[bool] = None
         self._pending_media_play = False
+        self._preview_loading = False
 
-        self._player: Optional[QMediaPlayer] = None
-        self._audio_out: Optional[QAudioOutput] = None
+        self._player = None
+        self._audio_out = None
         self._media_ok = False
-        if _MULTIMEDIA_IMPORT:
-            self._player = QMediaPlayer(self)
-            if _player_backend_ok(self._player):
-                self._media_ok = True
-                global _MULTIMEDIA_AVAILABLE
-                _MULTIMEDIA_AVAILABLE = True
-                self._audio_out = QAudioOutput(self)
-                self._player.setAudioOutput(self._audio_out)
-                self._player.mediaStatusChanged.connect(self._on_media_status)
-                self._player.errorOccurred.connect(self._on_media_error)
-                self._apply_output_device()
-                self._apply_volume()
-            else:
-                _MULTIMEDIA_AVAILABLE = False
-                err = self._player.errorString()  # type: ignore[union-attr]
-                self._player.deleteLater()
-                self._player = None
-                self.status_message.emit(
-                    f"QMediaPlayer nicht verfügbar ({err}). "
-                    "Unter Windows: PySide6-Addons installiert? "
-                    "Neustart nach „pip install PySide6-Addons“."
-                )
+        self._QMediaPlayer: Optional[type] = None
+        self._init_multimedia()
 
     def shutdown(self) -> None:
         self.stop()
         self._ptt_thread.quit()
         self._ptt_thread.wait(3000)
+
+    def _init_multimedia(self) -> None:
+        """QMediaPlayer erst mit laufender QApplication initialisieren."""
+        global _MULTIMEDIA_IMPORT, _MULTIMEDIA_AVAILABLE
+
+        if self._media_ok:
+            return
+
+        mm = qt_multimedia_types()
+        if mm is None:
+            _MULTIMEDIA_IMPORT = False
+            _MULTIMEDIA_AVAILABLE = False
+            return
+
+        QAudioOutput, QMediaDevices, QMediaPlayer = mm
+        self._QMediaPlayer = QMediaPlayer
+        _MULTIMEDIA_IMPORT = True
+
+        self._player = QMediaPlayer(self)
+        if not _player_backend_ok(self._player, QMediaPlayer):
+            err = self._player.errorString()
+            self._player.deleteLater()
+            self._player = None
+            _MULTIMEDIA_AVAILABLE = False
+            backend = os.environ.get("QT_MEDIA_BACKEND", "?")
+            self.status_message.emit(
+                f"QMediaPlayer nicht verfügbar ({err}, Backend={backend}). "
+                "pip install PySide6-Addons, App neu starten. "
+                "Dev: QT_MEDIA_BACKEND=windows setzen."
+            )
+            return
+
+        _MULTIMEDIA_AVAILABLE = True
+        self._media_ok = True
+        self._audio_out = QAudioOutput(self)
+        self._player.setAudioOutput(self._audio_out)
+        self._player.mediaStatusChanged.connect(self._on_media_status)
+        self._player.errorOccurred.connect(self._on_media_error)
+        self._apply_output_device()
+        self._apply_volume()
 
     @property
     def state(self) -> PlayerState:
@@ -163,12 +188,61 @@ class PlayerController(QObject):
         if 0 <= index < len(self._paths):
             self._index = index
 
+    def load_track(self, index: Optional[int] = None) -> None:
+        """Datei laden (ohne Sendung) — Dauer/Position fuer Vorab-Spulen."""
+        if index is not None:
+            if index < 0 or index >= len(self._paths):
+                return
+            self._index = index
+        if self.is_busy():
+            return
+        path = self._current_path()
+        if path is None:
+            self.position_changed.emit(0, 0)
+            return
+        if not self._media_ok:
+            self._init_multimedia()
+        if not self._media_ok or self._player is None:
+            return
+
+        url = QUrl.fromLocalFile(str(path.resolve()))
+        self.current_file_changed.emit(path.name)
+        QMP = self._QMediaPlayer
+        if (
+            QMP is not None
+            and self._state == PlayerState.IDLE
+            and self._player.source() == url
+            and self._player.mediaStatus()
+            in (
+                QMP.MediaStatus.LoadedMedia,
+                QMP.MediaStatus.BufferedMedia,
+                QMP.MediaStatus.EndOfMedia,
+            )
+        ):
+            self._emit_position()
+            return
+
+        self._preview_loading = True
+        self._pending_media_play = False
+        self._player.stop()
+        self._tick_timer.stop()
+        self._player.setSource(url)
+
     def set_timing(self, pre_roll_ms: int, gap_between_files_ms: int) -> None:
         self._pre_roll_ms = max(0, int(pre_roll_ms))
         self._gap_ms = max(0, int(gap_between_files_ms))
 
     def set_playback_mode(self, mode: PlaybackMode) -> None:
         self._mode = mode
+
+    def set_contest_mode(self, enabled: bool, listen_pause_ms: int) -> None:
+        """Kontest-Loop ein/aus + Hörpause-Dauer (ms)."""
+        self._contest_mode = bool(enabled)
+        self._contest_listen_pause_ms = max(0, int(listen_pause_ms))
+
+    @property
+    def contest_mode(self) -> bool:
+        return self._contest_mode
 
     def set_output_device_id(self, device_id: str) -> None:
         self._output_device_id = device_id or ""
@@ -184,6 +258,10 @@ class PlayerController(QObject):
     def _apply_output_device(self) -> None:
         if not _MULTIMEDIA_AVAILABLE or self._audio_out is None:
             return
+        mm = qt_multimedia_types()
+        if mm is None:
+            return
+        _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
         if not self._output_device_id:
             self._audio_out.setDevice(QMediaDevices.defaultAudioOutput())
         else:
@@ -214,10 +292,13 @@ class PlayerController(QObject):
                 self.error.emit("Ungültiger Dateiindex.")
                 return
             self._index = index
+        if not self._media_ok:
+            self._init_multimedia()
         if not _MULTIMEDIA_AVAILABLE or not self._media_ok:
             self.error.emit(
-                "Audio-Wiedergabe nicht verfügbar. Unter Windows PySide6-Addons "
-                "installieren und App neu starten: pip install PySide6-Addons"
+                "Audio-Wiedergabe nicht verfügbar. "
+                "pip install PySide6-Addons, App neu starten. "
+                "Dev: QT_MEDIA_BACKEND=windows probieren."
             )
             return
         if not self._cat.is_connected():
@@ -232,6 +313,24 @@ class PlayerController(QObject):
         self._resume_after_pause = False
         self._begin_pre_roll()
 
+    def seek_position_ms(self, pos_ms: int) -> None:
+        """Wiedergabeposition setzen (IDLE-Vorschau, PLAYING oder PAUSED_RX)."""
+        if self._player is None or not self._media_ok or self.is_busy():
+            return
+        if self._state not in (
+            PlayerState.IDLE,
+            PlayerState.PLAYING,
+            PlayerState.PAUSED_RX,
+        ):
+            return
+        self._player.setPosition(max(0, int(pos_ms)))
+        if self._state in (
+            PlayerState.IDLE,
+            PlayerState.PLAYING,
+            PlayerState.PAUSED_RX,
+        ):
+            self._emit_position()
+
     def pause(self) -> None:
         if self._state != PlayerState.PLAYING:
             return
@@ -244,27 +343,31 @@ class PlayerController(QObject):
     def stop(self) -> None:
         self._pre_roll_timer.stop()
         self._gap_timer.stop()
+        self._contest_pause_timer.stop()
         self._tick_timer.stop()
         self._resume_after_pause = False
         self._pending_media_play = False
         if self._player is not None:
             self._player.stop()
-            # Quelle leeren — sonst feuert setSource(dieselbe Datei) oft kein LoadedMedia erneut.
-            self._player.setSource(QUrl())
         if self._state in (PlayerState.IDLE, PlayerState.PAUSED_RX):
-            self._set_state(PlayerState.IDLE)
-            self.status_message.emit("Gestoppt")
+            self._finish_stop_idle()
+            if self._player is not None:
+                self._emit_position()
             return
         if self._state == PlayerState.PRE_ROLL:
-            self._set_state(PlayerState.IDLE)
-            self.status_message.emit("Gestoppt")
+            self._finish_stop_idle()
             return
-        if self._state == PlayerState.GAP:
-            self._set_state(PlayerState.IDLE)
-            self.status_message.emit("Gestoppt")
+        if self._state in (PlayerState.GAP, PlayerState.LISTEN_PAUSE):
+            self._finish_stop_idle()
             return
         self._after_rx = "stop"
         self._goto_waiting_rx()
+
+    def _finish_stop_idle(self) -> None:
+        """Stopp abgeschlossen → IDLE und Sprach-Mode anfordern."""
+        self._set_state(PlayerState.IDLE)
+        self.status_message.emit("Gestoppt")
+        self.voice_mode_requested.emit()
 
     def _goto_waiting_rx(self) -> None:
         self._set_state(PlayerState.WAITING_RX)
@@ -345,8 +448,7 @@ class PlayerController(QObject):
         self._after_rx = "idle"
 
         if action == "stop":
-            self._set_state(PlayerState.IDLE)
-            self.status_message.emit("Gestoppt")
+            self._finish_stop_idle()
             return
 
         if action == "paused":
@@ -363,11 +465,39 @@ class PlayerController(QObject):
                 self._gap_timer.start(self._gap_ms)
             return
 
+        if action == "contest_pause":
+            self._set_state(PlayerState.LISTEN_PAUSE)
+            secs = self._contest_listen_pause_ms / 1000.0
+            self.status_message.emit(
+                f"Kontest-Hörpause {secs:.1f} s (Sprach-Mode) …"
+            )
+            if self._contest_listen_pause_ms <= 0:
+                self._on_contest_pause_done()
+            else:
+                self._contest_pause_timer.start(self._contest_listen_pause_ms)
+            return
+
+        if action == "single_voice":
+            if len(self._paths) > 1:
+                self._index = (self._index + 1) % len(self._paths)
+            self._set_state(PlayerState.IDLE)
+            self.status_message.emit("Datei Ende — Sprach-Mode (MIC)")
+            self.voice_mode_requested.emit()
+            # Nächste Datei vorladen — Start kann sofort erneut gedrückt werden.
+            if self._paths:
+                self.load_track()
+            return
+
         self._set_state(PlayerState.IDLE)
         self.status_message.emit("Bereit (RX)")
 
     def _on_gap_done(self) -> None:
         if self._state != PlayerState.GAP:
+            return
+        self._begin_pre_roll()
+
+    def _on_contest_pause_done(self) -> None:
+        if self._state != PlayerState.LISTEN_PAUSE:
             return
         self._begin_pre_roll()
 
@@ -377,14 +507,16 @@ class PlayerController(QObject):
             return False
         if self._player.source() != url:
             return False
+        QMP = self._QMediaPlayer
+        if QMP is None:
+            return False
         if self._player.mediaStatus() not in (
-            QMediaPlayer.MediaStatus.LoadedMedia,
-            QMediaPlayer.MediaStatus.BufferedMedia,
-            QMediaPlayer.MediaStatus.EndOfMedia,
+            QMP.MediaStatus.LoadedMedia,
+            QMP.MediaStatus.BufferedMedia,
+            QMP.MediaStatus.EndOfMedia,
         ):
             return False
         self._pending_media_play = False
-        self._player.setPosition(0)
         self._player.play()
         self._tick_timer.start()
         return True
@@ -393,16 +525,35 @@ class PlayerController(QObject):
         if not _MULTIMEDIA_AVAILABLE or self._player is None:
             return
 
+        QMP = self._QMediaPlayer
+        if QMP is None:
+            return
+
+        if self._preview_loading and self._state == PlayerState.IDLE:
+            if status in (
+                QMP.MediaStatus.LoadedMedia,
+                QMP.MediaStatus.BufferedMedia,
+            ):
+                self._preview_loading = False
+                self._emit_position()
+                return
+            if status == QMP.MediaStatus.InvalidMedia:
+                self._preview_loading = False
+                self.error.emit(
+                    self._player.errorString() or "Audiodatei konnte nicht geladen werden."
+                )
+                return
+
         if self._pending_media_play and self._state == PlayerState.PLAYING:
             if status in (
-                QMediaPlayer.MediaStatus.LoadedMedia,
-                QMediaPlayer.MediaStatus.BufferedMedia,
+                QMP.MediaStatus.LoadedMedia,
+                QMP.MediaStatus.BufferedMedia,
             ):
                 self._pending_media_play = False
                 self._player.play()
                 self._tick_timer.start()
                 return
-            if status == QMediaPlayer.MediaStatus.InvalidMedia:
+            if status == QMP.MediaStatus.InvalidMedia:
                 self._pending_media_play = False
                 self.error.emit(
                     self._player.errorString() or "Audiodatei konnte nicht geladen werden."
@@ -410,16 +561,23 @@ class PlayerController(QObject):
                 self.stop()
                 return
 
-        if status != QMediaPlayer.MediaStatus.EndOfMedia:
+        if status != QMP.MediaStatus.EndOfMedia:
             return
         if self._state != PlayerState.PLAYING:
             return
         self._tick_timer.stop()
         self._player.stop()
         self._resume_after_pause = False
-        if self._mode == "playlist" and self._index + 1 < len(self._paths):
+        if self._contest_mode:
+            # Kontest-Loop: dieselbe Datei nochmal nach Hörpause.
+            self._after_rx = "contest_pause"
+        elif self._mode == "playlist" and self._index + 1 < len(self._paths):
+            # Playlist: nur kurze Pause, kein Sprach-Mode.
             self._index += 1
             self._after_rx = "gap"
+        elif self._mode == "single":
+            # Einzeldatei: stoppen und auf Sprach-Mode (MIC vorne).
+            self._after_rx = "single_voice"
         else:
             self._after_rx = "idle"
         self.status_message.emit("Datei Ende — RX …")

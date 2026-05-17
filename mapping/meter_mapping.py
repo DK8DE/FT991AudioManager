@@ -18,9 +18,9 @@ Die Indizes laut Manual 1711-D (FT-991 CAT Operation Reference Book, S. 16):
 Antwort-Format ist ``RMn<value>;`` mit ``<value>`` als 3-stelliger
 Dezimalzahl (typisch 000..255).
 
-Für das S-Meter gibt es zusätzlich das dedizierte ``SM`` Kommando
-(``SM0;`` -> ``SM0nnn;``), das unabhängig vom Front-Panel-Meter funktioniert
-und deshalb in dieser App bevorzugt verwendet wird.
+Für das S-Meter wird ``SM0;`` verwendet (dedizierter S-Meter 000..255).
+``RM1;`` kann am FT-991 feste Fehlwerte liefern (z. B. dauerhaft ~193) und
+wird nicht mehr abgefragt.
 
 Zusätzlich kennen wir den TX-Status über das ``TX``-Kommando:
 ``TX0;`` = RX, ``TX1;`` = TX per PTT/Mic, ``TX2;`` = TX per CAT.
@@ -518,12 +518,11 @@ def parse_rm_response(response: str, kind: MeterKind) -> int:
 
 
 # ----------------------------------------------------------------------
-# S-Meter (``SM0;`` -> ``SM0nnn;`` mit nnn = 000..255)
+# S-Meter (``SM0;`` -> ``SM0nnn;``)
 # ----------------------------------------------------------------------
 
 SMETER_QUERY = "SM0;"
-"""Dedizierter S-Meter-Abruf. Liefert die Rohstärke 000..255 unabhängig
-vom Front-Panel-Meter."""
+"""S-Meter-Rohwert 000..255 (Panel-Näherung, Kalibrierung unten)."""
 
 SMETER_RAW_MIN = 0
 SMETER_RAW_MAX = 255
@@ -534,47 +533,125 @@ def format_sm_query() -> str:
 
 
 def parse_sm_response(response: str) -> int:
-    """Holt den Rohwert aus ``SM0<value>;``."""
+    """Holt den Rohwert aus ``SM0nnn;``."""
     if not response.startswith("SM0") or not response.endswith(";") or len(response) < 5:
         raise ValueError(
             f"SM-Antwort hat falsches Format (erwartet SM0nnn;): {response!r}"
         )
     body = response[3:-1]
     if not body:
-        raise ValueError(f"SM-Antwort ohne Wert: {response!r}")
+        raise ValueError(f"S-Meter-Antwort ohne Wert: {response!r}")
     try:
         return int(body)
     except ValueError as exc:
-        raise ValueError(f"SM-Wert nicht numerisch: {response!r}") from exc
+        raise ValueError(f"S-Meter-Wert nicht numerisch: {response!r}") from exc
 
 
-# S-Punkte-Skala laut Yaesu-Konvention (annähernd; firmware-abhängig):
-# 0 .. 128 deckt S0..S9 ab, 128..255 deckt S9+10 .. S9+60 dB ab.
-# Die Tabelle wird in der GUI für die Beschriftung der S-Meter-Skala
-# verwendet.
-#: List[(raw_value, label)] in aufsteigender Reihenfolge.
+# ``SM0`` → Panel-Anzeige (FT-991/991A), Messpunkte vom Anwender.
+# S9+38 = raw 138, S9+40 = raw 144 → S9 = raw 104.
+#: List[(raw_value, db_over_s9)] — Stützpunkte, linear interpoliert.
+SMETER_CAL_RAW_DB: List[Tuple[int, int]] = [
+    (0,   -54),  # S0
+    (12,  -48),  # S1
+    (23,  -42),  # S2
+    (35,  -36),  # S3
+    (46,  -30),  # S4
+    (58,  -24),  # S5
+    (69,  -18),  # S6
+    (81,  -12),  # S7
+    (92,   -6),  # S8
+    (104,   0),  # S9
+    (138,  38),  # gemessen
+    (144,  40),  # gemessen
+    (204,  60),  # Fortsetzung 2 dB / 6 raw (wie 138..144)
+]
+SMETER_RAW_S9 = 104
+SMETER_RAW_S9P60 = 204
+SMETER_DB_MIN = SMETER_CAL_RAW_DB[0][1]
+SMETER_DB_MAX = SMETER_CAL_RAW_DB[-1][1]
+
+#: Skalen-Ticks (Positionen aus ``SMETER_CAL_RAW_DB`` / Messpunkte).
 SMETER_TICKS: List[Tuple[int, str]] = [
     (0,   "S0"),
-    (14,  "S1"),
-    (28,  "S3"),
-    (42,  "S5"),
-    (56,  "S7"),
-    (84,  "S9"),
-    (128, "+10"),
-    (170, "+20"),
-    (212, "+40"),
-    (255, "+60"),
+    (34,  "S3"),
+    (56,  "S5"),
+    (SMETER_RAW_S9, "S9"),
+    (115, "+10"),
+    (125, "+20"),
+    (135, "+30"),
+    (144, "+40"),
+    (174, "+50"),
+    (SMETER_RAW_S9P60, "+60"),
 ]
 
 
-def parse_tx_response(response: str) -> bool:
-    """``TX0;`` -> False, ``TX1;`` / ``TX2;`` -> True."""
+def _smeter_interp_db(raw: int) -> float:
+    """Rohwert → dB über S9 entlang ``SMETER_CAL_RAW_DB``."""
+    val = max(SMETER_RAW_MIN, min(SMETER_RAW_MAX, int(raw)))
+    pts = SMETER_CAL_RAW_DB
+    if val <= pts[0][0]:
+        return float(pts[0][1])
+    if val >= pts[-1][0]:
+        return float(pts[-1][1])
+    for (r0, db0), (r1, db1) in zip(pts, pts[1:]):
+        if r0 <= val <= r1:
+            if r1 == r0:
+                return float(db1)
+            frac = (val - r0) / (r1 - r0)
+            return db0 + frac * (db1 - db0)
+    return float(pts[-1][1])
+
+
+def smeter_raw_to_db(raw: int) -> float:
+    """``SM0``-Rohwert → dB relativ zu S9."""
+    return _smeter_interp_db(raw)
+
+
+def smeter_bar_fraction(raw: int) -> float:
+    """Balkenfüllgrad 0..1 entlang der kalibrierten dB-Skala."""
+    db = _smeter_interp_db(raw)
+    span = SMETER_DB_MAX - SMETER_DB_MIN
+    if span <= 0:
+        return 0.0
+    return max(0.0, min(1.0, (db - SMETER_DB_MIN) / span))
+
+
+def format_smeter_label(raw: int) -> str:
+    """Anzeige wie am Funkgerät inkl. Rohwert zur Diagnose."""
+    db = _smeter_interp_db(raw)
+    if db >= -3.0:
+        if db < 0.5:
+            label = "S9"
+        else:
+            label = f"S9+{round(db)}"
+    else:
+        s = max(0, min(9, round((db + 54.0) / 6.0)))
+        label = f"S{s}"
+    return f"{label} · {int(raw)}"
+
+
+#: TX-Status laut FT-991 CAT-Manual:
+#:  - 0: RX (kein TX)
+#:  - 1: CAT TX aktiv (TX1; gesendet, MIC PTT aus)
+#:  - 2: Radio TX (MIC PTT / Front-Panel), CAT TX aus
+TX_STATE_RX = 0
+TX_STATE_CAT_TX = 1
+TX_STATE_MIC_PTT = 2
+
+
+def parse_tx_state(response: str) -> int:
+    """``TXn;`` → 0/1/2 (siehe ``TX_STATE_*``)."""
     if not response.startswith("TX") or not response.endswith(";") or len(response) < 4:
         raise ValueError(f"TX-Antwort hat falsches Format: {response!r}")
     state = response[2:-1]
     if state not in ("0", "1", "2"):
         raise ValueError(f"TX-Antwort hat unbekannten Status {state!r}: {response!r}")
-    return state in ("1", "2")
+    return int(state)
+
+
+def parse_tx_response(response: str) -> bool:
+    """``TX0;`` -> False, ``TX1;`` / ``TX2;`` -> True."""
+    return parse_tx_state(response) != TX_STATE_RX
 
 
 def classify_value(

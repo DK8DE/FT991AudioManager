@@ -58,6 +58,7 @@ from version import APP_NAME, APP_VERSION
 from .about_window import AboutWindow
 from .app_icon import app_icon
 from .audio_player_window import AudioPlayerWindow
+from .audio_recorder_window import AudioRecorderWindow
 from .equalizer_window import EqualizerWindow
 from .log_widget import LogWindow
 from .calibration_dialog import open_calibration_dialog
@@ -107,6 +108,7 @@ class MainWindow(QMainWindow):
         self._log_window: Optional[LogWindow] = None
         self._equalizer_window: Optional[EqualizerWindow] = None
         self._audio_player_window: Optional[AudioPlayerWindow] = None
+        self._audio_recorder_window: Optional[AudioRecorderWindow] = None
         self._memory_editor: Optional[QWidget] = None
         self._calibration_dialog: Optional[QWidget] = None
         self._last_identity_info: str = ""
@@ -122,6 +124,8 @@ class MainWindow(QMainWindow):
         self._vfo_b_write_timer.timeout.connect(self._flush_vfo_b_frequency_write)
         self._vfo_a_display_hz: int = 0
         self._vfo_b_display_hz: int = 0
+        self._relay_rev_active: bool = False
+        self._relay_output_hz: Optional[int] = None
 
         self._build_ui()
         self._build_menu()
@@ -379,16 +383,15 @@ class MainWindow(QMainWindow):
 
         self._radio_control_bar = RadioControlBar()
         self._radio_control_bar.tune_clicked.connect(self._on_tune_clicked)
-        self._radio_control_bar.channel_up_clicked.connect(
-            self._on_memory_channel_up_clicked
+        self._radio_control_bar.rev_toggled.connect(self._on_rev_toggled)
+        self._radio_control_bar.band_choice_activated.connect(
+            self._on_band_choice_activated
         )
-        self._radio_control_bar.channel_down_clicked.connect(
-            self._on_memory_channel_down_clicked
-        )
-        self._radio_control_bar.band_up_clicked.connect(self._on_band_up_clicked)
-        self._radio_control_bar.band_down_clicked.connect(self._on_band_down_clicked)
         self._radio_control_bar.audio_player_clicked.connect(
             self._on_audio_player_action
+        )
+        self._radio_control_bar.audio_recorder_clicked.connect(
+            self._on_audio_recorder_action
         )
         layout.addWidget(self._radio_control_bar)
 
@@ -483,6 +486,11 @@ class MainWindow(QMainWindow):
         audio_player_action.setShortcut("Ctrl+Shift+A")
         audio_player_action.triggered.connect(self._on_audio_player_action)
         edit_menu.addAction(audio_player_action)
+
+        audio_recorder_action = QAction("Audio-&Recorder…", self)
+        audio_recorder_action.setShortcut("Ctrl+Shift+R")
+        audio_recorder_action.triggered.connect(self._on_audio_recorder_action)
+        edit_menu.addAction(audio_recorder_action)
 
         edit_menu.addSeparator()
 
@@ -706,61 +714,94 @@ class MainWindow(QMainWindow):
                     self._connection_footer_label.setText("Kein Port konfiguriert")
 
     # ------------------------------------------------------------------
-    # Radio-Steuerung (Tune / Kanal / Band)
+    # Radio-Steuerung (Tune / Bandwahl)
     # ------------------------------------------------------------------
 
-    def _run_radio_control(
-        self,
-        action: str,
-        *,
-        sync_memory_combo: bool = False,
-    ) -> None:
+    def _on_tune_clicked(self) -> None:
         if not self._cat.is_connected():
             return
-        ft = FT991CAT(self._cat)
-        initial_ch: Optional[int] = None
-        if action in ("ch_up", "ch_down"):
-            data = self.memory_combo.currentData()
-            if isinstance(data, int) and data >= 1:
-                initial_ch = data
         try:
-            if action == "tune":
-                ft.start_antenna_tuner()
-            elif action == "ch_up":
-                ft.memory_channel_up(initial_channel=initial_ch)
-            elif action == "ch_down":
-                ft.memory_channel_down(initial_channel=initial_ch)
-            elif action == "band_up":
-                ft.band_up()
-            elif action == "band_down":
-                ft.band_down()
-            else:
-                return
+            FT991CAT(self._cat).start_antenna_tuner()
         except CatConnectionLostError:
             self._on_connection_lost()
-            return
         except CatError as exc:
             sb = self.statusBar()
             if sb is not None:
                 sb.showMessage(str(exc), 5000)
+
+    def _reset_relay_rev_state(self) -> None:
+        self._relay_rev_active = False
+        self._relay_output_hz = None
+        self._radio_control_bar.set_rev_checked(False)
+
+    def _on_rev_toggled(self, active: bool) -> None:
+        if not self._cat.is_connected():
+            self._radio_control_bar.set_rev_checked(False)
             return
-        if sync_memory_combo:
-            QTimer.singleShot(200, self._sync_memory_combo_from_radio)
+        from mapping.repeater_offset import relay_listen_hz
 
-    def _on_tune_clicked(self) -> None:
-        self._run_radio_control("tune")
+        ft = FT991CAT(self._cat)
+        try:
+            if active:
+                output_hz = ft.read_frequency()
+                if output_hz <= 0:
+                    raise CatError("Keine gültige VFO-A-Frequenz.")
+                self._relay_output_hz = output_hz
+                try:
+                    shift_dir = ft.read_if_shift_direction()
+                except CatError:
+                    shift_dir = 2
+                listen_hz = relay_listen_hz(output_hz, shift_dir=shift_dir)
+                ft.write_frequency(listen_hz)
+                self._relay_rev_active = True
+            else:
+                restore = self._relay_output_hz
+                if restore is None or restore <= 0:
+                    restore = ft.read_frequency()
+                ft.write_frequency(restore)
+                self._relay_rev_active = False
+        except CatConnectionLostError:
+            self._reset_relay_rev_state()
+            self._on_connection_lost()
+        except CatError as exc:
+            self._reset_relay_rev_state()
+            sb = self.statusBar()
+            if sb is not None:
+                sb.showMessage(str(exc), 5000)
 
-    def _on_memory_channel_up_clicked(self) -> None:
-        self._run_radio_control("ch_up", sync_memory_combo=True)
+    def _on_band_choice_activated(self, choice: int) -> None:
+        if not self._cat.is_connected():
+            return
+        from mapping.amateur_bands import VFO_BAND_CHOICE
 
-    def _on_memory_channel_down_clicked(self) -> None:
-        self._run_radio_control("ch_down", sync_memory_combo=True)
+        ft = FT991CAT(self._cat)
+        try:
+            self._reset_relay_rev_state()
+            if choice == VFO_BAND_CHOICE:
+                if not ft.switch_to_vfo_mode():
+                    raise CatError("VFO-Modus konnte nicht gesetzt werden.")
+            else:
+                if not ft.switch_to_vfo_mode():
+                    raise CatError("VFO-Modus konnte nicht gesetzt werden.")
+                hz = int(choice)
+                ft.write_frequency(hz)
+                self._relay_output_hz = hz
+            self._select_memory_combo_vfo()
+            self._radio_control_bar.select_vfo_item()
+        except CatConnectionLostError:
+            self._on_connection_lost()
+        except CatError as exc:
+            sb = self.statusBar()
+            if sb is not None:
+                sb.showMessage(str(exc), 5000)
 
-    def _on_band_up_clicked(self) -> None:
-        self._run_radio_control("band_up")
-
-    def _on_band_down_clicked(self) -> None:
-        self._run_radio_control("band_down")
+    def _select_memory_combo_vfo(self) -> None:
+        vfo_idx = self.memory_combo.findData(self._VFO_ITEM_DATA)
+        if vfo_idx < 0:
+            return
+        self.memory_combo.blockSignals(True)
+        self.memory_combo.setCurrentIndex(vfo_idx)
+        self.memory_combo.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Slots
@@ -785,6 +826,7 @@ class MainWindow(QMainWindow):
         else:
             self._rig_bridge.on_app_disconnected()
         if not connected:
+            self._reset_relay_rev_state()
             self._mode_label.setText("Mode: —")
             self._vfo_a_display_hz = 0
             self._vfo_b_display_hz = 0
@@ -837,6 +879,8 @@ class MainWindow(QMainWindow):
             self._rig_bridge.update_from_radio(mode=mode.value)
         if frequency_hz > 0:
             self._rig_bridge.update_from_radio(frequency_hz=frequency_hz)
+            if not self._relay_rev_active:
+                self._relay_output_hz = frequency_hz
             self._vfo_a_display_hz = frequency_hz
             self._vfo_a_triplet.set_frequency_hz(frequency_hz)
             self._update_vfo_caption_band_color(self._vfo_a_caption, frequency_hz)
@@ -849,6 +893,8 @@ class MainWindow(QMainWindow):
         if not self._cat.is_connected():
             return
         self._vfo_a_display_hz = hz
+        if not self._relay_rev_active:
+            self._relay_output_hz = hz
         self._update_vfo_caption_band_color(self._vfo_a_caption, hz)
         self._vfo_a_pending_hz = hz
         self._vfo_a_write_timer.start()
@@ -1045,6 +1091,7 @@ class MainWindow(QMainWindow):
         try:
             if data == self._VFO_ITEM_DATA:
                 ft.switch_to_vfo_mode()
+                self._radio_control_bar.select_vfo_item()
             elif isinstance(data, int):
                 ft.select_memory_channel(int(data))
         except CatConnectionLostError:
@@ -1105,6 +1152,10 @@ class MainWindow(QMainWindow):
             self._audio_player_window.closed.connect(
                 self._on_audio_player_window_closed
             )
+            # MIC-PTT (TX-State 2) unterbricht laufende Audio-Wiedergabe.
+            self.meter_widget.tx_state_changed.connect(
+                self._audio_player_window.handle_tx_state_changed
+            )
         return self._audio_player_window
 
     def _on_audio_player_action(self) -> None:
@@ -1116,6 +1167,33 @@ class MainWindow(QMainWindow):
     def _on_audio_player_window_closed(self) -> None:
         if self._audio_player_window is not None:
             self._audio_player_window.persist_settings()
+            self._persist_settings()
+
+    def _ensure_audio_recorder_window(self) -> AudioRecorderWindow:
+        if self._audio_recorder_window is None:
+            self._audio_recorder_window = AudioRecorderWindow(
+                self._settings,
+                self._cat,
+                parent=self,
+            )
+            self._audio_recorder_window.closed.connect(
+                self._on_audio_recorder_window_closed
+            )
+            # MIC-PTT bricht Aufnahme/Replay ab (analog Audio-Player).
+            self.meter_widget.tx_state_changed.connect(
+                self._audio_recorder_window.handle_tx_state_changed
+            )
+        return self._audio_recorder_window
+
+    def _on_audio_recorder_action(self) -> None:
+        win = self._ensure_audio_recorder_window()
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def _on_audio_recorder_window_closed(self) -> None:
+        if self._audio_recorder_window is not None:
+            self._audio_recorder_window.persist_settings()
             self._persist_settings()
 
     def _on_memory_editor_action(self) -> None:
@@ -1310,6 +1388,9 @@ class MainWindow(QMainWindow):
                 if self._audio_player_window is not None:
                     self._audio_player_window.force_close()
                     self._audio_player_window = None
+                if self._audio_recorder_window is not None:
+                    self._audio_recorder_window.force_close()
+                    self._audio_recorder_window = None
                 self._persist_settings()
                 super().closeEvent(event)
 

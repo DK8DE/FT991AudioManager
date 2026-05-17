@@ -107,6 +107,30 @@ class ModeMappingTest(unittest.TestCase):
         self.assertEqual(normalize_profile_mode_group("SSB"), "USB")
         self.assertEqual(coarse_mode_group_for("FM-N"), "FM")
 
+    def test_data_rtty_dsp_preset_groups(self) -> None:
+        from mapping.rx_mapping import (
+            RxMode,
+            mode_group_uses_data_rtty_dsp_preset,
+            should_apply_data_rtty_dsp_preset,
+        )
+
+        self.assertTrue(mode_group_uses_data_rtty_dsp_preset("DATA"))
+        self.assertTrue(mode_group_uses_data_rtty_dsp_preset("RTTY"))
+        self.assertFalse(mode_group_uses_data_rtty_dsp_preset("SSB"))
+        self.assertFalse(mode_group_uses_data_rtty_dsp_preset("FM"))
+
+        self.assertTrue(
+            should_apply_data_rtty_dsp_preset("DATA", RxMode.DATA_USB)
+        )
+        self.assertTrue(
+            should_apply_data_rtty_dsp_preset("DATA", RxMode.DATA_LSB)
+        )
+        self.assertFalse(
+            should_apply_data_rtty_dsp_preset("DATA", RxMode.DATA_FM)
+        )
+        self.assertTrue(should_apply_data_rtty_dsp_preset("RTTY", RxMode.RTTY_USB))
+        self.assertFalse(should_apply_data_rtty_dsp_preset("FM", RxMode.FM))
+
     def test_dnr_dnf_mode_groups(self) -> None:
         # Steuert auch Sichtbarkeit des NB-Sliders (mit DNR/DNF gleich FM/C4FM).
         self.assertFalse(mode_group_supports_dnr_dnf("FM"))
@@ -129,6 +153,23 @@ class ModeMappingTest(unittest.TestCase):
         self.assertFalse(agc_slider_visible_for_mode(RxMode.C4FM))
         self.assertFalse(agc_slider_visible_for_mode(RxMode.AM))
         self.assertFalse(agc_slider_visible_for_mode(None))
+
+    def test_mic_gain_slider_hidden_for_data_modes(self) -> None:
+        from mapping.rx_mapping import (
+            RxMode,
+            mic_gain_slider_visible_for_mode,
+            mic_gain_slider_visible_for_mode_group,
+        )
+
+        self.assertFalse(mic_gain_slider_visible_for_mode(RxMode.DATA_LSB))
+        self.assertFalse(mic_gain_slider_visible_for_mode(RxMode.DATA_USB))
+        self.assertFalse(mic_gain_slider_visible_for_mode(RxMode.DATA_FM))
+        self.assertFalse(mic_gain_slider_visible_for_mode_group("DATA"))
+        self.assertTrue(mic_gain_slider_visible_for_mode(RxMode.LSB))
+        self.assertTrue(mic_gain_slider_visible_for_mode(RxMode.USB))
+        self.assertTrue(mic_gain_slider_visible_for_mode(RxMode.FM))
+        self.assertTrue(mic_gain_slider_visible_for_mode_group("SSB"))
+        self.assertFalse(mic_gain_slider_visible_for_mode(None))
 
 
 class FrequencyMappingTest(unittest.TestCase):
@@ -296,7 +337,7 @@ class _RxFakeRadio(SerialCAT):
     def __init__(self) -> None:
         super().__init__()
         self.responses: Dict[str, str] = {
-            "SM0;": "SM0084;",       # ≈ S9
+            "SM0;": "SM0104;",
             "SQ0;": "SQ0030;",
             "AG0;": "AG0200;",
             "RG0;": "RG0255;",
@@ -315,7 +356,14 @@ class _RxFakeRadio(SerialCAT):
     def is_connected(self) -> bool:  # type: ignore[override]
         return True
 
-    def send_command(self, command: str, *, read_response: bool = True):  # type: ignore[override]
+    def send_command(  # type: ignore[override]
+        self,
+        command: str,
+        *,
+        read_response: bool = True,
+        expected_prefix: object = None,
+    ):
+        del expected_prefix
         self.sent.append(command)
         if not read_response:
             return ""
@@ -328,7 +376,7 @@ class _RxFakeRadio(SerialCAT):
 class FT991CatRxTest(unittest.TestCase):
     def test_smeter_and_levels(self) -> None:
         ft = FT991CAT(_RxFakeRadio())
-        self.assertEqual(ft.read_smeter(), 84)
+        self.assertEqual(ft.read_smeter(), 104)
         self.assertEqual(ft.read_squelch(), 30)
         self.assertEqual(ft.read_af_gain(), 200)
         self.assertEqual(ft.read_rf_gain(), 255)

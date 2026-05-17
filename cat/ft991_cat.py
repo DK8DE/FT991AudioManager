@@ -39,6 +39,7 @@ from mapping.meter_mapping import (
     parse_rm_response,
     parse_sm_response,
     parse_tx_response,
+    parse_tx_state,
 )
 from mapping.memory_editor_codec import (
     build_mw_command,
@@ -56,7 +57,6 @@ from mapping.memory_tones import (
     tone_mode_needs_cn,
 )
 from mapping.memory_mapping import (
-    MEMORY_CHANNEL_MIN,
     MemoryChannel,
     format_mc_query,
     format_mc_set,
@@ -69,12 +69,6 @@ from mapping.sh_width_mapping import (
     format_sh_width_query,
     format_sh_width_set,
     parse_sh_width_response,
-)
-from mapping.radio_control_mapping import (
-    format_band_down,
-    format_band_up,
-    format_memory_channel_down,
-    format_memory_channel_up,
 )
 from mapping.rx_mapping import (
     AgcMode,
@@ -367,40 +361,6 @@ class FT991CAT:
     def read_antenna_tuner_status(self) -> str:
         """Liest ``AC;`` — Antwort ``ACxyz;``."""
         return self._cat.send_command("AC;")
-
-    def band_up(self) -> None:
-        """Nächstes Band (``BU0;``)."""
-        self.ensure_rx()
-        self._cat.send_command(format_band_up(), read_response=False)
-
-    def band_down(self) -> None:
-        """Vorheriges Band (``BD0;``)."""
-        self.ensure_rx()
-        self._cat.send_command(format_band_down(), read_response=False)
-
-    def ensure_memory_mode(self, *, initial_channel: Optional[int] = None) -> None:
-        """Wechselt in den Speicher-Modus, wenn ``MC;`` VFO meldet.
-
-        ``CH±`` wirkt nur im Memory-Modus. Aus VFO wird zuerst per
-        ``MCnnn;`` ein Kanal aktiviert (Standard: Kanal 001).
-        """
-        self.ensure_rx()
-        if self.read_active_memory_channel() is not None:
-            return
-        ch = MEMORY_CHANNEL_MIN if initial_channel is None else int(initial_channel)
-        self.select_memory_channel(ch)
-
-    def memory_channel_up(self, *, initial_channel: Optional[int] = None) -> None:
-        """Speicherkanal hoch (``CH0;``)."""
-        self.ensure_memory_mode(initial_channel=initial_channel)
-        self.ensure_rx()
-        self._cat.send_command(format_memory_channel_up(), read_response=False)
-
-    def memory_channel_down(self, *, initial_channel: Optional[int] = None) -> None:
-        """Speicherkanal runter (``CH1;``)."""
-        self.ensure_memory_mode(initial_channel=initial_channel)
-        self.ensure_rx()
-        self._cat.send_command(format_memory_channel_down(), read_response=False)
 
     # ------------------------------------------------------------------
     # VFO
@@ -810,6 +770,14 @@ class FT991CAT:
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
 
+    def read_tx_state(self) -> int:
+        """Liest den TX-Status detailliert (0 RX / 1 CAT-TX / 2 MIC-PTT)."""
+        response = self._cat.send_command("TX;")
+        try:
+            return parse_tx_state(response)
+        except ValueError as exc:
+            raise CatProtocolError(str(exc)) from exc
+
     def read_meter(self, kind: MeterKind) -> int:
         """Liest ein TX-Meter (``RMn;``) als Rohwert (typisch 0..255).
 
@@ -839,7 +807,10 @@ class FT991CAT:
 
     def read_smeter(self) -> int:
         """Liest den S-Meter-Rohwert (``SM0nnn;``, 0..255)."""
-        response = self._cat.send_command(format_sm_query())
+        response = self._cat.send_command(
+            format_sm_query(),
+            expected_prefix="SM0",
+        )
         try:
             return parse_sm_response(response)
         except ValueError as exc:
@@ -1097,6 +1068,17 @@ class FT991CAT:
         self.ensure_rx()
         v = clamp_vfo_frequency_hz(int(hz))
         self._cat.send_command(f"FB{v:09d};", read_response=False)
+
+    def read_if_shift_direction(self) -> int:
+        """Repeater-Shift aus ``IF;`` (P10: 0 Simplex, 1 Plus, 2 Minus)."""
+        from mapping.repeater_offset import parse_if_shift_direction
+
+        self.ensure_rx()
+        response = self._cat.send_command("IF;")
+        try:
+            return parse_if_shift_direction(response)
+        except ValueError as exc:
+            raise CatProtocolError(str(exc)) from exc
 
     # ------------------------------------------------------------------
     # Speicherkanaele (MT/MC/VM)

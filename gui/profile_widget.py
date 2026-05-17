@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from cat import CatConnectionLostError, CatError, FT991CAT, SerialCAT, TxLockError
-from cat.cat_errors import CatProtocolError, CatTimeoutError
+from cat.cat_errors import CatProtocolError, CatTimeoutError, is_cat_protocol_error_message
 from mapping.audio_mapping import (
     MIC_GAIN_DEFAULT,
     MIC_GAIN_MAX,
@@ -1422,28 +1422,19 @@ class ProfileWidget(QWidget):
         self._last_synced_profile = deepcopy(profile)
         self._last_radio_mode = rx_mode_from_selection(self.mode_combo.currentText())
 
-        if skipped_list and not self._worker_silent:
-            bullets = "\n".join(f"• {item}" for item in skipped_list)
-            QMessageBox.information(
-                self,
-                "Teilweise gelesen",
-                (
-                    "Die folgenden Werte konnten nicht aus dem Gerät gelesen werden "
-                    "und stehen jetzt auf Default. Sie werden nicht geschrieben, "
-                    "solange du sie nicht änderst und das EQ-Profil speicherst:\n\n"
-                    f"{bullets}"
-                ),
-            )
         if skipped_list:
-            self.status_label.setText(
-                f"Aktives EQ-Profil: {self._current_profile_name or '—'} "
-                f"• Live-Werte (mit {len(skipped_list)} übersprungenen Feldern)"
-            )
-        else:
-            self.status_label.setText(
-                f"Aktives EQ-Profil: {self._current_profile_name or '—'} "
-                "• Synchron mit Gerät"
-            )
+            log = self._cat.get_log()
+            if log is not None:
+                log.log_warn(
+                    "Profil-Lesen: "
+                    f"{len(skipped_list)} Feld(er) mit Default "
+                    f"(unerwartete CAT-Antworten): "
+                    + "; ".join(skipped_list)
+                )
+        self.status_label.setText(
+            f"Aktives EQ-Profil: {self._current_profile_name or '—'} "
+            "• Synchron mit Gerät"
+        )
 
     def _on_write_done(self) -> None:
         # Baseline aktualisieren: das gerade geschriebene Profil ist nun
@@ -1462,6 +1453,11 @@ class ProfileWidget(QWidget):
             )
 
     def _on_worker_failed(self, title: str, message: str) -> None:
+        if is_cat_protocol_error_message(message):
+            log = self._cat.get_log()
+            if log is not None:
+                log.log_warn(f"{title}: {message}")
+            return
         if self._worker_silent:
             # Stille Auto-Aktion: kein Pop-up, nur ein Hinweis im Sync-Label.
             short = message.splitlines()[0] if message else title

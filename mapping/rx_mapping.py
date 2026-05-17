@@ -294,6 +294,28 @@ def mode_group_supports_dnr_dnf(mode_group: str) -> bool:
     return mode_group.strip().upper() not in _MODE_GROUPS_WITHOUT_DNR_DNF
 
 
+def mode_group_uses_data_rtty_dsp_preset(mode_group: str) -> bool:
+    """True, wenn die Modusgruppe grundsätzlich DATA/RTTY-DSP-Defaults kennt."""
+    return mode_group.strip().upper() in ("DATA", "RTTY")
+
+
+def should_apply_data_rtty_dsp_preset(
+    mode_group: str,
+    operating_mode: Optional[RxMode] = None,
+) -> bool:
+    """Ob SQL/NB/DNR/AGC auf DATA/RTTY-Defaults gesetzt werden.
+
+    - **DATA-USB / DATA-LSB:** ja (SQL 0, NB/DNR aus, AGC AUTO).
+    - **DATA-FM:** nein — Einstellungen wie vor dem Moduswechsel beibehalten.
+    - **RTTY:** ja.
+    """
+    if not mode_group_uses_data_rtty_dsp_preset(mode_group):
+        return False
+    if operating_mode is RxMode.DATA_FM:
+        return False
+    return True
+
+
 #: Betriebsarten mit nutzbarem ``GT``/AGC am FT-991 (SSB/Data-LSB).
 _MODES_WITH_AGC_SLIDER: frozenset[RxMode] = frozenset(
     {RxMode.LSB, RxMode.USB, RxMode.DATA_LSB}
@@ -305,6 +327,18 @@ def agc_slider_visible_for_mode(mode: Optional[RxMode]) -> bool:
     if mode is None or mode is RxMode.UNKNOWN:
         return False
     return mode in _MODES_WITH_AGC_SLIDER
+
+
+def mic_gain_slider_visible_for_mode(mode: Optional[RxMode]) -> bool:
+    """True, wenn MIC Gain (``MG``) am FT-991 wirksam ist — nicht in DATA-Modi."""
+    if mode is None or mode is RxMode.UNKNOWN:
+        return False
+    return mode_group_for(mode) != "DATA"
+
+
+def mic_gain_slider_visible_for_mode_group(mode_group: str) -> bool:
+    """Wie :func:`mic_gain_slider_visible_for_mode`, nur mit Profil-Modusgruppe."""
+    return mode_group.strip().upper() != "DATA"
 
 
 def is_valid_profile_mode_group(text: str) -> bool:

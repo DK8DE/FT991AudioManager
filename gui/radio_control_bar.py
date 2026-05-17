@@ -1,22 +1,23 @@
-"""Kompakte CAT-Tasten unter den Meter-Anzeigen (Tune, Kanal, Band)."""
+"""Kompakte CAT-Steuerung unter den Meter-Anzeigen (Tune, Bandwahl, Audioplayer)."""
 
 from __future__ import annotations
 
 from typing import Optional
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QWidget
+from PySide6.QtWidgets import QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
+
+from mapping.amateur_bands import VFO_BAND_CHOICE, combo_entries_high_to_low
 
 
 class RadioControlBar(QFrame):
-    """Tune, Speicherkanal ± und Amateurband ±."""
+    """Tune, Amateurband-Auswahl (VFO) und Audioplayer."""
 
     tune_clicked = Signal()
-    channel_up_clicked = Signal()
-    channel_down_clicked = Signal()
-    band_up_clicked = Signal()
-    band_down_clicked = Signal()
+    rev_toggled = Signal(bool)
+    band_choice_activated = Signal(int)
     audio_player_clicked = Signal()
+    audio_recorder_clicked = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -31,21 +32,24 @@ class RadioControlBar(QFrame):
         self._tune_btn.setToolTip("Antennentuner starten (CAT AC002)")
         self._tune_btn.clicked.connect(self.tune_clicked.emit)
 
-        self._ch_up_btn = QPushButton("CH +")
-        self._ch_up_btn.setToolTip("Speicherkanal hoch (CAT CH0)")
-        self._ch_up_btn.clicked.connect(self.channel_up_clicked.emit)
+        self._rev_btn = QPushButton("REV")
+        self._rev_btn.setCheckable(True)
+        self._rev_btn.setMinimumWidth(52)
+        self._rev_btn.setToolTip(
+            "Relais: auf Eingangs-QRG schalten (REV ein) / zurück zur "
+            "Ausgangs-QRG (REV aus)"
+        )
+        self._rev_btn.toggled.connect(self.rev_toggled.emit)
 
-        self._ch_down_btn = QPushButton("CH −")
-        self._ch_down_btn.setToolTip("Speicherkanal runter (CAT CH1)")
-        self._ch_down_btn.clicked.connect(self.channel_down_clicked.emit)
-
-        self._band_up_btn = QPushButton("Band +")
-        self._band_up_btn.setToolTip("Nächstes Band (CAT BU0)")
-        self._band_up_btn.clicked.connect(self.band_up_clicked.emit)
-
-        self._band_down_btn = QPushButton("Band −")
-        self._band_down_btn.setToolTip("Vorheriges Band (CAT BD0)")
-        self._band_down_btn.clicked.connect(self.band_down_clicked.emit)
+        layout.addWidget(QLabel("Band:"))
+        self._band_combo = QComboBox()
+        self._band_combo.setMinimumWidth(280)
+        self._band_combo.setToolTip(
+            "VFO-Modus oder Amateurband (Mittenfrequenz auf VFO-A setzen)"
+        )
+        for label, data in combo_entries_high_to_low():
+            self._band_combo.addItem(label, data)
+        self._band_combo.activated.connect(self._on_band_combo_activated)
 
         self._audio_btn = QPushButton("Audioplayer")
         self._audio_btn.setMinimumWidth(96)
@@ -54,27 +58,48 @@ class RadioControlBar(QFrame):
         )
         self._audio_btn.clicked.connect(self.audio_player_clicked.emit)
 
-        for btn in (
-            self._tune_btn,
-            self._ch_up_btn,
-            self._ch_down_btn,
-            self._band_up_btn,
-            self._band_down_btn,
-        ):
-            btn.setMinimumWidth(72)
-            layout.addWidget(btn)
+        self._recorder_btn = QPushButton("Audiorecoder")
+        self._recorder_btn.setMinimumWidth(110)
+        self._recorder_btn.setToolTip(
+            "MP3-Aufnahme mit CAT-DATA-Mode-Umschaltung "
+            "(USB-CODEC → MP3, Replay über CAT-TX)"
+        )
+        self._recorder_btn.clicked.connect(self.audio_recorder_clicked.emit)
+
+        self._tune_btn.setMinimumWidth(72)
+        layout.addWidget(self._tune_btn)
+        layout.addWidget(self._rev_btn)
+        layout.addWidget(self._band_combo, stretch=1)
         layout.addWidget(self._audio_btn)
+        layout.addWidget(self._recorder_btn)
 
         layout.addStretch(1)
         self.set_controls_enabled(False)
 
+    def _on_band_combo_activated(self, _index: int) -> None:
+        data = self._band_combo.currentData()
+        if data is None:
+            return
+        self.band_choice_activated.emit(int(data))
+
+    def select_vfo_item(self) -> None:
+        """Combo auf „VFO“ ohne ``activated``."""
+        idx = self._band_combo.findData(VFO_BAND_CHOICE)
+        if idx >= 0:
+            self._band_combo.blockSignals(True)
+            self._band_combo.setCurrentIndex(idx)
+            self._band_combo.blockSignals(False)
+
+    def set_rev_checked(self, checked: bool) -> None:
+        self._rev_btn.blockSignals(True)
+        self._rev_btn.setChecked(checked)
+        self._rev_btn.blockSignals(False)
+
     def set_controls_enabled(self, enabled: bool) -> None:
-        for btn in (
-            self._tune_btn,
-            self._ch_up_btn,
-            self._ch_down_btn,
-            self._band_up_btn,
-            self._band_down_btn,
-        ):
-            btn.setEnabled(enabled)
+        self._tune_btn.setEnabled(enabled)
+        self._rev_btn.setEnabled(enabled)
+        self._band_combo.setEnabled(enabled)
+        if not enabled:
+            self.set_rev_checked(False)
         self._audio_btn.setEnabled(True)
+        self._recorder_btn.setEnabled(True)

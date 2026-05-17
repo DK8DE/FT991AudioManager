@@ -65,7 +65,13 @@ class _FT991PartialFake(SerialCAT):
     def is_connected(self) -> bool:  # type: ignore[override]
         return True
 
-    def send_command(self, command: str, *, read_response: bool = True):  # type: ignore[override]
+    def send_command(  # type: ignore[override]
+        self,
+        command: str,
+        *,
+        read_response: bool = True,
+        expected_prefix: str = "",
+    ):
         log = self.get_log()
         if log is not None:
             log.log_tx(command)

@@ -6,11 +6,12 @@ import base64
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QByteArray, Qt, QThread, Signal
+from PySide6.QtCore import QByteArray, QMetaObject, Qt, QThread, QTimer, Q_ARG, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
+    QCheckBox,
     QFileDialog,
     QGroupBox,
     QComboBox,
@@ -20,7 +21,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
-    QProgressBar,
     QPushButton,
     QRadioButton,
     QSlider,
@@ -35,10 +35,22 @@ from audio.player_controller import (
     list_audio_output_devices,
     multimedia_available,
 )
-from audio.radio_playback_setup import RadioPlaybackSetup, RadioSetupWorker
+from audio.radio_playback_setup import (
+    RadioPlaybackSetup,
+    RadioSetupWorker,
+    data_mode_from_string,
+)
 from cat import SerialCAT
+from mapping import TX_STATE_MIC_PTT, TX_STATE_RX
+from mapping.rx_mapping import RxMode
 from model import AppSettings
-from model.audio_player_settings import merge_playlist_order, scan_audio_files
+from model.audio_player_settings import (
+    ALLOWED_DATA_MODES,
+    DataMode,
+    MAX_CONTEST_LISTEN_MS,
+    merge_playlist_order,
+    scan_audio_files,
+)
 
 from .app_icon import app_icon
 
@@ -54,6 +66,11 @@ def _double_font(base: QFont) -> QFont:
     f = QFont(base)
     f.setPointSizeF(f.pointSizeF() * 2)
     return f
+
+
+_REMAINING_WARN_MS = 10_000
+_REMAINING_STYLE_NORMAL = ""
+_REMAINING_STYLE_WARN = "color: #ff4444; font-weight: bold;"
 
 
 class AudioPlayerWindow(QMainWindow):
@@ -79,20 +96,38 @@ class AudioPlayerWindow(QMainWindow):
         self.resize(520, 560)
 
         self._controller = PlayerController(self._cat, self)
-        self._radio_setup = RadioPlaybackSetup(self._cat)
+        initial_data_mode = data_mode_from_string(settings.audio_player.data_mode)
+        self._radio_setup = RadioPlaybackSetup(self._cat, initial_data_mode)
         self._setup_thread = QThread(self)
         self._setup_worker = RadioSetupWorker(self._radio_setup)
         self._setup_worker.moveToThread(self._setup_thread)
         self._setup_worker.apply_finished.connect(self._on_radio_apply_finished)
         self._setup_worker.restore_finished.connect(self._on_radio_restore_finished)
+        self._setup_worker.data_mode_finished.connect(self._on_radio_data_mode_finished)
+        self._setup_worker.engage_plain_finished.connect(
+            self._on_radio_engage_plain_finished
+        )
+        self._setup_worker.engage_data_finished.connect(
+            self._on_radio_engage_data_finished
+        )
         self._setup_thread.start()
         self._radio_apply_pending = False
+        #: Wenn True, hat MIC-PTT die Wiedergabe unterbrochen — beim nächsten
+        #: Play muss erst der DATA-Mode zurückgeschaltet werden.
+        self._mic_ptt_interrupted = False
 
         self._controller.state_changed.connect(self._on_state_changed)
         self._controller.position_changed.connect(self._on_position_changed)
         self._controller.current_file_changed.connect(self._on_current_file)
         self._controller.error.connect(self._on_error)
         self._controller.status_message.connect(self._on_status)
+        self._controller.voice_mode_requested.connect(self._on_voice_mode_requested)
+
+        self._duration_ms = 0
+        self._seek_dragging = False
+        self._remaining_warn_active = False
+        self._remaining_blink_on = True
+        self._last_player_state: Optional[PlayerState] = None
 
         self._build_ui()
         self._load_settings_to_ui()
@@ -136,14 +171,71 @@ class AudioPlayerWindow(QMainWindow):
 
         mode_box = QGroupBox("Wiedergabe")
         mode_l = QVBoxLayout(mode_box)
+
+        data_row = QHBoxLayout()
+        data_row.addWidget(QLabel("Sende-Mode:"))
+        self.radio_data_usb = QRadioButton("DATA-USB")
+        self.radio_data_lsb = QRadioButton("DATA-LSB")
+        self.radio_data_fm = QRadioButton("DATA-FM")
+        self._data_mode_group = QButtonGroup(self)
+        self._data_mode_group.setExclusive(True)
+        self._data_mode_buttons: dict[str, QRadioButton] = {
+            "DATA-USB": self.radio_data_usb,
+            "DATA-LSB": self.radio_data_lsb,
+            "DATA-FM": self.radio_data_fm,
+        }
+        for name, btn in self._data_mode_buttons.items():
+            self._data_mode_group.addButton(btn)
+            btn.setToolTip(
+                f"Audio-Wiedergabe in Betriebsart {name} (DATA-Port = USB / Rear)"
+            )
+            btn.toggled.connect(self._on_data_mode_toggled)
+            data_row.addWidget(btn)
+        data_row.addStretch(1)
+        mode_l.addLayout(data_row)
+
         self.radio_single = QRadioButton("Nach jeder Datei stoppen (RX)")
+        self.radio_single.setToolTip(
+            "Nach jeder Datei: Funkgerät schaltet auf Sprach-Mode (USB/LSB/FM "
+            "passend zum gewählten DATA-Mode), damit du mit dem Hand-MIC "
+            "antworten kannst. Die nächste Datei in der Liste wird "
+            "automatisch geladen — Start sendet sie direkt. Beim nächsten "
+            "Start wieder DATA-Mode."
+        )
         self.radio_playlist = QRadioButton("Alle nacheinander")
+        self.radio_playlist.setToolTip(
+            "Spielt alle Dateien der Liste nacheinander ab. Zwischen den "
+            "Dateien nur die kurze Pause — kein Umschalten auf Sprach-Mode."
+        )
         self._mode_group = QButtonGroup(self)
         self._mode_group.addButton(self.radio_single)
         self._mode_group.addButton(self.radio_playlist)
         self.radio_single.toggled.connect(self._sync_mode_to_controller)
         mode_l.addWidget(self.radio_single)
         mode_l.addWidget(self.radio_playlist)
+
+        contest_row = QHBoxLayout()
+        self.check_contest = QCheckBox("Kontest-Loop")
+        self.check_contest.setToolTip(
+            "Markierte Datei dauerhaft wiederholen (Auto-Ruf für Contests). "
+            "Nach jeder Wiedergabe folgt die eingestellte Hörpause im "
+            "Sprach-Mode (USB/LSB/FM), damit Stationen antworten können. "
+            "MIC-PTT bricht den Loop ab — kein automatischer Neustart."
+        )
+        self.check_contest.toggled.connect(self._on_contest_toggled)
+        contest_row.addWidget(self.check_contest)
+        contest_row.addWidget(QLabel("Hörpause:"))
+        self.spin_contest_listen = QSpinBox()
+        self.spin_contest_listen.setRange(0, MAX_CONTEST_LISTEN_MS)
+        self.spin_contest_listen.setSuffix(" ms")
+        self.spin_contest_listen.setSingleStep(500)
+        self.spin_contest_listen.setToolTip(
+            "Dauer der Hörpause zwischen den Wiederholungen (Sprach-Mode)."
+        )
+        self.spin_contest_listen.valueChanged.connect(self._sync_contest_to_controller)
+        contest_row.addWidget(self.spin_contest_listen)
+        contest_row.addStretch(1)
+        mode_l.addLayout(contest_row)
 
         timing = QHBoxLayout()
         timing.addWidget(QLabel("Vorlauf:"))
@@ -200,10 +292,21 @@ class AudioPlayerWindow(QMainWindow):
         transport.addStretch(1)
         root.addLayout(transport)
 
-        self.progress = QProgressBar()
+        self.progress = QSlider(Qt.Orientation.Horizontal)
         self.progress.setRange(0, 1000)
         self.progress.setValue(0)
+        self.progress.setPageStep(50)
+        self.progress.setToolTip("Position — ziehen zum Spulen")
+        self.progress.setTracking(True)
+        self.progress.sliderPressed.connect(self._on_seek_pressed)
+        self.progress.sliderReleased.connect(self._on_seek_released)
+        self.progress.sliderMoved.connect(self._on_seek_slider_change)
+        self.progress.valueChanged.connect(self._on_seek_slider_change)
         root.addWidget(self.progress)
+
+        self._remaining_blink_timer = QTimer(self)
+        self._remaining_blink_timer.setInterval(500)
+        self._remaining_blink_timer.timeout.connect(self._on_remaining_blink_tick)
 
         time_row = QHBoxLayout()
         self.lbl_elapsed = QLabel("0:00")
@@ -251,8 +354,25 @@ class AudioPlayerWindow(QMainWindow):
             self.radio_playlist.setChecked(True)
         else:
             self.radio_single.setChecked(True)
+        self.spin_contest_listen.blockSignals(True)
+        try:
+            self.spin_contest_listen.setValue(ap.contest_listen_pause_ms)
+        finally:
+            self.spin_contest_listen.blockSignals(False)
+        self.check_contest.blockSignals(True)
+        try:
+            self.check_contest.setChecked(bool(ap.contest_mode))
+        finally:
+            self.check_contest.blockSignals(False)
+        self._refresh_contest_enabled_state()
+        chosen = ap.data_mode if ap.data_mode in ALLOWED_DATA_MODES else "DATA-FM"
+        for name, btn in self._data_mode_buttons.items():
+            btn.blockSignals(True)
+            btn.setChecked(name == chosen)
+            btn.blockSignals(False)
         self._sync_timing()
         self._sync_mode_to_controller()
+        self._sync_contest_to_controller()
         self.slider_volume.blockSignals(True)
         try:
             self.slider_volume.setValue(ap.volume_percent)
@@ -260,6 +380,14 @@ class AudioPlayerWindow(QMainWindow):
         finally:
             self.slider_volume.blockSignals(False)
         self._controller.set_volume_percent(ap.volume_percent)
+        # Wichtig: das in der Combo voreingestellte Audio-Gerät auch am
+        # Controller anwenden. Ohne diesen Call läuft die Wiedergabe nach
+        # dem Öffnen des Fensters auf der Default-Soundkarte, obwohl die
+        # Combo das gespeicherte Gerät zeigt.
+        saved_device = self.combo_output.currentData()
+        if not isinstance(saved_device, str):
+            saved_device = ""
+        self._controller.set_output_device_id(saved_device)
 
     def _restore_geometry(self) -> None:
         geo = self._settings.audio_player.window_geometry
@@ -322,7 +450,8 @@ class AudioPlayerWindow(QMainWindow):
 
     def _on_list_row_changed(self, row: int) -> None:
         if row >= 0:
-            self._controller.set_index(row)
+            self._sync_playlist_from_list()
+            self._controller.load_track(row)
 
     def _push_playlist_to_controller(self) -> None:
         if not self._folder.is_dir():
@@ -343,6 +472,25 @@ class AudioPlayerWindow(QMainWindow):
         mode = "playlist" if self.radio_playlist.isChecked() else "single"
         self._controller.set_playback_mode(mode)  # type: ignore[arg-type]
         self._settings.audio_player.playback_mode = mode  # type: ignore[assignment]
+
+    def _sync_contest_to_controller(self) -> None:
+        enabled = self.check_contest.isChecked()
+        listen_ms = int(self.spin_contest_listen.value())
+        self._controller.set_contest_mode(enabled, listen_ms)
+        self._settings.audio_player.contest_mode = enabled
+        self._settings.audio_player.contest_listen_pause_ms = listen_ms
+
+    def _on_contest_toggled(self, _checked: bool) -> None:
+        self._refresh_contest_enabled_state()
+        self._sync_contest_to_controller()
+
+    def _refresh_contest_enabled_state(self) -> None:
+        on = self.check_contest.isChecked()
+        self.spin_contest_listen.setEnabled(on)
+        # Single/Playlist haben im Kontest-Modus keine Bedeutung — der Loop
+        # spielt immer die markierte Datei. Wir deaktivieren sie sichtbar.
+        self.radio_single.setEnabled(not on)
+        self.radio_playlist.setEnabled(not on)
 
     def _on_output_changed(self) -> None:
         dev_id = self.combo_output.currentData()
@@ -368,7 +516,45 @@ class AudioPlayerWindow(QMainWindow):
         if row < 0 and self.list_files.count() > 0:
             row = 0
             self.list_files.setCurrentRow(0)
+        # Falls MIC-PTT die Wiedergabe zuvor unterbrochen hat (oder das Setup
+        # vom Voice-Mode kommt), erst DATA-Mode wieder einschalten.
+        if self._radio_setup.is_applied and not self._radio_setup.in_data_mode:
+            self.lbl_status.setText(
+                f"Schalte zurück auf {self._radio_setup.data_mode.value} …"
+            )
+            QMetaObject.invokeMethod(
+                self._setup_worker,
+                "run_engage_data",
+                Qt.ConnectionType.QueuedConnection,
+            )
+        self._mic_ptt_interrupted = False
         self._controller.play(row if row >= 0 else None)
+
+    def _on_data_mode_toggled(self, checked: bool) -> None:
+        if not checked:
+            return
+        chosen: Optional[str] = None
+        for name, btn in self._data_mode_buttons.items():
+            if btn.isChecked():
+                chosen = name
+                break
+        if chosen is None:
+            return
+        self._settings.audio_player.data_mode = chosen  # type: ignore[assignment]
+        if not self._radio_setup.is_applied:
+            return
+        if self._controller.is_busy():
+            self.lbl_status.setText(
+                "Mode-Wechsel nicht möglich während aktiver TX — bitte stoppen."
+            )
+            return
+        self.lbl_status.setText(f"Funkgerät wird auf {chosen} geschaltet …")
+        QMetaObject.invokeMethod(
+            self._setup_worker,
+            "run_set_data_mode",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, chosen),
+        )
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
         self._sync_playlist_from_list()
@@ -378,7 +564,60 @@ class AudioPlayerWindow(QMainWindow):
             self._controller.play(row)
 
     def _on_state_changed(self, state: PlayerState) -> None:
+        if state != PlayerState.PLAYING:
+            self._set_remaining_warn(False)
+        self._handle_contest_state_transition(state)
+        self._last_player_state = state
         self._update_transport_buttons()
+
+    def _on_voice_mode_requested(self) -> None:
+        """Stopp oder Einzeldatei-Ende: Funkgerät auf Sprach-Mode (MIC vorne)."""
+        if not self._radio_setup.is_applied:
+            return
+        if not self._radio_setup.in_data_mode:
+            return
+        voice = self._radio_setup.voice_mode.value
+        self.lbl_status.setText(f"Schalte auf {voice} …")
+        QMetaObject.invokeMethod(
+            self._setup_worker,
+            "run_engage_plain",
+            Qt.ConnectionType.QueuedConnection,
+        )
+
+    def _handle_contest_state_transition(self, state: PlayerState) -> None:
+        """Mode-Wechsel bei Kontest-Loop und Hörpause.
+
+        - Eintritt in ``LISTEN_PAUSE``: Funkgerät auf Sprach-Mode schalten.
+        - Verlassen von ``LISTEN_PAUSE`` Richtung ``PRE_ROLL``: zurück auf
+          DATA-Mode (vor dem Pre-Roll, damit der TX im DATA-Mode startet).
+        """
+        previous = getattr(self, "_last_player_state", None)
+        if not self._radio_setup.is_applied:
+            return
+        if state == PlayerState.LISTEN_PAUSE and previous != PlayerState.LISTEN_PAUSE:
+            if self._radio_setup.in_data_mode:
+                voice = self._radio_setup.voice_mode.value
+                self.lbl_status.setText(
+                    f"Kontest-Hörpause — schalte auf {voice} …"
+                )
+                QMetaObject.invokeMethod(
+                    self._setup_worker,
+                    "run_engage_plain",
+                    Qt.ConnectionType.QueuedConnection,
+                )
+            return
+        if (
+            state == PlayerState.PRE_ROLL
+            and previous == PlayerState.LISTEN_PAUSE
+            and not self._radio_setup.in_data_mode
+        ):
+            target = self._radio_setup.data_mode.value
+            self.lbl_status.setText(f"Loop-Restart — schalte auf {target} …")
+            QMetaObject.invokeMethod(
+                self._setup_worker,
+                "run_engage_data",
+                Qt.ConnectionType.QueuedConnection,
+            )
 
     def _update_transport_buttons(self) -> None:
         st = self._controller.state
@@ -400,18 +639,85 @@ class AudioPlayerWindow(QMainWindow):
         )
         self.list_files.setEnabled(not busy)
         self.btn_folder.setEnabled(not busy)
-        self.radio_single.setEnabled(not busy)
-        self.radio_playlist.setEnabled(not busy)
+        contest_on = self.check_contest.isChecked()
+        self.radio_single.setEnabled(not busy and not contest_on)
+        self.radio_playlist.setEnabled(not busy and not contest_on)
+        self.check_contest.setEnabled(not busy)
+        self.spin_contest_listen.setEnabled(contest_on and not busy)
         self.slider_volume.setEnabled(multimedia_available())
+        self.progress.setEnabled(
+            multimedia_available() and self._duration_ms > 0 and not busy
+        )
 
     def _on_position_changed(self, pos_ms: int, dur_ms: int) -> None:
-        if dur_ms > 0:
-            self.progress.setValue(int(1000 * pos_ms / dur_ms))
+        self._duration_ms = max(0, dur_ms)
+        if not self._seek_dragging:
+            if dur_ms > 0:
+                self.progress.blockSignals(True)
+                try:
+                    self.progress.setValue(int(1000 * pos_ms / dur_ms))
+                finally:
+                    self.progress.blockSignals(False)
+            else:
+                self.progress.setValue(0)
+            self.lbl_elapsed.setText(_format_ms(pos_ms))
+            rem = max(0, dur_ms - pos_ms)
+            self.lbl_remaining.setText(f"-{_format_ms(rem)}")
+            self._update_remaining_warn(rem)
+        self._update_transport_buttons()
+
+    def _update_remaining_warn(self, rem_ms: int) -> None:
+        playing = self._controller.state == PlayerState.PLAYING
+        self._set_remaining_warn(playing and rem_ms < _REMAINING_WARN_MS)
+
+    def _set_remaining_warn(self, active: bool) -> None:
+        if active == self._remaining_warn_active:
+            if active:
+                self.lbl_remaining.setStyleSheet(
+                    _REMAINING_STYLE_WARN if self._remaining_blink_on else _REMAINING_STYLE_NORMAL
+                )
+            return
+        self._remaining_warn_active = active
+        if active:
+            self._remaining_blink_on = True
+            self.lbl_remaining.setStyleSheet(_REMAINING_STYLE_WARN)
+            self._remaining_blink_timer.start()
         else:
-            self.progress.setValue(0)
+            self._remaining_blink_timer.stop()
+            self.lbl_remaining.setStyleSheet(_REMAINING_STYLE_NORMAL)
+            self.lbl_remaining.setVisible(True)
+
+    def _on_remaining_blink_tick(self) -> None:
+        if not self._remaining_warn_active:
+            return
+        self._remaining_blink_on = not self._remaining_blink_on
+        self.lbl_remaining.setStyleSheet(
+            _REMAINING_STYLE_WARN if self._remaining_blink_on else _REMAINING_STYLE_NORMAL
+        )
+
+    def _on_seek_pressed(self) -> None:
+        self._seek_dragging = True
+
+    def _on_seek_released(self) -> None:
+        self._seek_dragging = False
+        self._apply_seek_from_slider()
+
+    def _on_seek_slider_change(self, value: int) -> None:
+        if self.progress.signalsBlocked() or self._duration_ms <= 0:
+            return
+        if self.progress.isSliderDown():
+            self._seek_dragging = True
+        pos_ms = int(self._duration_ms * value / 1000)
         self.lbl_elapsed.setText(_format_ms(pos_ms))
-        rem = max(0, dur_ms - pos_ms)
+        rem = max(0, self._duration_ms - pos_ms)
         self.lbl_remaining.setText(f"-{_format_ms(rem)}")
+        self._update_remaining_warn(rem)
+
+    def _apply_seek_from_slider(self) -> None:
+        if self._duration_ms <= 0:
+            return
+        pos_ms = int(self._duration_ms * self.progress.value() / 1000)
+        self._controller.seek_position_ms(pos_ms)
 
     def _on_current_file(self, name: str) -> None:
         for i in range(self.list_files.count()):
@@ -441,9 +747,10 @@ class AudioPlayerWindow(QMainWindow):
 
     def _request_radio_apply(self) -> None:
         self._radio_apply_pending = True
-        self.lbl_status.setText("Funkgerät wird auf DATA-FM / USB (072) geschaltet …")
-        from PySide6.QtCore import QMetaObject
-
+        target = self._radio_setup.data_mode.value
+        self.lbl_status.setText(
+            f"Funkgerät wird auf {target} / USB (072) geschaltet …"
+        )
         QMetaObject.invokeMethod(
             self._setup_worker,
             "run_apply",
@@ -453,8 +760,6 @@ class AudioPlayerWindow(QMainWindow):
     def _request_radio_restore(self) -> None:
         if not self._radio_setup.is_applied:
             return
-        from PySide6.QtCore import QMetaObject
-
         QMetaObject.invokeMethod(
             self._setup_worker,
             "run_restore",
@@ -471,6 +776,69 @@ class AudioPlayerWindow(QMainWindow):
     def _on_radio_restore_finished(self, ok: bool, message: str) -> None:
         if message and not ok:
             QMessageBox.warning(self, "Audio-Player", message)
+
+    def _on_radio_data_mode_finished(self, ok: bool, message: str) -> None:
+        if message:
+            self.lbl_status.setText(message)
+        if not ok and message:
+            QMessageBox.warning(self, "Audio-Player", message)
+
+    def _on_radio_engage_plain_finished(self, ok: bool, message: str) -> None:
+        if message:
+            self.lbl_status.setText(message)
+        if not ok and message:
+            QMessageBox.warning(self, "Audio-Player", message)
+
+    def _on_radio_engage_data_finished(self, ok: bool, message: str) -> None:
+        if message:
+            self.lbl_status.setText(message)
+        if not ok and message:
+            QMessageBox.warning(self, "Audio-Player", message)
+
+    def handle_tx_state_changed(self, state: int) -> None:
+        """MainWindow-Brücke: TX-Status (0/1/2) vom Meter-Poller.
+
+        - ``TX_STATE_MIC_PTT`` während Wiedergabe → CAT-TX aus, Mode
+          erzwungen auf Sprach-Mode (User hält PTT, daher ``force=True``).
+        - ``TX_STATE_RX`` nach einer MIC-PTT-Unterbrechung → nochmal
+          sauber verifiziert nachschalten, falls der Force-Write während
+          TX vom Radio verworfen wurde.
+        """
+        if not self._radio_setup.is_applied:
+            return
+        if state == TX_STATE_MIC_PTT:
+            if not self._controller.is_busy() and not self._radio_setup.in_data_mode:
+                return
+            self._mic_ptt_interrupted = True
+            if self._controller.is_busy():
+                self._controller.stop()
+            if self._radio_setup.in_data_mode:
+                voice = self._radio_setup.voice_mode.value
+                self.lbl_status.setText(
+                    f"MIC PTT erkannt — schalte auf {voice} …"
+                )
+                QMetaObject.invokeMethod(
+                    self._setup_worker,
+                    "run_engage_plain_forced",
+                    Qt.ConnectionType.QueuedConnection,
+                )
+            return
+        if state == TX_STATE_RX and self._mic_ptt_interrupted:
+            # User hat MIC PTT losgelassen — Mode jetzt verifizieren und
+            # ggf. nochmal sauber setzen (Force-Write während TX wird vom
+            # FT-991 nicht immer angenommen).
+            if self._radio_setup.needs_plain_verify:
+                QMetaObject.invokeMethod(
+                    self._setup_worker,
+                    "run_verify_plain",
+                    Qt.ConnectionType.QueuedConnection,
+                )
+            elif self._radio_setup.in_data_mode:
+                QMetaObject.invokeMethod(
+                    self._setup_worker,
+                    "run_engage_plain",
+                    Qt.ConnectionType.QueuedConnection,
+                )
 
     def force_close(self) -> None:
         self._force_close = True
