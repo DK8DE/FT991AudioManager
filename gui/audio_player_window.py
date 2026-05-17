@@ -91,7 +91,7 @@ class AudioPlayerWindow(QMainWindow):
         self._folder = Path(settings.audio_player.folder_path or "")
         self._playlist_names: list[str] = list(settings.audio_player.playlist_order)
 
-        self.setWindowTitle("FT-991A Audio-Player")
+        self.setWindowTitle("FT-991/A Audio-Player")
         self.setWindowIcon(app_icon())
         self.resize(520, 560)
 

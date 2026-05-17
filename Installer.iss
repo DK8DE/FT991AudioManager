@@ -1,9 +1,9 @@
-; Inno Setup — FT-991A Audio-Profilmanager (Deutsch)
+; Inno Setup — FT-991/A Audiomanager (Deutsch)
 ; Kompilieren (nach PyInstaller-Build):
 ;   ISCC.exe /DMyAppVersion=1.0 Installer.iss
 ; Version aus version.py:  .\installer.ps1
 
-#define MyAppName "FT-991A Audio-Profilmanager"
+#define MyAppName "FT-991/A Audiomanager"
 #ifndef MyAppVersion
   #define MyAppVersion "1.0"
 #endif

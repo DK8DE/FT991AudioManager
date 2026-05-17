@@ -1,4 +1,4 @@
-"""Einstiegspunkt für den FT-991A Audio-Profilmanager."""
+"""Einstiegspunkt für den FT-991/A Audiomanager."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     # GUI erst nach QApplication importieren (QtMultimedia braucht das).
     from gui import MainWindow
-    app.setApplicationName("FT-991A Audio-Profilmanager")
+    app.setApplicationName("FT-991/A Audiomanager")
     app.setOrganizationName("DK8DE Jörg Körner")
     # App-Icon zentral setzen: vererbt sich auf alle Top-Level-Fenster
     # (Title-Bar + Windows-Taskbar / macOS-Dock / Linux-Panel).

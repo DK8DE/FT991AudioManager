@@ -109,7 +109,7 @@ class AudioRecorderWindow(QMainWindow):
             self._folder = default_recordings_folder()
             self._settings.audio_recorder.folder_path = str(self._folder)
 
-        self.setWindowTitle("FT-991A Audio-Recorder")
+        self.setWindowTitle("FT-991/A Audio-Recorder")
         self.setWindowIcon(app_icon())
         self.resize(560, 600)
 

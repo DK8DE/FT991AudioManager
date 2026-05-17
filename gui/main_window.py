@@ -1,4 +1,4 @@
-"""Hauptfenster des FT-991A Audio-Profilmanagers.
+"""Hauptfenster des FT-991/A Audiomanagers.
 
 Neuer schlanker Aufbau (ab 0.5.1):
 

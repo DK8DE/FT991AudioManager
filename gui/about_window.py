@@ -1,4 +1,4 @@
-"""Info-/About-Fenster für den FT-991A Audio-Profilmanager."""
+"""Info-/About-Fenster für den FT-991/A Audiomanager."""
 
 from __future__ import annotations
 

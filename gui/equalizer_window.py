@@ -24,7 +24,7 @@ class EqualizerWindow(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self._profile_widget = profile_widget
-        self.setWindowTitle("FT-991A EQ-Profil")
+        self.setWindowTitle("FT-991/A EQ-Profil")
         self.setWindowIcon(app_icon())
         self.resize(920, 780)
 

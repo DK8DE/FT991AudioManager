@@ -128,7 +128,7 @@ jobs:
         run: |
           $ver = "${{ steps.ver.outputs.version }}"
           @"
-          # FT-991A Audio-Profilmanager ${{ github.ref_name }}
+          # FT-991/A Audiomanager ${{ github.ref_name }}
 
           ## Windows
 
@@ -152,7 +152,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "FT-991A Audio-Profilmanager ${{ github.ref_name }}"
+          name: "FT-991/A Audiomanager ${{ github.ref_name }}"
           body_path: RELEASE_NOTES.md
           files: |
             dist/FT991AudioManager-${{ github.ref_name }}-Windows.zip

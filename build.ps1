@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Erzeugt eine standalone Windows-EXE des FT-991A Audio-Profilmanagers.
+    Erzeugt eine standalone Windows-EXE des FT-991/A Audiomanagers.
 
 .DESCRIPTION
     Baut mit PyInstaller eine "onedir"-Distribution unter

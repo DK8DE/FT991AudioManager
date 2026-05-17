@@ -325,7 +325,7 @@ class LogWindow(QWidget):
         # in der Taskleiste erscheinen und sich frei bewegen lassen.
         super().__init__(None)
         from .app_icon import app_icon
-        self.setWindowTitle("CAT-Log — FT-991A Audio-Profilmanager")
+        self.setWindowTitle("CAT-Log — FT-991/A Audiomanager")
         self.setWindowIcon(app_icon())
         self.setWindowFlags(Qt.Window)
         self.resize(900, 420)

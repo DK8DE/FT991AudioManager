@@ -27,12 +27,12 @@ _ver_info = f"""VSVersionInfo(
     StringFileInfo([
       StringTable('040704b0', [
         StringStruct('CompanyName',      '{APP_AUTHOR}'),
-        StringStruct('FileDescription',  'FT-991A Audio-Profilmanager'),
+        StringStruct('FileDescription',  'FT-991/A Audiomanager'),
         StringStruct('FileVersion',      '{APP_VERSION}'),
         StringStruct('InternalName',     'FT991AudioManager'),
         StringStruct('LegalCopyright',   '{APP_COPYRIGHT}'),
         StringStruct('OriginalFilename', 'FT991AudioManager.exe'),
-        StringStruct('ProductName',      'FT-991A Audio-Profilmanager'),
+        StringStruct('ProductName',      'FT-991/A Audiomanager'),
         StringStruct('ProductVersion',   '{APP_VERSION}'),
       ])
     ]),

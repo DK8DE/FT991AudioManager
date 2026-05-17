@@ -1,4 +1,4 @@
-# FT-991A Audio-Profilmanager
+# FT-991/A Audiomanager
 
 **Version 1.0** — Desktop-Tool zur komfortablen Steuerung des Yaesu **FT-991 / FT-991A**
 über die CAT-Schnittstelle. Die Anwendung deckt alle audiobezogenen TX-Parameter
@@ -118,7 +118,7 @@ Unter **Datei → Einstellungen → Rig-Bridge**:
   Zugriffe mit der Haupt-App
 
 Damit können z. B. **WSJT-X**, **fldigi** oder **Ham Radio Deluxe** das
-Radio parallel nutzen, während der Audio-Profilmanager läuft.
+Radio parallel nutzen, während der Audiomanager läuft.
 
 ### Robustheit
 

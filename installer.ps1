@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Erstellt den Windows-Setup-Installer (Inno Setup) für den FT-991A Audio-Profilmanager.
+    Erstellt den Windows-Setup-Installer (Inno Setup) für den FT-991/A Audiomanager.
 
 .DESCRIPTION
     Liest APP_VERSION aus version.py und kompiliert Installer.iss nach

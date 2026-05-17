@@ -51,7 +51,7 @@ class DarkPaletteTest(unittest.TestCase):
         )
 
     def test_dark_colors_match_spec(self) -> None:
-        # Hauptfenster-Dark-Mode (Screenshot FT-991A Audio-Profilmanager).
+        # Hauptfenster-Dark-Mode (Screenshot FT-991/A Audiomanager).
         self.assertEqual(DARK_COLORS["Window"], "#1E1E1E")
         self.assertEqual(DARK_COLORS["WindowText"], "#FFFFFF")
         self.assertEqual(DARK_COLORS["Base"], "#2D2D2D")

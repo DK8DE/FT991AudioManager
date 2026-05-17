@@ -60,7 +60,7 @@ class MemoryEditorWindow(QMainWindow):
         on_closed: Optional[Callable[[], None]] = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("FT-991A Speicherkanal-Editor")
+        self.setWindowTitle("FT-991/A Speicherkanal-Editor")
         self.setWindowIcon(app_icon())
         self.resize(1280, 720)
 
