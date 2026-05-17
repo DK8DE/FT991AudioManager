@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtCore import (
     QByteArray,
@@ -63,6 +63,9 @@ from model.audio_recorder_settings import (
 
 from .app_icon import app_icon
 
+if TYPE_CHECKING:
+    from .audio_radio_session import AudioRadioSessionHost
+
 
 def _format_ms(ms: int) -> str:
     ms = max(0, int(ms))
@@ -106,11 +109,13 @@ class AudioRecorderWindow(QMainWindow):
         settings: AppSettings,
         serial_cat: SerialCAT,
         *,
+        audio_radio_session: Optional[AudioRadioSessionHost] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._settings = settings
         self._cat = serial_cat
+        self._audio_radio_session = audio_radio_session
 
         folder_str = settings.audio_recorder.folder_path
         if folder_str:
@@ -153,12 +158,19 @@ class AudioRecorderWindow(QMainWindow):
         self._pc_player_ready = False
         self._pc_is_playing = False
 
-        # CAT-Setup (DATA-Mode + EX070 DATA IN=REAR + EX072=USB), Mode wird mit dem Player geteilt.
+        # CAT-Setup (EX048/109=USB, EX077=USB, EX070=REAR, EX072=USB), Mode wird mit dem Player geteilt.
         initial_data_mode = data_mode_from_string(settings.audio_player.data_mode)
-        self._radio_setup = RadioPlaybackSetup(self._cat, initial_data_mode)
-        self._setup_thread = QThread(self)
-        self._setup_worker = RadioSetupWorker(self._radio_setup)
-        self._setup_worker.moveToThread(self._setup_thread)
+        if audio_radio_session is not None:
+            self._radio_setup = audio_radio_session.setup
+            self._setup_thread = audio_radio_session.thread
+            self._setup_worker = audio_radio_session.worker
+            self._owns_radio_thread = False
+        else:
+            self._radio_setup = RadioPlaybackSetup(self._cat, initial_data_mode)
+            self._setup_thread = QThread(self)
+            self._setup_worker = RadioSetupWorker(self._radio_setup)
+            self._setup_worker.moveToThread(self._setup_thread)
+            self._owns_radio_thread = True
         self._setup_worker.apply_finished.connect(self._on_radio_apply_finished)
         self._setup_worker.restore_finished.connect(self._on_radio_restore_finished)
         self._setup_worker.engage_plain_finished.connect(
@@ -167,7 +179,8 @@ class AudioRecorderWindow(QMainWindow):
         self._setup_worker.engage_data_finished.connect(
             self._on_radio_engage_data_finished
         )
-        self._setup_thread.start()
+        if self._owns_radio_thread:
+            self._setup_thread.start()
 
         #: Was tun, wenn das nächste ``apply`` fertig ist?
         #: ``"record"`` = Aufnahme starten, ``"replay"`` = Replay starten,
@@ -1152,7 +1165,7 @@ class AudioRecorderWindow(QMainWindow):
             self._radio_setup.set_data_mode(target)
         if not self._radio_setup.is_applied:
             self.lbl_status.setText(
-                f"Funkgerät wird auf {target.value} / DATA IN=REAR (070), DATA-Port=USB (072) geschaltet …"
+                f"Funkgerät wird auf {target.value} / 048+077+109→USB, 070→REAR, 072→USB geschaltet …"
             )
             QMetaObject.invokeMethod(
                 self._setup_worker,
@@ -1194,6 +1207,8 @@ class AudioRecorderWindow(QMainWindow):
         )
 
     def _request_radio_restore(self) -> None:
+        if self._audio_radio_session is not None:
+            return
         if not self._radio_setup.is_applied:
             return
         QMetaObject.invokeMethod(
@@ -1207,13 +1222,13 @@ class AudioRecorderWindow(QMainWindow):
             self.lbl_status.setText(message)
         if not ok:
             self._pending_after_apply = ""
-            if message:
+            if message and self._audio_radio_session is None:
                 QMessageBox.warning(self, "Audio-Recorder", message)
             return
         self._continue_after_data_mode_ready()
 
     def _on_radio_restore_finished(self, ok: bool, message: str) -> None:
-        if message and not ok:
+        if message and not ok and self._audio_radio_session is None:
             QMessageBox.warning(self, "Audio-Recorder", message)
 
     def _on_radio_engage_plain_finished(self, ok: bool, message: str) -> None:
@@ -1336,17 +1351,20 @@ class AudioRecorderWindow(QMainWindow):
         if self._player.is_busy():
             self._player.stop()
         self._release_pc_source()
-        if self._radio_setup.is_applied:
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.detach_for_force_close(self)
+        elif self._radio_setup.is_applied:
             self._radio_setup.restore()
-        self._setup_thread.quit()
-        self._setup_thread.wait(2000)
+        if self._owns_radio_thread:
+            self._setup_thread.quit()
+            self._setup_thread.wait(2000)
         self._player.shutdown()
         self.close()
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
-        # Beim Öffnen wird absichtlich KEIN DATA-Mode angefordert
-        # (User-Wunsch — nichts umstellen, bevor er aktiv startet).
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.on_window_shown(self)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self.persist_settings()
@@ -1359,7 +1377,9 @@ class AudioRecorderWindow(QMainWindow):
         if self._player.is_busy():
             self._player.stop()
         self._release_pc_source()
-        if self._radio_setup.is_applied:
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.on_window_closed_hidden(self)
+        elif self._radio_setup.is_applied:
             ok, msg = self._radio_setup.restore()
             if msg and not ok:
                 QMessageBox.warning(self, "Audio-Recorder", msg)

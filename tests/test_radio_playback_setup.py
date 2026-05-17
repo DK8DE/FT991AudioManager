@@ -6,7 +6,13 @@ import unittest
 from unittest.mock import MagicMock, call, patch
 
 from audio.radio_playback_setup import RadioPlaybackSetup
-from mapping.extended_mapping import DATA_IN_SELECT_MENU, DATA_PORT_MENU
+from mapping.extended_mapping import (
+    AM_PORT_SELECT_MENU,
+    DATA_IN_SELECT_MENU,
+    DATA_PORT_MENU,
+    FM_PKT_PORT_SELECT_MENU,
+    SSB_PORT_SELECT_MENU,
+)
 from mapping.rx_mapping import RxMode
 
 
@@ -28,14 +34,20 @@ class RadioPlaybackSetupTest(unittest.TestCase):
             ft.set_rx_mode.assert_called_with(RxMode.DATA_FM)
             ft.read_menu.assert_has_calls(
                 [
+                    call(AM_PORT_SELECT_MENU),
                     call(DATA_IN_SELECT_MENU),
                     call(DATA_PORT_MENU),
+                    call(FM_PKT_PORT_SELECT_MENU),
+                    call(SSB_PORT_SELECT_MENU),
                 ]
             )
             ft.write_menu.assert_has_calls(
                 [
+                    call(AM_PORT_SELECT_MENU, "1", tx_lock=True),
                     call(DATA_IN_SELECT_MENU, "1", tx_lock=True),
                     call(DATA_PORT_MENU, "1", tx_lock=True),
+                    call(FM_PKT_PORT_SELECT_MENU, "1", tx_lock=True),
+                    call(SSB_PORT_SELECT_MENU, "1", tx_lock=True),
                 ]
             )
 
@@ -44,8 +56,11 @@ class RadioPlaybackSetupTest(unittest.TestCase):
             self.assertFalse(setup.is_applied)
             ft.write_menu.assert_has_calls(
                 [
+                    call(AM_PORT_SELECT_MENU, "0", tx_lock=False),
                     call(DATA_IN_SELECT_MENU, "0", tx_lock=False),
                     call(DATA_PORT_MENU, "0", tx_lock=False),
+                    call(FM_PKT_PORT_SELECT_MENU, "0", tx_lock=False),
+                    call(SSB_PORT_SELECT_MENU, "0", tx_lock=False),
                 ]
             )
             ft.set_rx_mode.assert_called_with(RxMode.USB)

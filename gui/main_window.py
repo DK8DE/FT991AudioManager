@@ -57,6 +57,7 @@ from version import APP_NAME, APP_VERSION
 
 from .about_window import AboutWindow
 from .app_icon import app_icon
+from .audio_radio_session import AudioRadioSessionHost
 from .audio_player_window import AudioPlayerWindow
 from .audio_recorder_window import AudioRecorderWindow
 from .equalizer_window import EqualizerWindow
@@ -98,6 +99,11 @@ class MainWindow(QMainWindow):
         self._settings = settings
         self._cat_log = CatLog()
         self._cat = SerialCAT(log=self._cat_log)
+        self._audio_radio_session = AudioRadioSessionHost(
+            settings,
+            self._cat,
+            parent=self,
+        )
         self._rig_bridge = RigBridgeManager(
             settings.rig_bridge.to_dict(),
             get_cat=lambda: self._cat,
@@ -1234,6 +1240,7 @@ class MainWindow(QMainWindow):
             self._audio_player_window = AudioPlayerWindow(
                 self._settings,
                 self._cat,
+                audio_radio_session=self._audio_radio_session,
                 parent=self,
             )
             self._audio_player_window.closed.connect(
@@ -1261,6 +1268,7 @@ class MainWindow(QMainWindow):
             self._audio_recorder_window = AudioRecorderWindow(
                 self._settings,
                 self._cat,
+                audio_radio_session=self._audio_radio_session,
                 parent=self,
             )
             self._audio_recorder_window.closed.connect(
@@ -1444,6 +1452,7 @@ class MainWindow(QMainWindow):
         self.profile_widget.set_hide_extended_in_ssb(
             self._settings.ui.hide_extended_in_ssb
         )
+        self._audio_radio_session.reload_data_mode_from_settings()
         try:
             self._settings.save()
         except OSError:
@@ -1478,6 +1487,7 @@ class MainWindow(QMainWindow):
                 if self._audio_recorder_window is not None:
                     self._audio_recorder_window.force_close()
                     self._audio_recorder_window = None
+                self._audio_radio_session.shutdown()
                 self._persist_settings()
                 super().closeEvent(event)
 

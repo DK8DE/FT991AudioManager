@@ -1,4 +1,4 @@
-"""Funkgerät für Audio-Wiedergabe vorbereiten (DATA-USB/LSB/FM + Menü 070/072)."""
+"""Funkgerät für Audio-Wiedergabe vorbereiten (DATA-Mode + EX048/070/072/077/109)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,14 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from cat import CatError, FT991CAT, SerialCAT
 from mapping.extended_mapping import (
+    AM_PORT_SELECT_MENU,
     DATA_IN_SELECT_MENU,
     DATA_PORT_MENU,
+    FM_PKT_PORT_SELECT_MENU,
+    FM_PKT_PORT_USB_RAW,
     MicSource,
+    PORT_SELECT_USB_RAW,
+    SSB_PORT_SELECT_MENU,
     encode_mic_source,
 )
 from mapping.rx_mapping import RxMode
@@ -44,12 +49,15 @@ class RadioAudioSnapshot:
     """Zustand vor dem Audio-Player / -Recorder."""
 
     rx_mode: RxMode
+    am_port_raw: str
     data_in_select_raw: str
     data_port_raw: str
+    fm_pkt_port_raw: str
+    ssb_port_raw: str
 
 
 class RadioPlaybackSetup:
-    """Schaltet Audio-Modus + DATA IN=REAR (EX070) + DATA-Port=USB (EX072); Restore."""
+    """Schaltet DATA-Mode + EX048/070/072/077/109 (USB bzw. REAR); Restore der Altwerte."""
 
     def __init__(
         self,
@@ -112,45 +120,51 @@ class RadioPlaybackSetup:
             return False, str(exc)
 
     def apply(self) -> tuple[bool, str]:
-        """Schnappschuss + DATA-Mode + EX070/EX072 → REAR/USB."""
+        """Schnappschuss + DATA-Mode; EX048/109→USB, EX077→USB, EX070/072→REAR (048·070·072·077·109)."""
         if not self._cat.is_connected():
-            return False, "CAT nicht verbunden — Modus/070/072 werden nicht geändert."
+            return (
+                False,
+                "CAT nicht verbunden — Modus und Menüs 048/070/072/077/109 werden nicht geändert.",
+            )
         if self._snapshot is not None:
             if not self._in_data_mode:
                 return self.engage_data_mode()
             return True, (
-                f"Funkgerät bereits auf {self._data_mode.value} "
-                "/ DATA IN=REAR (070), DATA-Port=USB (072)."
+                f"Funkgerät bereits auf {self._data_mode.value}: "
+                "048/109=USB, 077=USB, 070=REAR, 072=USB."
             )
 
         ft = FT991CAT(self._cat)
         try:
             current_mode = ft.read_rx_mode()
+            am_port_raw = ft.read_menu(AM_PORT_SELECT_MENU)
             data_in_raw = ft.read_menu(DATA_IN_SELECT_MENU)
             data_port_raw = ft.read_menu(DATA_PORT_MENU)
+            fm_pkt_raw = ft.read_menu(FM_PKT_PORT_SELECT_MENU)
+            ssb_port_raw = ft.read_menu(SSB_PORT_SELECT_MENU)
             self._snapshot = RadioAudioSnapshot(
                 rx_mode=current_mode,
+                am_port_raw=am_port_raw,
                 data_in_select_raw=data_in_raw,
                 data_port_raw=data_port_raw,
+                fm_pkt_port_raw=fm_pkt_raw,
+                ssb_port_raw=ssb_port_raw,
             )
             if not ft.set_rx_mode(self._data_mode):
                 self._snapshot = None
                 return False, f"Betriebsart {self._data_mode.value} konnte nicht gesetzt werden."
             rear = encode_mic_source(MicSource.REAR)
-            ft.write_menu(
-                DATA_IN_SELECT_MENU,
-                rear,
-                tx_lock=True,
-            )
-            ft.write_menu(
-                DATA_PORT_MENU,
-                rear,
-                tx_lock=True,
-            )
+            usb = PORT_SELECT_USB_RAW
+            fm_usb = FM_PKT_PORT_USB_RAW
+            ft.write_menu(AM_PORT_SELECT_MENU, usb, tx_lock=True)
+            ft.write_menu(DATA_IN_SELECT_MENU, rear, tx_lock=True)
+            ft.write_menu(DATA_PORT_MENU, rear, tx_lock=True)
+            ft.write_menu(FM_PKT_PORT_SELECT_MENU, fm_usb, tx_lock=True)
+            ft.write_menu(SSB_PORT_SELECT_MENU, usb, tx_lock=True)
             self._in_data_mode = True
             return True, (
                 f"Funkgerät: {self._data_mode.value}, "
-                "Menü 070 → REAR (DATA IN), Menü 072 → USB (Rear-DATA)"
+                "048/109 → USB (AM/SSB-Port), 077 → USB (FM-PKT), 070 → REAR, 072 → USB"
             )
         except CatError as exc:
             self._snapshot = None
@@ -232,11 +246,16 @@ class RadioPlaybackSetup:
             if not ft.set_rx_mode(self._data_mode):
                 return False, f"DATA-Mode {self._data_mode.value} konnte nicht gesetzt werden."
             rear = encode_mic_source(MicSource.REAR)
+            usb = PORT_SELECT_USB_RAW
+            fm_usb = FM_PKT_PORT_USB_RAW
+            ft.write_menu(AM_PORT_SELECT_MENU, usb, tx_lock=True)
             ft.write_menu(DATA_IN_SELECT_MENU, rear, tx_lock=True)
             ft.write_menu(DATA_PORT_MENU, rear, tx_lock=True)
+            ft.write_menu(FM_PKT_PORT_SELECT_MENU, fm_usb, tx_lock=True)
+            ft.write_menu(SSB_PORT_SELECT_MENU, usb, tx_lock=True)
             self._in_data_mode = True
             self._needs_plain_verify = False
-            return True, f"Funkgerät: {self._data_mode.value} (070/072 → REAR/USB)"
+            return True, f"Funkgerät: {self._data_mode.value} (048/070/072/077/109 für PC-Audio)"
         except CatError as exc:
             return False, str(exc)
 
@@ -254,8 +273,11 @@ class RadioPlaybackSetup:
         self._needs_plain_verify = False
         ft = FT991CAT(self._cat)
         try:
+            ft.write_menu(AM_PORT_SELECT_MENU, snap.am_port_raw, tx_lock=False)
             ft.write_menu(DATA_IN_SELECT_MENU, snap.data_in_select_raw, tx_lock=False)
             ft.write_menu(DATA_PORT_MENU, snap.data_port_raw, tx_lock=False)
+            ft.write_menu(FM_PKT_PORT_SELECT_MENU, snap.fm_pkt_port_raw, tx_lock=False)
+            ft.write_menu(SSB_PORT_SELECT_MENU, snap.ssb_port_raw, tx_lock=False)
             if not ft.set_rx_mode(snap.rx_mode):
                 return (
                     False,
@@ -263,7 +285,7 @@ class RadioPlaybackSetup:
                 )
             return True, (
                 f"Funkgerät zurück: {snap.rx_mode.value}, "
-                "Menü 070/072 wie zuvor"
+                "Menü 048/070/072/077/109 wie zuvor"
             )
         except CatError as exc:
             return False, str(exc)

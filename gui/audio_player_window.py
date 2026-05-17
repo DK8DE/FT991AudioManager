@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtCore import QByteArray, QMetaObject, Qt, QThread, QTimer, Q_ARG, Signal
 from PySide6.QtGui import QFont
@@ -52,7 +52,8 @@ from model.audio_player_settings import (
     scan_audio_files,
 )
 
-from .app_icon import app_icon
+if TYPE_CHECKING:
+    from .audio_radio_session import AudioRadioSessionHost
 
 
 def _format_ms(ms: int) -> str:
@@ -83,11 +84,13 @@ class AudioPlayerWindow(QMainWindow):
         settings: AppSettings,
         serial_cat: SerialCAT,
         *,
+        audio_radio_session: Optional[AudioRadioSessionHost] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._settings = settings
         self._cat = serial_cat
+        self._audio_radio_session = audio_radio_session
         self._folder = Path(settings.audio_player.folder_path or "")
         self._playlist_names: list[str] = list(settings.audio_player.playlist_order)
 
@@ -97,10 +100,17 @@ class AudioPlayerWindow(QMainWindow):
 
         self._controller = PlayerController(self._cat, self)
         initial_data_mode = data_mode_from_string(settings.audio_player.data_mode)
-        self._radio_setup = RadioPlaybackSetup(self._cat, initial_data_mode)
-        self._setup_thread = QThread(self)
-        self._setup_worker = RadioSetupWorker(self._radio_setup)
-        self._setup_worker.moveToThread(self._setup_thread)
+        if audio_radio_session is not None:
+            self._radio_setup = audio_radio_session.setup
+            self._setup_thread = audio_radio_session.thread
+            self._setup_worker = audio_radio_session.worker
+            self._owns_radio_thread = False
+        else:
+            self._radio_setup = RadioPlaybackSetup(self._cat, initial_data_mode)
+            self._setup_thread = QThread(self)
+            self._setup_worker = RadioSetupWorker(self._radio_setup)
+            self._setup_worker.moveToThread(self._setup_thread)
+            self._owns_radio_thread = True
         self._setup_worker.apply_finished.connect(self._on_radio_apply_finished)
         self._setup_worker.restore_finished.connect(self._on_radio_restore_finished)
         self._setup_worker.data_mode_finished.connect(self._on_radio_data_mode_finished)
@@ -110,7 +120,8 @@ class AudioPlayerWindow(QMainWindow):
         self._setup_worker.engage_data_finished.connect(
             self._on_radio_engage_data_finished
         )
-        self._setup_thread.start()
+        if self._owns_radio_thread:
+            self._setup_thread.start()
         self._radio_apply_pending = False
         #: Wenn True, hat MIC-PTT die Wiedergabe unterbrochen — beim nächsten
         #: Play muss erst der DATA-Mode zurückgeschaltet werden.
@@ -731,6 +742,9 @@ class AudioPlayerWindow(QMainWindow):
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.on_window_shown(self)
+            return
         if not self._radio_setup.is_applied and not self._radio_apply_pending:
             self._request_radio_apply()
 
@@ -738,7 +752,7 @@ class AudioPlayerWindow(QMainWindow):
         self._radio_apply_pending = True
         target = self._radio_setup.data_mode.value
         self.lbl_status.setText(
-            f"Funkgerät wird auf {target} / DATA IN=REAR (070), DATA-Port=USB (072) geschaltet …"
+            f"Funkgerät wird auf {target} / 048+077+109→USB, 070→REAR, 072→USB geschaltet …"
         )
         QMetaObject.invokeMethod(
             self._setup_worker,
@@ -759,11 +773,11 @@ class AudioPlayerWindow(QMainWindow):
         self._radio_apply_pending = False
         if message:
             self.lbl_status.setText(message)
-        if not ok and message:
+        if not ok and message and self._audio_radio_session is None:
             QMessageBox.warning(self, "Audio-Player", message)
 
     def _on_radio_restore_finished(self, ok: bool, message: str) -> None:
-        if message and not ok:
+        if message and not ok and self._audio_radio_session is None:
             QMessageBox.warning(self, "Audio-Player", message)
 
     def _on_radio_data_mode_finished(self, ok: bool, message: str) -> None:
@@ -833,10 +847,13 @@ class AudioPlayerWindow(QMainWindow):
         self._force_close = True
         if self._controller.is_busy():
             self._controller.stop()
-        if self._radio_setup.is_applied:
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.detach_for_force_close(self)
+        elif self._radio_setup.is_applied:
             self._radio_setup.restore()
-        self._setup_thread.quit()
-        self._setup_thread.wait(2000)
+        if self._owns_radio_thread:
+            self._setup_thread.quit()
+            self._setup_thread.wait(2000)
         self._controller.shutdown()
         self.close()
 
@@ -848,7 +865,9 @@ class AudioPlayerWindow(QMainWindow):
             return
         if self._controller.is_busy():
             self._controller.stop()
-        if self._radio_setup.is_applied:
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.on_window_closed_hidden(self)
+        elif self._radio_setup.is_applied:
             ok, msg = self._radio_setup.restore()
             if msg and not ok:
                 QMessageBox.warning(self, "Audio-Player", msg)

@@ -18,6 +18,10 @@ Manual (1711-D, 2017)**. Im Zweifel ist das die Quelle der Wahrheit.
   - EX075 FM OUT LEVEL (0..100) — "FM Carrier"
 - **DATA Audio**:
   - EX070 DATA IN SELECT (0=MIC, 1=REAR)
+  - EX072 DATA-Port / „OTHER MODE PORT“ (0=MIC o.ä., 1=USB/Rear je nach Geraet)
+  - EX048 AM PORT SELECT (0=DATA, 1=USB)
+  - EX077 FM PKT PORT SELECT (CAT 0=DATA, 1=USB — nicht die Bedienfeld-„1/2“-Labels)
+  - EX109 SSB PORT SELECT (0=DATA, 1=USB)
   - EX073 DATA OUT LEVEL (0..100)
 
 Historie: ältere Versionen hatten die SSB-Cut-Menüs zwei Stellen zu hoch
@@ -152,6 +156,17 @@ FM_MIC_SEL_MENU = 74
 #: Menü 070 am Gerät: DATA IN SELECT — 0=MIC, 1=REAR (CAT EX070, gleiche Kodierung wie EX072).
 DATA_IN_SELECT_MENU = 70
 DATA_PORT_MENU = 72
+#: Menü 048/109: AM PORT SELECT / SSB PORT SELECT — 0=DATA, 1=USB (CAT EX048, EX109).
+AM_PORT_SELECT_MENU = 48
+#: Menü 077: FM PKT PORT SELECT — Bedienfeld listet oft „1: DATA / 2: USB“,
+#: CAT-Rohwert wie EX048/109: **0=DATA, 1=USB** (Read z. B. ``EX0770``).
+FM_PKT_PORT_SELECT_MENU = 77
+SSB_PORT_SELECT_MENU = 109
+#: Rohwert fuer EX048/EX109 beim Rechner-Audio ueber USB.
+PORT_SELECT_USB_RAW = "1"
+PORT_SELECT_DATA_RAW = "0"
+#: EX077 USB — gleiche 0/1-Kodierung wie 048/109 (nicht Handbuch-Positionsnummer 2).
+FM_PKT_PORT_USB_RAW = PORT_SELECT_USB_RAW
 
 
 class MicSource(str, Enum):
