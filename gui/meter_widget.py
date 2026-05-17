@@ -2079,6 +2079,7 @@ class MeterWidget(QWidget):
 
         # --- AF / RF-Gain -------------------------------------------------
         gain_frame = QFrame()
+        gain_frame.setObjectName("panelFrame")
         gain_frame.setFrameShape(QFrame.StyledPanel)
         gain_layout = QVBoxLayout(gain_frame)
         gain_layout.setContentsMargins(6, 4, 6, 4)

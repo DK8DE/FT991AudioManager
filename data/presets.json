@@ -64,16 +64,16 @@
       "normal_eq": {
         "eq1": {
           "freq": 400,
-          "level": 7,
-          "bw": 3
+          "level": 9,
+          "bw": 2
         },
         "eq2": {
-          "freq": 700,
-          "level": 6,
+          "freq": 1000,
+          "level": 10,
           "bw": 1
         },
         "eq3": {
-          "freq": 1500,
+          "freq": 1700,
           "level": 5,
           "bw": 5
         }

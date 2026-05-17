@@ -43,8 +43,8 @@ WizardStyle=modern
 ; Eigene Wizard-Bilder (wie RotorTcpBridge) — später ergänzen:
 ;   Installer.png      (~164×314, Willkommen/Fertig links)
 ;   InstallerSmall.png (quadratisch, oben rechts auf den anderen Seiten)
-; WizardImageFile={#MyProjDir}\Installer.png
-; WizardSmallImageFile={#MyProjDir}\InstallerSmall.png
+WizardImageFile={#MyProjDir}\Installer.png
+WizardSmallImageFile={#MyProjDir}\InstallerSmall.png
 PrivilegesRequired=admin
 SetupIconFile={#MyAppIcon}
 UninstallDisplayIcon={app}\logo.ico
@@ -84,29 +84,129 @@ Type: filesandordirs; Name: "{app}\logs"
 Type: filesandordirs; Name: "{app}"
 
 [Code]
+function GetUninstallRegKey(): String;
+begin
+  Result := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
+            '{#MyAppId}' + '_is1';
+end;
+
+function GetInstalledVersion(): String;
+var
+  sVer: String;
+begin
+  sVer := '';
+  if not RegQueryStringValue(HKLM64, GetUninstallRegKey(), 'DisplayVersion', sVer) then
+    RegQueryStringValue(HKLM, GetUninstallRegKey(), 'DisplayVersion', sVer);
+  Result := sVer;
+end;
+
+function GetUninstallString(): String;
+var
+  sCmd: String;
+begin
+  sCmd := '';
+  if not RegQueryStringValue(HKLM64, GetUninstallRegKey(), 'UninstallString', sCmd) then
+    RegQueryStringValue(HKLM, GetUninstallRegKey(), 'UninstallString', sCmd);
+  Result := sCmd;
+end;
+
+{ Numerischer Versionsvergleich. Liefert <0, 0 oder >0 (wie strcmp). }
+function CompareVersionStrings(V1, V2: String): Integer;
+var
+  P, N1, N2: Integer;
+  S1, S2: String;
+begin
+  Result := 0;
+  S1 := V1;
+  S2 := V2;
+  while (Length(S1) > 0) or (Length(S2) > 0) do
+  begin
+    P := Pos('.', S1);
+    if P > 0 then
+    begin
+      N1 := StrToIntDef(Copy(S1, 1, P - 1), 0);
+      Delete(S1, 1, P);
+    end
+    else
+    begin
+      N1 := StrToIntDef(S1, 0);
+      S1 := '';
+    end;
+
+    P := Pos('.', S2);
+    if P > 0 then
+    begin
+      N2 := StrToIntDef(Copy(S2, 1, P - 1), 0);
+      Delete(S2, 1, P);
+    end
+    else
+    begin
+      N2 := StrToIntDef(S2, 0);
+      S2 := '';
+    end;
+
+    if N1 < N2 then begin Result := -1; Exit; end;
+    if N1 > N2 then begin Result :=  1; Exit; end;
+  end;
+end;
+
+{ Vorhandene Installation komplett im Hintergrund entfernen.
+  Wartet auf das Hilfsprogramm und gibt dem Uninstaller noch kurz Zeit,
+  den Programmordner final wegzuraeumen (Inno benutzt eine Helper-Kopie). }
 procedure UninstallOldVersion();
 var
-  sRegKey:     String;
   sUninstall:  String;
   iResultCode: Integer;
+  iWait:       Integer;
 begin
-  sRegKey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\' +
-             '{#MyAppId}' + '_is1';
+  sUninstall := GetUninstallString();
+  if sUninstall = '' then Exit;
 
-  sUninstall := '';
-  if not RegQueryStringValue(HKLM64, sRegKey, 'UninstallString', sUninstall) then
-    RegQueryStringValue(HKLM, sRegKey, 'UninstallString', sUninstall);
+  sUninstall := RemoveQuotes(sUninstall);
+  if not Exec(sUninstall,
+              '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
+              '', SW_HIDE, ewWaitUntilTerminated, iResultCode) then
+    Exit;
 
-  if sUninstall <> '' then
+  { Inno-Uninstaller startet sich ueber eine Kopie selbst. Diese kopierte
+    EXE laeuft nach unserem ewWaitUntilTerminated noch ein wenig weiter,
+    um sich selbst und den App-Ordner zu loeschen. Wir warten max. 5 s,
+    bis der Programmordner tatsaechlich verschwunden ist. }
+  iWait := 0;
+  while (iWait < 50) and DirExists(ExpandConstant('{app}')) do
   begin
-    sUninstall := RemoveQuotes(sUninstall);
-    Exec(sUninstall, '/SILENT /NORESTART', '', SW_HIDE,
-         ewWaitUntilTerminated, iResultCode);
+    Sleep(100);
+    iWait := iWait + 1;
   end;
 end;
 
 function InitializeSetup(): Boolean;
+var
+  sInstalled: String;
+  iCmp:       Integer;
 begin
-  UninstallOldVersion();
   Result := True;
+
+  sInstalled := GetInstalledVersion();
+  if sInstalled = '' then Exit;  { nichts installiert -> direkt installieren }
+
+  iCmp := CompareVersionStrings(sInstalled, '{#MyAppVersion}');
+  if iCmp > 0 then
+  begin
+    { Bereits eine NEUERE Version vorhanden — nur nach Bestaetigung downgraden. }
+    if MsgBox(
+         'Es ist bereits eine neuere Version (' + sInstalled +
+         ') installiert.' #13#10 +
+         'Trotzdem mit Version {#MyAppVersion} fortfahren (Downgrade)?',
+         mbConfirmation, MB_YESNO) = IDNO then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+
+  { Altere, gleiche (oder bestaetigte neuere) Version: sauber im
+    Hintergrund deinstallieren, dann ganz normal weiter mit der
+    Installation der neuen Version. }
+  UninstallOldVersion();
 end;

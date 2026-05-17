@@ -301,7 +301,7 @@ def build_dark_stylesheet() -> str:
         border-radius: 2px;
     }}
     QSlider::groove:horizontal {{
-        background: #2A2A2A;
+        background: {SLIDER_INACTIVE};
         height: 5px;
         border-radius: 2px;
     }}
@@ -318,7 +318,7 @@ def build_dark_stylesheet() -> str:
         border-radius: 2px;
     }}
     QSlider::add-page:horizontal {{
-        background: #2A2A2A;
+        background: {SLIDER_INACTIVE};
         border-radius: 2px;
     }}
 

@@ -39,6 +39,16 @@ class RadioControlBar(QFrame):
             "Relais: auf Eingangs-QRG schalten (REV ein) / zurück zur "
             "Ausgangs-QRG (REV aus)"
         )
+        # Wenn REV aktiv ist, soll der Button im gleichen Gruen leuchten
+        # wie die VFO-A-Beschriftung im Header (#5ddc7a).
+        self._rev_btn.setStyleSheet(
+            "QPushButton:checked {"
+            "  background-color: #5ddc7a;"
+            "  color: #101010;"
+            "  font-weight: bold;"
+            "  border: 1px solid #2f8a47;"
+            "}"
+        )
         self._rev_btn.toggled.connect(self.rev_toggled.emit)
 
         layout.addWidget(QLabel("Band:"))
