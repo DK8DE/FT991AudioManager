@@ -52,6 +52,8 @@ from model.audio_player_settings import (
     scan_audio_files,
 )
 
+from .app_icon import app_icon
+
 if TYPE_CHECKING:
     from .audio_radio_session import AudioRadioSessionHost
 
