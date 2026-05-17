@@ -738,7 +738,7 @@ class AudioPlayerWindow(QMainWindow):
         self._radio_apply_pending = True
         target = self._radio_setup.data_mode.value
         self.lbl_status.setText(
-            f"Funkgerät wird auf {target} / USB (072) geschaltet …"
+            f"Funkgerät wird auf {target} / DATA IN=REAR (070), DATA-Port=USB (072) geschaltet …"
         )
         QMetaObject.invokeMethod(
             self._setup_worker,

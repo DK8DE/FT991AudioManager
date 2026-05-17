@@ -1,12 +1,12 @@
-"""Tests für DATA-FM / Menü-072-Umschaltung beim Audio-Player."""
+"""Tests für DATA-FM / Menü-070+072-Umschaltung beim Audio-Player / Recorder."""
 
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
-from audio.radio_playback_setup import RadioAudioSnapshot, RadioPlaybackSetup
-from mapping.extended_mapping import DATA_PORT_MENU
+from audio.radio_playback_setup import RadioPlaybackSetup
+from mapping.extended_mapping import DATA_IN_SELECT_MENU, DATA_PORT_MENU
 from mapping.rx_mapping import RxMode
 
 
@@ -26,12 +26,28 @@ class RadioPlaybackSetupTest(unittest.TestCase):
             self.assertTrue(ok)
             self.assertTrue(setup.is_applied)
             ft.set_rx_mode.assert_called_with(RxMode.DATA_FM)
-            ft.write_menu.assert_called()
+            ft.read_menu.assert_has_calls(
+                [
+                    call(DATA_IN_SELECT_MENU),
+                    call(DATA_PORT_MENU),
+                ]
+            )
+            ft.write_menu.assert_has_calls(
+                [
+                    call(DATA_IN_SELECT_MENU, "1", tx_lock=True),
+                    call(DATA_PORT_MENU, "1", tx_lock=True),
+                ]
+            )
 
             ok2, _ = setup.restore()
             self.assertTrue(ok2)
             self.assertFalse(setup.is_applied)
-            ft.write_menu.assert_called_with(DATA_PORT_MENU, "0", tx_lock=False)
+            ft.write_menu.assert_has_calls(
+                [
+                    call(DATA_IN_SELECT_MENU, "0", tx_lock=False),
+                    call(DATA_PORT_MENU, "0", tx_lock=False),
+                ]
+            )
             ft.set_rx_mode.assert_called_with(RxMode.USB)
 
     def test_apply_without_cat(self) -> None:

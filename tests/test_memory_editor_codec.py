@@ -162,10 +162,13 @@ class MemoryEditorCodecTest(unittest.TestCase):
         body = cmd[2:-1]
         self.assertEqual(len(body), 38)
         self.assertEqual(body[13:17], "0600")
+        # FT-991/A CAT-Spec: P10 (Shift) liegt an Body-Index 24,
+        # P11 (Fixed "0") an Body-Index 25.
         self.assertEqual(body[POS_SHIFT_DIR], "2")
+        self.assertEqual(body[24], "2")
+        self.assertEqual(body[25], "0")
         self.assertEqual(body[21], "2")
         self.assertEqual(body[22:24], "00")
-        self.assertEqual(body[25], "2")
 
     def test_ctcss_118_8_minus_70cm(self) -> None:
         """Kanal 91: 438,975 MHz, CTCSS 118,8 Hz Encode, Minus 7,6 MHz."""
@@ -184,8 +187,9 @@ class MemoryEditorCodecTest(unittest.TestCase):
         mt = build_mt_command(ch)[2:-1]
         self.assertEqual(mt[21], "2")  # P8 CTCSS Encode
         self.assertEqual(mt[22:24], "00")  # P9 fest; Ton per CN
-        self.assertEqual(mt[25], "2")  # Minus
-        self.assertIn("+7600004020002", mt)
+        self.assertEqual(mt[24], "2")  # P10 Minus shift
+        self.assertEqual(mt[25], "0")  # P11 Fixed "0"
+        self.assertIn("+7600004020020", mt)
 
     def test_parse_ctcss_tone_from_body(self) -> None:
         body = list(empty_mt_body(91))

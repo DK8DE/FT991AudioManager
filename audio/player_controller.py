@@ -262,18 +262,41 @@ class PlayerController(QObject):
         if mm is None:
             return
         _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
+        log = self._cat.get_log() if self._cat else None
         if not self._output_device_id:
-            self._audio_out.setDevice(QMediaDevices.defaultAudioOutput())
+            chosen = QMediaDevices.defaultAudioOutput()
+            self._audio_out.setDevice(chosen)
+            if log is not None:
+                log.log_info(
+                    f"Audio-Out: System-Standard → "
+                    f"'{chosen.description()}'"
+                )
         else:
-            matched = False
+            matched_dev = None
+            available = []
             for dev in QMediaDevices.audioOutputs():
                 dev_id = dev.id().data().decode("utf-8", errors="replace")
+                available.append((dev_id, dev.description()))
                 if dev_id == self._output_device_id:
-                    self._audio_out.setDevice(dev)
-                    matched = True
+                    matched_dev = dev
                     break
-            if not matched:
-                self._audio_out.setDevice(QMediaDevices.defaultAudioOutput())
+            if matched_dev is not None:
+                self._audio_out.setDevice(matched_dev)
+                if log is not None:
+                    log.log_info(
+                        f"Audio-Out: gewählt '{matched_dev.description()}' "
+                        f"(id={self._output_device_id})"
+                    )
+            else:
+                fallback = QMediaDevices.defaultAudioOutput()
+                self._audio_out.setDevice(fallback)
+                if log is not None:
+                    log.log_warn(
+                        f"Audio-Out: gespeicherte Geräte-ID "
+                        f"'{self._output_device_id}' NICHT gefunden → "
+                        f"Fallback System-Standard '{fallback.description()}'. "
+                        f"Verfügbar wären: {available}"
+                    )
         self._apply_volume()
 
     def _apply_volume(self) -> None:
@@ -451,6 +474,27 @@ class PlayerController(QObject):
         if path is None or self._player is None:
             self._set_state(PlayerState.IDLE)
             return
+        # Diagnose: vor dem Wiedergabestart das tatsächlich verwendete
+        # Output-Device + die Software-Lautstärke loggen. Wenn die App den
+        # Träger ohne Modulation sendet, sieht man hier ob das Audio in
+        # die richtige (USB-)Soundkarte des Funkgeräts geroutet wird.
+        log = self._cat.get_log() if self._cat else None
+        if log is not None:
+            dev_desc = "?"
+            backend_vol = "?"
+            try:
+                if self._audio_out is not None:
+                    dev = self._audio_out.device()
+                    dev_desc = dev.description()
+                    backend_vol = f"{self._audio_out.volume():.2f}"
+            except Exception:  # noqa: BLE001
+                pass
+            log.log_info(
+                f"Replay TX: Datei '{path.name}', "
+                f"Output='{dev_desc}', "
+                f"App-Lautstärke={self._volume_percent}% "
+                f"(Backend={backend_vol})"
+            )
         self._set_state(PlayerState.PLAYING)
         self.status_message.emit("Sendung — Wiedergabe")
         if self._resume_after_pause:

@@ -56,8 +56,8 @@ POS_MODE = 19
 POS_PRE_TONE_FILLER = 20
 POS_TONE_MODE = 21
 POS_TONE_INDEX = slice(22, 24)
-POS_MID_FILLER = 24
-POS_SHIFT_DIR = 25
+POS_SHIFT_DIR = 24
+POS_MID_FILLER = 25
 POS_TAG = slice(26, 38)
 
 # Sonderzeichen in MT-Antworten (z. B. Relais mit DCS)
@@ -100,8 +100,12 @@ def normalize_channel_for_write(channel: MemoryEditorChannel) -> None:
 
 
 def _shift_from_p10(body: str) -> ShiftDirection:
-    """Ablage-Richtung — am Gerät Index 24 oder 25 (je nach Mittelteil)."""
-    for idx in (POS_SHIFT_DIR, 24):
+    """Ablage-Richtung — laut FT-991/A-CAT-Manual ist P10 an Body-Index 24
+    (P11 an Body-Index 25 ist Fixed "0"). Der zusätzliche Fallback auf 25
+    fängt Slots ab, die von einer früheren (fehlerhaften) Version dieser
+    App geschrieben wurden, in der die beiden Bytes vertauscht waren.
+    """
+    for idx in (POS_SHIFT_DIR, 25):
         if len(body) > idx:
             code = body[idx]
             if code == "1":

@@ -153,7 +153,7 @@ class AudioRecorderWindow(QMainWindow):
         self._pc_player_ready = False
         self._pc_is_playing = False
 
-        # CAT-Setup (DATA-Mode + EX072=USB), Mode wird mit dem Player geteilt.
+        # CAT-Setup (DATA-Mode + EX070 DATA IN=REAR + EX072=USB), Mode wird mit dem Player geteilt.
         initial_data_mode = data_mode_from_string(settings.audio_player.data_mode)
         self._radio_setup = RadioPlaybackSetup(self._cat, initial_data_mode)
         self._setup_thread = QThread(self)
@@ -1152,7 +1152,7 @@ class AudioRecorderWindow(QMainWindow):
             self._radio_setup.set_data_mode(target)
         if not self._radio_setup.is_applied:
             self.lbl_status.setText(
-                f"Funkgerät wird auf {target.value} / USB (072) geschaltet …"
+                f"Funkgerät wird auf {target.value} / DATA IN=REAR (070), DATA-Port=USB (072) geschaltet …"
             )
             QMetaObject.invokeMethod(
                 self._setup_worker,

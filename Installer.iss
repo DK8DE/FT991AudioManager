@@ -4,6 +4,9 @@
 ; Version aus version.py:  .\installer.ps1
 
 #define MyAppName "FT-991/A Audiomanager"
+; Kein "/" im Namen — Inno [Icons] Name: und DefaultGroupName werten "/" als
+; Unterordner (Desktop: Ordner "FT-991" + "A Audiomanager.lnk").
+#define MyAppShortcutName "FT-991-A Audiomanager"
 #ifndef MyAppVersion
   #define MyAppVersion "1.0"
 #endif
@@ -33,7 +36,7 @@ VersionInfoProductVersion={#MyAppVersion}.0.0
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 DefaultDirName={autopf}\FT991AudioManager
-DefaultGroupName={#MyAppName}
+DefaultGroupName={#MyAppShortcutName}
 DisableProgramGroupPage=yes
 OutputDir={#MyProjDir}\dist\installer
 OutputBaseFilename=FT991AudioManager-Setup-{#MyAppVersion}
@@ -66,8 +69,9 @@ Source: "{#MyAppIcon}"; DestDir: "{app}"; DestName: "logo.ico"; Flags: ignorever
 
 [Icons]
 ; IconFilename muss auf eine existierende .ico zeigen — nicht nur auf die EXE
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\logo.ico"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyExeName}"; Tasks: desktopicon; IconFilename: "{app}\logo.ico"
+; Kurzname ohne "/" — siehe Kommentar bei MyAppShortcutName.
+Name: "{group}\{#MyAppShortcutName}"; Filename: "{app}\{#MyExeName}"; IconFilename: "{app}\logo.ico"
+Name: "{autodesktop}\{#MyAppShortcutName}"; Filename: "{app}\{#MyExeName}"; Tasks: desktopicon; IconFilename: "{app}\logo.ico"
 
 [Run]
 Filename: "{app}\{#MyExeName}"; Description: "{#MyAppName} starten"; Flags: nowait postinstall skipifsilent unchecked

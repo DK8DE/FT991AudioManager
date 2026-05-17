@@ -178,7 +178,54 @@ class MemoryEditorWindow(QMainWindow):
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
         return rows if rows else [self.table.currentIndex().row()]
 
+    def _commit_pending_editor(self) -> None:
+        """Offenen Inline-Editor zwingend ins Model schreiben.
+
+        Hintergrund: ``QTableView`` committet die laufende Bearbeitung erst
+        beim ``Enter``/``Tab`` oder Fokuswechsel. Klickt der Anwender direkt
+        aus der Zelle auf "Speichern" oder "Neu laden", gehen seine
+        Änderungen sonst verloren — die Bank speichert dann den alten
+        Funkgerät-Inhalt zurueck (Symptom: Slot wird mit den vorher
+        gelesenen Daten ueberschrieben).
+
+        Strategie: aktuellen Editor (sofern vorhanden) ueber ``commitData``
+        ins Model schreiben und mittels ``closeEditor`` mit
+        ``SubmitModelCache`` final schliessen — danach den Fokus zurueck
+        zur Tabelle setzen.
+        """
+        from PySide6.QtWidgets import QAbstractItemDelegate, QApplication
+
+        delegate = self.table.itemDelegate()
+        focus = QApplication.focusWidget()
+        candidates: list = []
+        if focus is not None and focus is not self.table:
+            parent = focus.parent()
+            if parent is self.table or parent is self.table.viewport():
+                candidates.append(focus)
+        try:
+            persistent = self.table.indexWidget(self.table.currentIndex())
+        except Exception:  # noqa: BLE001
+            persistent = None
+        if persistent is not None and persistent not in candidates:
+            candidates.append(persistent)
+
+        for editor in candidates:
+            try:
+                self.table.commitData(editor)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                if delegate is not None:
+                    delegate.closeEditor.emit(
+                        editor, QAbstractItemDelegate.SubmitModelCache
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+
+        self.table.setFocus()
+
     def _start_read_from_radio(self) -> None:
+        self._commit_pending_editor()
         if not self._cat.is_connected():
             QMessageBox.warning(self, "Nicht verbunden", "Keine CAT-Verbindung.")
             return
@@ -232,6 +279,7 @@ class MemoryEditorWindow(QMainWindow):
             self._apply_filter()
 
     def _save_to_radio(self) -> None:
+        self._commit_pending_editor()
         if not self._cat.is_connected():
             QMessageBox.warning(self, "Nicht verbunden", "Keine CAT-Verbindung.")
             return

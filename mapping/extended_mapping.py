@@ -149,6 +149,8 @@ def decode_carrier_level(raw: str) -> int:
 
 AM_MIC_SEL_MENU = 45
 FM_MIC_SEL_MENU = 74
+#: Menü 070 am Gerät: DATA IN SELECT — 0=MIC, 1=REAR (CAT EX070, gleiche Kodierung wie EX072).
+DATA_IN_SELECT_MENU = 70
 DATA_PORT_MENU = 72
 
 

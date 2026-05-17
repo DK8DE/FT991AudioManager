@@ -1245,12 +1245,24 @@ class FT991CAT:
             self._cat.send_command(ct_command, read_response=False)
             time.sleep(0.05)
         if log is not None:
-            log.log_info(f"Write Memory #{channel.number:03d}: {command[:24]}…")
+            log.log_info(
+                f"Write Memory #{channel.number:03d}: nr={channel.number:03d} "
+                f"name={channel.name!r} freq={channel.rx_frequency_hz} Hz "
+                f"mode={channel.mode.value} shift={channel.shift_direction.value} "
+                f"offset={channel.shift_offset_hz} Hz "
+                f"tone={channel.tone_mode.value}"
+            )
+            log.log_info(f"Write Memory #{channel.number:03d}: {command}")
         self._cat.send_command(command, read_response=False)
         channel.raw_cat_response = command
         channel.raw_mt_body = command[2:-1]
         channel.changed = False
-        self.switch_to_vfo_mode()
+        # Kleine Pause, sonst antwortet das Funkgerät auf das direkt
+        # folgende ``FA;`` mit ``?;`` (Memory-Slot noch in Bearbeitung).
+        time.sleep(0.15)
+        if not self.switch_to_vfo_mode():
+            time.sleep(0.15)
+            self.switch_to_vfo_mode()
 
     def switch_to_vfo_mode(self) -> bool:
         """Schaltet das Funkgeraet aus dem Memory-Modus zurueck in den

@@ -1,4 +1,4 @@
-"""Funkgerät für Audio-Wiedergabe vorbereiten (DATA-USB/LSB/FM + Menü 072)."""
+"""Funkgerät für Audio-Wiedergabe vorbereiten (DATA-USB/LSB/FM + Menü 070/072)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from cat import CatError, FT991CAT, SerialCAT
 from mapping.extended_mapping import (
+    DATA_IN_SELECT_MENU,
     DATA_PORT_MENU,
     MicSource,
     encode_mic_source,
@@ -40,14 +41,15 @@ def voice_mode_for_data(mode: RxMode) -> RxMode:
 
 @dataclass
 class RadioAudioSnapshot:
-    """Zustand vor dem Audio-Player."""
+    """Zustand vor dem Audio-Player / -Recorder."""
 
     rx_mode: RxMode
+    data_in_select_raw: str
     data_port_raw: str
 
 
 class RadioPlaybackSetup:
-    """Schaltet Audio-Modus + DATA-Port (EX072) und stellt zurück."""
+    """Schaltet Audio-Modus + DATA IN=REAR (EX070) + DATA-Port=USB (EX072); Restore."""
 
     def __init__(
         self,
@@ -110,32 +112,46 @@ class RadioPlaybackSetup:
             return False, str(exc)
 
     def apply(self) -> tuple[bool, str]:
-        """Schnappschuss + DATA-Mode + DATA-Port = USB (EX072)."""
+        """Schnappschuss + DATA-Mode + EX070/EX072 → REAR/USB."""
         if not self._cat.is_connected():
-            return False, "CAT nicht verbunden — Modus/072 werden nicht geändert."
+            return False, "CAT nicht verbunden — Modus/070/072 werden nicht geändert."
         if self._snapshot is not None:
             if not self._in_data_mode:
                 return self.engage_data_mode()
-            return True, f"Funkgerät bereits auf {self._data_mode.value} / USB (072)."
+            return True, (
+                f"Funkgerät bereits auf {self._data_mode.value} "
+                "/ DATA IN=REAR (070), DATA-Port=USB (072)."
+            )
 
         ft = FT991CAT(self._cat)
         try:
             current_mode = ft.read_rx_mode()
+            data_in_raw = ft.read_menu(DATA_IN_SELECT_MENU)
             data_port_raw = ft.read_menu(DATA_PORT_MENU)
             self._snapshot = RadioAudioSnapshot(
                 rx_mode=current_mode,
+                data_in_select_raw=data_in_raw,
                 data_port_raw=data_port_raw,
             )
             if not ft.set_rx_mode(self._data_mode):
                 self._snapshot = None
                 return False, f"Betriebsart {self._data_mode.value} konnte nicht gesetzt werden."
+            rear = encode_mic_source(MicSource.REAR)
+            ft.write_menu(
+                DATA_IN_SELECT_MENU,
+                rear,
+                tx_lock=True,
+            )
             ft.write_menu(
                 DATA_PORT_MENU,
-                encode_mic_source(MicSource.REAR),
+                rear,
                 tx_lock=True,
             )
             self._in_data_mode = True
-            return True, f"Funkgerät: {self._data_mode.value}, Menü 072 → USB (Rear-DATA)"
+            return True, (
+                f"Funkgerät: {self._data_mode.value}, "
+                "Menü 070 → REAR (DATA IN), Menü 072 → USB (Rear-DATA)"
+            )
         except CatError as exc:
             self._snapshot = None
             return False, str(exc)
@@ -215,9 +231,12 @@ class RadioPlaybackSetup:
         try:
             if not ft.set_rx_mode(self._data_mode):
                 return False, f"DATA-Mode {self._data_mode.value} konnte nicht gesetzt werden."
+            rear = encode_mic_source(MicSource.REAR)
+            ft.write_menu(DATA_IN_SELECT_MENU, rear, tx_lock=True)
+            ft.write_menu(DATA_PORT_MENU, rear, tx_lock=True)
             self._in_data_mode = True
             self._needs_plain_verify = False
-            return True, f"Funkgerät: {self._data_mode.value}"
+            return True, f"Funkgerät: {self._data_mode.value} (070/072 → REAR/USB)"
         except CatError as exc:
             return False, str(exc)
 
@@ -235,13 +254,17 @@ class RadioPlaybackSetup:
         self._needs_plain_verify = False
         ft = FT991CAT(self._cat)
         try:
+            ft.write_menu(DATA_IN_SELECT_MENU, snap.data_in_select_raw, tx_lock=False)
             ft.write_menu(DATA_PORT_MENU, snap.data_port_raw, tx_lock=False)
             if not ft.set_rx_mode(snap.rx_mode):
                 return (
                     False,
                     f"Alter Modus {snap.rx_mode.value} konnte nicht wiederhergestellt werden.",
                 )
-            return True, f"Funkgerät zurück: {snap.rx_mode.value}, Menü 072 wie zuvor"
+            return True, (
+                f"Funkgerät zurück: {snap.rx_mode.value}, "
+                "Menü 070/072 wie zuvor"
+            )
         except CatError as exc:
             return False, str(exc)
 
