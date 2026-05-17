@@ -19,11 +19,21 @@ class QtMediaEnvTest(unittest.TestCase):
             ):
                 self.assertEqual(default_qt_media_backend(), "windows")
 
-    def test_frozen_prefers_ffmpeg(self) -> None:
+    def test_frozen_prefers_windows_for_mp3_encoding(self) -> None:
+        """Im PyInstaller-Bundle muss WMF gewaehlt werden — das
+        gebuendelte FFmpeg kann unter Windows MP3 nicht encodieren."""
         with mock.patch.object(sys, "frozen", True, create=True):
             with mock.patch(
                 "audio.qt_media_env._has_plugin",
                 side_effect=lambda name: name in ("windows", "ffmpeg"),
+            ):
+                self.assertEqual(default_qt_media_backend(), "windows")
+
+    def test_frozen_falls_back_to_ffmpeg_when_no_windows_plugin(self) -> None:
+        with mock.patch.object(sys, "frozen", True, create=True):
+            with mock.patch(
+                "audio.qt_media_env._has_plugin",
+                side_effect=lambda name: name == "ffmpeg",
             ):
                 self.assertEqual(default_qt_media_backend(), "ffmpeg")
 

@@ -46,6 +46,9 @@ def _install_fake_backend(rec: AudioRecorder) -> tuple[MagicMock, MagicMock, Mag
         class Error:
             NoError = 0
 
+        class ResolveFlags:
+            NoFlags = 0
+
     audio_input_cls = MagicMock(return_value=MagicMock(name="QAudioInput"))
     capture_cls = MagicMock(return_value=MagicMock(name="QMediaCaptureSession"))
 
@@ -58,10 +61,17 @@ def _install_fake_backend(rec: AudioRecorder) -> tuple[MagicMock, MagicMock, Mag
     recorder_cls.EncodingMode = _Enum.EncodingMode
     recorder_cls.Quality = _Enum.Quality
 
+    # resolveForEncoding gibt ein neues "Format"-Mock zurueck, das MP3 meldet
+    # — damit der MP3-Support-Check im Recorder gruen wird.
+    resolved_fmt = MagicMock(name="ResolvedQMediaFormat")
+    resolved_fmt.fileFormat.return_value = _Enum.FileFormat.MP3
+    resolved_fmt.audioCodec.return_value = _Enum.AudioCodec.MP3
     fmt_instance = MagicMock(name="QMediaFormat")
+    fmt_instance.resolveForEncoding.return_value = resolved_fmt
     fmt_cls = MagicMock(return_value=fmt_instance)
     fmt_cls.FileFormat = _Enum.FileFormat
     fmt_cls.AudioCodec = _Enum.AudioCodec
+    fmt_cls.ResolveFlags = _Enum.ResolveFlags
 
     rec._QAudioInput = audio_input_cls  # type: ignore[assignment]
     rec._QMediaCaptureSession = capture_cls  # type: ignore[assignment]

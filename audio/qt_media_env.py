@@ -26,18 +26,18 @@ def _has_plugin(name: str) -> bool:
 
 
 def default_qt_media_backend() -> str | None:
-    """Backend-Wahl fuer Windows (vor dem ersten QtMultimedia-Import)."""
+    """Backend-Wahl fuer Windows (vor dem ersten QtMultimedia-Import).
+
+    Wir bevorzugen IMMER ``windows`` (Media Foundation), wenn das Plugin da
+    ist — auf Windows 10/11 kann WMF MP3 sowohl dekodieren als auch
+    *encodieren*. Das mit PySide6 gebundelte ``ffmpeg``-Backend kann MP3
+    zwar abspielen, aber unter Windows fast nie encodieren (LAME ist aus
+    Lizenzgruenden nicht enthalten) — Folge: Recorder produziert eine
+    leere/header-only Datei. Deshalb auch im PyInstaller-Bundle Vorrang
+    fuer WMF.
+    """
     if sys.platform != "win32":
         return None
-    # PyInstaller-Bundle: ffmpeg (kleiner/zuverlaessiger fuer MP3 im Dist).
-    if getattr(sys, "frozen", False):
-        if _has_plugin("ffmpeg"):
-            return "ffmpeg"
-        if _has_plugin("windows"):
-            return "windows"
-        return "ffmpeg"
-    # Dev (pip): ffmpeg-Plugin liegt oft da, laedt aber ohne FFmpeg-DLLs nicht —
-    # dann „No QtMultimedia backends found“. windows (WMF) funktioniert typisch.
     if _has_plugin("windows"):
         return "windows"
     if _has_plugin("ffmpeg"):

@@ -228,16 +228,13 @@ class AudioRecorder(QObject):
         assert QMF is not None and QMR is not None
 
         fmt = QMF()
-        try:
-            fmt.setFileFormat(QMF.FileFormat.MP3)
-        except AttributeError:
-            # Manche Qt-Builds nennen es ``MPEG4Audio`` o.ä. → wir lassen
-            # das Backend einen Default wählen.
-            pass
-        try:
-            fmt.setAudioCodec(QMF.AudioCodec.MP3)
-        except AttributeError:
-            pass
+        # Wenn das Backend MP3 nicht kennt, brechen wir lieber sofort ab —
+        # sonst landet stillschweigend eine 0-Byte-Datei auf der Platte
+        # (typischer Fehler im PyInstaller-Bundle mit ffmpeg-Backend ohne
+        # MP3-Encoder).
+        fmt.setFileFormat(QMF.FileFormat.MP3)
+        fmt.setAudioCodec(QMF.AudioCodec.MP3)
+        self._verify_mp3_support(fmt)
         recorder.setMediaFormat(fmt)
 
         try:
@@ -258,6 +255,37 @@ class AudioRecorder(QObject):
             pass
 
         recorder.setOutputLocation(QUrl.fromLocalFile(str(target.resolve())))
+
+    def _verify_mp3_support(self, fmt) -> None:
+        """Wirft ``RuntimeError``, wenn das aktive Backend MP3 nicht encoden kann.
+
+        Qt's ``QMediaFormat.resolveForEncoding(NoFlags)`` liefert die vom
+        Backend tatsaechlich unterstuetzten File-Format/Codec-Werte. Wenn
+        das nicht MP3 ist, wuerde ``record()`` zwar starten und eine Datei
+        anlegen — aber ohne MP3-Encoder kaeme nichts darin an.
+        """
+        QMF = self._QMediaFormat
+        assert QMF is not None
+        try:
+            resolve = fmt.resolveForEncoding(
+                QMF.ResolveFlags.NoFlags
+            )
+        except (AttributeError, TypeError):
+            # Aelteres Qt ohne resolveForEncoding — wir versuchen es trotzdem.
+            return
+        if resolve.fileFormat() != QMF.FileFormat.MP3:
+            raise RuntimeError(
+                "MP3-Encoding wird vom aktiven Qt-Multimedia-Backend nicht "
+                "unterstuetzt (oft im Bundle mit FFmpeg-Backend). Bitte "
+                "Umgebungsvariable QT_MEDIA_BACKEND=windows setzen und "
+                "Programm neu starten."
+            )
+        if resolve.audioCodec() != QMF.AudioCodec.MP3:
+            raise RuntimeError(
+                "MP3-Audiocodec nicht verfuegbar (Backend liefert "
+                f"{resolve.audioCodec()}). Bitte QT_MEDIA_BACKEND=windows "
+                "setzen und Programm neu starten."
+            )
 
     def _teardown_session(self) -> None:
         for obj_name in ("_recorder", "_capture", "_audio_input"):
