@@ -195,18 +195,7 @@ class AudioPlayerWindow(QMainWindow):
         mode_l.addLayout(data_row)
 
         self.radio_single = QRadioButton("Nach jeder Datei stoppen (RX)")
-        self.radio_single.setToolTip(
-            "Nach jeder Datei: Funkgerät schaltet auf Sprach-Mode (USB/LSB/FM "
-            "passend zum gewählten DATA-Mode), damit du mit dem Hand-MIC "
-            "antworten kannst. Die nächste Datei in der Liste wird "
-            "automatisch geladen — Start sendet sie direkt. Beim nächsten "
-            "Start wieder DATA-Mode."
-        )
         self.radio_playlist = QRadioButton("Alle nacheinander")
-        self.radio_playlist.setToolTip(
-            "Spielt alle Dateien der Liste nacheinander ab. Zwischen den "
-            "Dateien nur die kurze Pause — kein Umschalten auf Sprach-Mode."
-        )
         self._mode_group = QButtonGroup(self)
         self._mode_group.addButton(self.radio_single)
         self._mode_group.addButton(self.radio_playlist)

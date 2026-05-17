@@ -126,6 +126,10 @@ class MainWindow(QMainWindow):
         self._vfo_b_display_hz: int = 0
         self._relay_rev_active: bool = False
         self._relay_output_hz: Optional[int] = None
+        # Memory-Kanal, der vor REV-Einschalten aktiv war (``None`` =
+        # VFO-Modus). Beim REV-Ausschalten stellen wir diesen Zustand
+        # wieder her, damit der User dort landet, wo er war.
+        self._relay_pre_rev_memory_channel: Optional[int] = None
 
         self._build_ui()
         self._build_menu()
@@ -147,6 +151,10 @@ class MainWindow(QMainWindow):
         self.meter_widget.tx_status_changed.connect(self._on_tx_status_changed)
         self.meter_widget.connection_lost.connect(self._on_connection_lost)
         self.meter_widget.rx_info_changed.connect(self._on_rx_info_changed)
+        # User dreht am Gerät den MEM/CH-Knopf → Combo nachziehen.
+        self.meter_widget.memory_channel_changed.connect(
+            self._on_memory_channel_from_radio
+        )
         self.profile_widget.connection_lost.connect(self._on_connection_lost)
         # Meter-Poller liefert die Quelle der Wahrheit für TX/RX und Mode.
         # ProfileWidget hängt sich daran, um (a) bei TX→RX-Übergang einen
@@ -760,6 +768,7 @@ class MainWindow(QMainWindow):
     def _reset_relay_rev_state(self) -> None:
         self._relay_rev_active = False
         self._relay_output_hz = None
+        self._relay_pre_rev_memory_channel = None
         self._radio_control_bar.set_rev_checked(False)
 
     def _on_rev_toggled(self, active: bool) -> None:
@@ -771,23 +780,48 @@ class MainWindow(QMainWindow):
         ft = FT991CAT(self._cat)
         try:
             if active:
+                # Aktuellen Zustand merken, damit wir ihn beim REV-Aus
+                # wiederherstellen koennen: Memory-Kanal (oder VFO) +
+                # Ausgangs-QRG.
+                try:
+                    pre_channel = ft.read_active_memory_channel()
+                except CatError:
+                    pre_channel = None
                 output_hz = ft.read_frequency()
                 if output_hz <= 0:
                     raise CatError("Keine gültige VFO-A-Frequenz.")
-                self._relay_output_hz = output_hz
                 try:
                     shift_dir = ft.read_if_shift_direction()
                 except CatError:
                     shift_dir = 2
                 listen_hz = relay_listen_hz(output_hz, shift_dir=shift_dir)
+                # write_frequency setzt FA und schiebt das Geraet damit
+                # implizit in den VFO-Mode (auch wenn vorher Memory aktiv
+                # war). Das ist gewollt — die Eingangsfrequenz steht
+                # ueblicherweise nicht im Memory.
                 ft.write_frequency(listen_hz)
+                self._relay_output_hz = output_hz
+                self._relay_pre_rev_memory_channel = pre_channel
                 self._relay_rev_active = True
             else:
-                restore = self._relay_output_hz
-                if restore is None or restore <= 0:
-                    restore = ft.read_frequency()
-                ft.write_frequency(restore)
+                restore_channel = self._relay_pre_rev_memory_channel
+                restore_hz = self._relay_output_hz
+                if restore_channel is not None:
+                    # Memory-Kanal stellt Frequenz + Mode + alle weiteren
+                    # Kanalparameter atomar wieder her. Kein zusaetzliches
+                    # FA-Write noetig (waere kontraproduktiv: wuerde das
+                    # Geraet wieder in den VFO werfen).
+                    ft.select_memory_channel(int(restore_channel))
+                    self._select_memory_combo_by_channel(int(restore_channel))
+                else:
+                    if restore_hz is None or restore_hz <= 0:
+                        restore_hz = ft.read_frequency()
+                    ft.write_frequency(restore_hz)
+                    self._select_memory_combo_vfo()
+                    self._radio_control_bar.select_vfo_item()
                 self._relay_rev_active = False
+                self._relay_output_hz = None
+                self._relay_pre_rev_memory_channel = None
         except CatConnectionLostError:
             self._reset_relay_rev_state()
             self._on_connection_lost()
@@ -916,6 +950,31 @@ class MainWindow(QMainWindow):
             self._vfo_b_display_hz = frequency_b_hz
             self._vfo_b_triplet.set_frequency_hz(frequency_b_hz)
             self._update_vfo_caption_band_color(self._vfo_b_caption, frequency_b_hz)
+
+    def _on_memory_channel_from_radio(self, channel: int) -> None:
+        """Slow-Path-Poller meldet einen Wechsel des aktiven Memory-
+        Kanals (User hat am Gerät den MEM/CH-Knopf gedreht). Die Combo
+        wird nachgezogen, ohne dabei einen CAT-Befehl zu senden.
+
+        Während REV aktiv ist, ignorieren wir das Update: Das Gerät steht
+        dann im VFO-Modus, aber die Combo soll weiterhin den vor REV
+        aktiven Memory-Kanal zeigen (der nach REV-Aus wiederhergestellt
+        wird).
+        """
+        if self._relay_rev_active:
+            return
+        # Während der Memory-Loader läuft, ist die Combo disabled und
+        # wird vom Loader selbst befüllt — kein paralleles Update nötig.
+        if not self.memory_combo.isEnabled():
+            return
+        current = self.memory_combo.currentData()
+        if channel <= 0:
+            if current != self._VFO_ITEM_DATA:
+                self._select_memory_combo_vfo()
+                self._radio_control_bar.select_vfo_item()
+        else:
+            if current != channel:
+                self._select_memory_combo_by_channel(channel)
 
     def _on_user_vfo_a_frequency(self, hz: int) -> None:
         if not self._cat.is_connected():

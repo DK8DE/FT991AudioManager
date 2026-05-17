@@ -11,6 +11,7 @@ from model import AppSettings
 from model.audio_recorder_settings import (
     ALLOWED_BITRATES_KBPS,
     DEFAULT_BITRATE_KBPS,
+    DEFAULT_VOLUME_PERCENT,
     AudioRecorderSettings,
     build_recording_filename,
     default_recordings_folder,
@@ -24,6 +25,38 @@ class AudioRecorderSettingsTest(unittest.TestCase):
         self.assertEqual(s.mp3_bitrate_kbps, DEFAULT_BITRATE_KBPS)
         self.assertEqual(s.folder_path, "")
         self.assertEqual(s.selected_filename, "")
+        self.assertEqual(s.input_volume_percent, DEFAULT_VOLUME_PERCENT)
+        self.assertEqual(s.output_volume_percent, DEFAULT_VOLUME_PERCENT)
+
+    def test_from_dict_volume_defaults_when_missing(self) -> None:
+        s = AudioRecorderSettings.from_dict({})
+        self.assertEqual(s.input_volume_percent, DEFAULT_VOLUME_PERCENT)
+        self.assertEqual(s.output_volume_percent, DEFAULT_VOLUME_PERCENT)
+        self.assertEqual(s.pc_output_volume_percent, DEFAULT_VOLUME_PERCENT)
+
+    def test_from_dict_clamps_volume_out_of_range(self) -> None:
+        s = AudioRecorderSettings.from_dict(
+            {
+                "input_volume_percent": -10,
+                "output_volume_percent": 250,
+                "pc_output_volume_percent": 1000,
+            }
+        )
+        self.assertEqual(s.input_volume_percent, 0)
+        self.assertEqual(s.output_volume_percent, 100)
+        self.assertEqual(s.pc_output_volume_percent, 100)
+
+    def test_from_dict_volume_garbage_fallback(self) -> None:
+        s = AudioRecorderSettings.from_dict(
+            {
+                "input_volume_percent": "loud",
+                "output_volume_percent": None,
+                "pc_output_volume_percent": "off",
+            }
+        )
+        self.assertEqual(s.input_volume_percent, DEFAULT_VOLUME_PERCENT)
+        self.assertEqual(s.output_volume_percent, DEFAULT_VOLUME_PERCENT)
+        self.assertEqual(s.pc_output_volume_percent, DEFAULT_VOLUME_PERCENT)
 
     def test_from_dict_defaults_when_empty(self) -> None:
         s = AudioRecorderSettings.from_dict({})
@@ -55,12 +88,24 @@ class AudioRecorderSettingsTest(unittest.TestCase):
             folder_path="C:/rec",
             input_device_id="dev-in",
             output_device_id="dev-out",
+            pc_output_device_id="dev-pc",
             window_geometry="abc",
             mp3_bitrate_kbps=192,
             selected_filename="Record_x.mp3",
+            input_volume_percent=33,
+            output_volume_percent=77,
+            pc_output_volume_percent=42,
         )
         restored = AudioRecorderSettings.from_dict(original.to_dict())
         self.assertEqual(restored, original)
+
+    def test_from_dict_pc_output_device_id_default_empty(self) -> None:
+        s = AudioRecorderSettings.from_dict({})
+        self.assertEqual(s.pc_output_device_id, "")
+
+    def test_from_dict_pc_output_device_id_preserves_value(self) -> None:
+        s = AudioRecorderSettings.from_dict({"pc_output_device_id": "audio-pc-1"})
+        self.assertEqual(s.pc_output_device_id, "audio-pc-1")
 
 
 class BuildRecordingFilenameTest(unittest.TestCase):

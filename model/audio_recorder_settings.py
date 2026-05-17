@@ -15,6 +15,8 @@ ALLOWED_BITRATES_KBPS: tuple[int, ...] = (
 )
 DEFAULT_BITRATE_KBPS = 64
 
+DEFAULT_VOLUME_PERCENT = 100
+
 #: Unterordner unter Documents/, in den per Default Aufnahmen geschrieben werden.
 DEFAULT_FOLDER_NAME = "FT991_Recordings"
 
@@ -25,19 +27,34 @@ RECORDING_EXTENSION = ".mp3"
 class AudioRecorderSettings:
     folder_path: str = ""
     input_device_id: str = ""        # Eingangsgerät (USB CODEC etc.)
-    output_device_id: str = ""       # Wiedergabe-Gerät für Replay
+    output_device_id: str = ""       # Wiedergabe-Gerät für Replay (CAT-TX)
+    #: Lokales PC-Ausgabegerät — wird für "Play PC" (Vorhöre ohne Sendung) genutzt.
+    pc_output_device_id: str = ""
     window_geometry: str = ""
     mp3_bitrate_kbps: int = DEFAULT_BITRATE_KBPS
     selected_filename: str = ""
+    #: Lautstärke des Aufnahme-Geräts (0..100 %) — wird per
+    #: ``QAudioInput.setVolume`` auf den Aufnahme-Strom angewendet.
+    input_volume_percent: int = DEFAULT_VOLUME_PERCENT
+    #: Lautstärke des Replay-Wiedergabegeräts (0..100 %) — wird per
+    #: ``QAudioOutput.setVolume`` auf den Replay-Player angewendet.
+    output_volume_percent: int = DEFAULT_VOLUME_PERCENT
+    #: Lautstärke des lokalen PC-Ausgabegeräts (0..100 %) — wird per
+    #: ``QAudioOutput.setVolume`` auf den Vorhöre-Player angewendet.
+    pc_output_volume_percent: int = DEFAULT_VOLUME_PERCENT
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "folder_path": self.folder_path,
             "input_device_id": self.input_device_id,
             "output_device_id": self.output_device_id,
+            "pc_output_device_id": self.pc_output_device_id,
             "window_geometry": self.window_geometry,
             "mp3_bitrate_kbps": int(self.mp3_bitrate_kbps),
             "selected_filename": self.selected_filename,
+            "input_volume_percent": int(self.input_volume_percent),
+            "output_volume_percent": int(self.output_volume_percent),
+            "pc_output_volume_percent": int(self.pc_output_volume_percent),
         }
 
     @classmethod
@@ -47,10 +64,25 @@ class AudioRecorderSettings:
             folder_path=str(r.get("folder_path", "") or ""),
             input_device_id=str(r.get("input_device_id", "") or ""),
             output_device_id=str(r.get("output_device_id", "") or ""),
+            pc_output_device_id=str(r.get("pc_output_device_id", "") or ""),
             window_geometry=str(r.get("window_geometry", "") or ""),
             mp3_bitrate_kbps=_clamp_bitrate(r.get("mp3_bitrate_kbps")),
             selected_filename=str(r.get("selected_filename", "") or ""),
+            input_volume_percent=_clamp_volume(r.get("input_volume_percent")),
+            output_volume_percent=_clamp_volume(r.get("output_volume_percent")),
+            pc_output_volume_percent=_clamp_volume(
+                r.get("pc_output_volume_percent")
+            ),
         )
+
+
+def _clamp_volume(value: object) -> int:
+    """Klemmt einen Lautstärke-Wert auf 0..100 %."""
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_VOLUME_PERCENT
+    return max(0, min(100, v))
 
 
 def _clamp_bitrate(value: object) -> int:

@@ -165,6 +165,10 @@ class RxStatusSample:
     mode: Optional[RxMode] = None
     frequency_hz: Optional[int] = None
     frequency_b_hz: Optional[int] = None
+    #: Aktiver Speicherkanal (CAT ``MC;``) — nur Slow-Path.
+    #: ``None`` = nicht gelesen / Read-Fehler, ``0`` = VFO-Modus,
+    #: ``> 0`` = Memory-Kanal-Nummer.
+    active_memory_channel: Optional[int] = None
 
 
 DEFAULT_INTERVAL_TX_MS = 250
@@ -440,6 +444,15 @@ class MeterPoller(QObject):
         mode = _safe("mode", ft.read_rx_mode)
         freq_a = _safe("freq_a", ft.read_frequency)
         freq_b = _safe("freq_b", ft.read_frequency_b)
+
+        def _read_active_mc() -> int:
+            # read_active_memory_channel liefert ``None`` im VFO-Modus.
+            # Wir mappen das auf Sentinel ``0``, damit ``_safe`` ``None``
+            # weiterhin als "Read-Fehler" reserviert bleibt.
+            res = ft.read_active_memory_channel()
+            return 0 if res is None else int(res)
+
+        active_mc = _safe("active_mc", _read_active_mc)
         mic_gain = _safe("mic_gain", ft.get_mic_gain)
         tx_bw = _safe("sh_width", ft.read_tx_bandwidth_sh)
         tx_power = _safe("pc_power", ft.read_pc_power_watts)
@@ -459,6 +472,7 @@ class MeterPoller(QObject):
             mode=mode,
             frequency_hz=freq_a,
             frequency_b_hz=freq_b,
+            active_memory_channel=active_mc,
         )
         self.rx_sample.emit(sample)
         return self._rx_interval_ms
@@ -1901,6 +1915,9 @@ class MeterWidget(QWidget):
     #: Wird ausgestellt, wenn der Slow-Path einen anderen MIC-Gain als zuletzt
     #: bekannt vom Funkgerät gelesen hat (Drehknopf am TRX).
     mic_gain_synced_from_radio = Signal(int)
+    #: Aktiver Speicherkanal hat sich am Funkgerät geändert (User dreht den
+    #: MEM/CH-Knopf). ``0`` = VFO-Modus, ``> 0`` = Memory-Kanal-Nummer.
+    memory_channel_changed = Signal(int)
 
     SIDEBAR_MIN_WIDTH = 290
     SIDEBAR_MAX_WIDTH = 380
@@ -1941,6 +1958,10 @@ class MeterWidget(QWidget):
         self._last_rx_mic_gain: Optional[int] = None
         #: Letzter Modus für SH-WIDTH-Anzeige (SSB/CW/DATA/RTTY vs. FM …).
         self._last_mode_for_bw: Optional[RxMode] = None
+        #: Zuletzt vom Slow-Path gemeldeter Memory-Kanal — verhindert
+        #: Signal-Spam bei jedem RX-Sample mit unverändertem ``MC;``.
+        #: ``None`` = noch nie gelesen, ``0`` = VFO, ``> 0`` = Memory.
+        self._last_memory_channel: Optional[int] = None
 
         if self._integrated_main_layout:
             self.setMinimumWidth(0)
@@ -2329,6 +2350,7 @@ class MeterWidget(QWidget):
 
     def on_connection_changed(self, connected: bool) -> None:
         self._last_rx_mic_gain = None
+        self._last_memory_channel = None
         if not connected:
             self._last_mode_for_bw = None
         if connected:
@@ -2478,6 +2500,15 @@ class MeterWidget(QWidget):
                 sample.frequency_hz or 0,
                 sample.frequency_b_hz or 0,
             )
+
+        # Memory-Kanal-Wechsel am Gerät (User dreht MEM/CH-Knopf) an
+        # das MainWindow weiterreichen — nur bei tatsächlicher Änderung,
+        # um die Combo nicht in jedem Slow-Path zu zappeln.
+        if sample.active_memory_channel is not None:
+            mc = int(sample.active_memory_channel)
+            if self._last_memory_channel != mc:
+                self._last_memory_channel = mc
+                self.memory_channel_changed.emit(mc)
 
     def _sync_mode_dependent_slider_visibility(
         self,

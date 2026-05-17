@@ -89,6 +89,9 @@ class AudioRecorder(QObject):
         self._QMediaFormat: Optional[type] = None
         self._QAudioInput: Optional[type] = None
         self._QMediaCaptureSession: Optional[type] = None
+        #: Aufnahme-Lautstärke (0..100 %). Wird beim Anlegen des
+        #: ``QAudioInput`` angewendet und kann auch live verändert werden.
+        self._input_volume_percent: int = 100
 
     # ------------------------------------------------------------------
     # Properties
@@ -108,6 +111,28 @@ class AudioRecorder(QObject):
             RecorderState.RECORDING,
             RecorderState.STOPPING,
         )
+
+    def set_input_volume_percent(self, percent: int) -> None:
+        """Aufnahme-Lautstärke setzen (0..100 %).
+
+        Wirkt sofort auf ein laufendes ``QAudioInput`` und wird bei der
+        nächsten Aufnahme automatisch wieder angewendet.
+        """
+        self._input_volume_percent = max(0, min(100, int(percent)))
+        self._apply_input_volume()
+
+    def input_volume_percent(self) -> int:
+        return self._input_volume_percent
+
+    def _apply_input_volume(self) -> None:
+        if self._audio_input is None:
+            return
+        try:
+            self._audio_input.setVolume(self._input_volume_percent / 100.0)
+        except (AttributeError, TypeError):
+            # Sehr alte Qt-Versionen / Stub-Backends ohne setVolume —
+            # dann bleibt es bei der Geräte-Default-Lautstärke.
+            pass
 
     # ------------------------------------------------------------------
     # Backend init (lazy nach QApplication)
@@ -171,6 +196,7 @@ class AudioRecorder(QObject):
             self._audio_input = self._QAudioInput(self)  # type: ignore[misc]
             if device is not None:
                 self._audio_input.setDevice(device)
+            self._apply_input_volume()
 
             self._capture = self._QMediaCaptureSession(self)  # type: ignore[misc]
             self._capture.setAudioInput(self._audio_input)
