@@ -18,6 +18,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QGroupBox,
@@ -229,9 +230,9 @@ class AudioRecorderWindow(QMainWindow):
         list_l = QVBoxLayout(list_box)
         self.list_files = QListWidget()
         self.list_files.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        # Doppelt so hoch wie die Qt-Default-QListWidget-Höhe (~150 px), damit
+        # Doppelt so hoch wie die Qt-Default-QListWidget-Höhe (~200 px), damit
         # man mehr Aufnahmen ohne Scrollen sieht.
-        self.list_files.setMinimumHeight(300)
+        self.list_files.setMinimumHeight(200)
         self.list_files.currentRowChanged.connect(self._on_list_row_changed)
         self.list_files.itemDoubleClicked.connect(self._on_item_double_clicked)
         list_l.addWidget(self.list_files)
@@ -427,6 +428,21 @@ class AudioRecorderWindow(QMainWindow):
         fmt_row.addStretch(1)
         dev_l.addLayout(fmt_row)
 
+        norm_row = QHBoxLayout()
+        norm_row.addWidget(_form_label("Lautstärke:"))
+        self.chk_normalize = QCheckBox("Soft-Kompressor")
+        self.chk_normalize.setToolTip(
+            "Hebt nach jeder Aufnahme den RMS-Pegel auf -14 dBFS "
+            "(Streaming-Loudness-Norm) an und limitiert Spitzen sanft "
+            "auf -1 dBFS. Macht leise FT-991-USB-CODEC-Aufnahmen so "
+            "laut wie eine kommerzielle Musik-MP3, ohne harte "
+            "Clipping-Verzerrungen.\n\n"
+            "Ausgeschaltet = roher Pegel direkt vom USB-Codec."
+        )
+        self.chk_normalize.toggled.connect(self._on_normalize_toggled)
+        norm_row.addWidget(self.chk_normalize, 1)
+        dev_l.addLayout(norm_row)
+
         root.addWidget(dev_box)
 
         self.lbl_status = QLabel("Bereit")
@@ -531,6 +547,13 @@ class AudioRecorderWindow(QMainWindow):
         finally:
             self.slider_pc_volume.blockSignals(False)
         self._pc_pending_volume_percent = int(ar.pc_output_volume_percent)
+        # Soft-Compressor/Normalize-Flag in UI + Recorder.
+        self.chk_normalize.blockSignals(True)
+        try:
+            self.chk_normalize.setChecked(bool(ar.normalize_enabled))
+        finally:
+            self.chk_normalize.blockSignals(False)
+        self._recorder.set_normalize_enabled(bool(ar.normalize_enabled))
 
     def _restore_geometry(self) -> None:
         geo = self._settings.audio_recorder.window_geometry
@@ -688,6 +711,13 @@ class AudioRecorderWindow(QMainWindow):
             self._stop_led_blink()
         if state == RecorderState.IDLE:
             self.lbl_rec_duration.setText(_format_ms(0))
+        elif state == RecorderState.POST_PROCESSING:
+            # WAV ist auf der Platte — wir normalisieren und encoden gerade.
+            # Bei einer halben Minute Aufnahme typisch < 200 ms, bei
+            # mehreren Minuten kann das kurz sichtbar werden.
+            self.lbl_status.setText(
+                "Aufnahme wird normalisiert und nach MP3 encodiert …"
+            )
         self._update_buttons()
 
     def _on_record_duration(self, ms: int) -> None:
@@ -1051,10 +1081,6 @@ class AudioRecorderWindow(QMainWindow):
                 "Replay läuft — bitte zuerst stoppen.",
             )
             return
-        # PC-Wiedergabe der gleichen Datei vorher beenden + Quelle freigeben,
-        # sonst hält QMediaPlayer unter Windows den File-Handle.
-        if self._pc_is_playing or self._pc_player_ready:
-            self._release_pc_source()
 
         confirm = QMessageBox.question(
             self,
@@ -1065,6 +1091,14 @@ class AudioRecorderWindow(QMainWindow):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
+
+        # Beide QMediaPlayer-Instanzen halten unter Windows das File-Handle
+        # offen, auch nach `stop()` — solange ihre `source()` auf die Datei
+        # zeigt, schlaegt `unlink()` mit "Zugriff verweigert" fehl. Erst
+        # Quelle freigeben, dann loeschen.
+        self._release_pc_source()
+        self._player.release_source()
+
         try:
             target.unlink()
         except FileNotFoundError:
@@ -1100,6 +1134,12 @@ class AudioRecorderWindow(QMainWindow):
         val = self.combo_bitrate.currentData()
         if isinstance(val, int):
             self._settings.audio_recorder.mp3_bitrate_kbps = val
+
+    def _on_normalize_toggled(self, checked: bool) -> None:
+        # Wirkung ab der nächsten Aufnahme. Während einer laufenden
+        # Aufnahme bleibt die zuvor gewählte Einstellung wirksam.
+        self._settings.audio_recorder.normalize_enabled = bool(checked)
+        self._recorder.set_normalize_enabled(bool(checked))
 
     # ------------------------------------------------------------------
     # CAT-Setup

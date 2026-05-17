@@ -42,6 +42,10 @@ class AudioRecorderSettings:
     #: Lautstärke des lokalen PC-Ausgabegeräts (0..100 %) — wird per
     #: ``QAudioOutput.setVolume`` auf den Vorhöre-Player angewendet.
     pc_output_volume_percent: int = DEFAULT_VOLUME_PERCENT
+    #: Soft-Kompressor/Normalize beim Speichern aktiv. Wenn aktiv, wird
+    #: die Aufnahme nach dem Stoppen auf eine Ziel-Lautstärke gehoben
+    #: (mit Soft-Knee-Limiter zur Verzerrungsvermeidung). Default an.
+    normalize_enabled: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +59,7 @@ class AudioRecorderSettings:
             "input_volume_percent": int(self.input_volume_percent),
             "output_volume_percent": int(self.output_volume_percent),
             "pc_output_volume_percent": int(self.pc_output_volume_percent),
+            "normalize_enabled": bool(self.normalize_enabled),
         }
 
     @classmethod
@@ -73,6 +78,7 @@ class AudioRecorderSettings:
             pc_output_volume_percent=_clamp_volume(
                 r.get("pc_output_volume_percent")
             ),
+            normalize_enabled=bool(r.get("normalize_enabled", True)),
         )
 
 

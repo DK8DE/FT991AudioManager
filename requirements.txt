@@ -3,3 +3,8 @@ PySide6>=6.6
 # pip install PySide6-Addons
 PySide6-Addons>=6.6
 pyserial>=3.5
+# MP3-Encoder fuer den Audio-Recorder: wir nehmen erst WAV auf (uncompressed
+# PCM), normalisieren das Signal in Python (Soft-Compressor + Limiter) und
+# encoden dann nach MP3. So vermeiden wir Pegelverluste durch das schwache
+# QMediaRecorder-MP3-Encoding und brauchen kein externes ffmpeg.
+lameenc>=1.7

@@ -95,6 +95,7 @@ class AudioRecorderSettingsTest(unittest.TestCase):
             input_volume_percent=33,
             output_volume_percent=77,
             pc_output_volume_percent=42,
+            normalize_enabled=False,
         )
         restored = AudioRecorderSettings.from_dict(original.to_dict())
         self.assertEqual(restored, original)
@@ -106,6 +107,15 @@ class AudioRecorderSettingsTest(unittest.TestCase):
     def test_from_dict_pc_output_device_id_preserves_value(self) -> None:
         s = AudioRecorderSettings.from_dict({"pc_output_device_id": "audio-pc-1"})
         self.assertEqual(s.pc_output_device_id, "audio-pc-1")
+
+    def test_normalize_enabled_default_true_when_missing(self) -> None:
+        """Alte settings.json ohne Normalize-Flag => Default an (User-Erwartung)."""
+        s = AudioRecorderSettings.from_dict({})
+        self.assertTrue(s.normalize_enabled)
+
+    def test_normalize_enabled_can_be_disabled(self) -> None:
+        s = AudioRecorderSettings.from_dict({"normalize_enabled": False})
+        self.assertFalse(s.normalize_enabled)
 
 
 class BuildRecordingFilenameTest(unittest.TestCase):

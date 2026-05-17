@@ -340,6 +340,28 @@ class PlayerController(QObject):
         self._after_rx = "paused"
         self._goto_waiting_rx()
 
+    def release_source(self) -> None:
+        """Stoppt + gibt die aktuell geladene Mediendatei frei.
+
+        Wichtig fuer Fall "Datei loeschen": Windows haelt den File-Handle
+        auch noch nach ``QMediaPlayer.stop()``, solange ``source()`` auf
+        die Datei zeigt. ``setSource(QUrl())`` zwingt das Backend, das
+        Handle wirklich zu schliessen, sodass ``unlink()`` durchgeht.
+
+        Darf nur aufgerufen werden, wenn der Controller IDLE ist — sonst
+        wuerde mitten in einer laufenden Wiedergabe der Player blockiert.
+        """
+        if self._player is None:
+            return
+        try:
+            self._player.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._player.setSource(QUrl())
+        except Exception:  # noqa: BLE001
+            pass
+
     def stop(self) -> None:
         self._pre_roll_timer.stop()
         self._gap_timer.stop()
