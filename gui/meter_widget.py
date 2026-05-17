@@ -127,8 +127,9 @@ class TxMeterSample:
 
     transmitting: bool
     values: Dict[MeterKind, int]
-    #: VFO-A während TX (einmal pro Poll), damit die POWER-Skala zum Band passt.
+    #: VFO-A/B während TX (einmal pro Poll) — Anzeige + POWER-Skala.
     frequency_hz: Optional[int] = None
+    frequency_b_hz: Optional[int] = None
     #: Sendeleistung (CAT ``PC;``), wenn im TX-Poll gelesen.
     pc_power_watts: Optional[int] = None
     #: TX-Status laut ``TX;`` — 0=RX, 1=CAT-TX, 2=MIC-PTT.
@@ -345,9 +346,18 @@ class MeterPoller(QObject):
                 # den letzten bekannten Wert fuer diesen Bar.
                 continue
         freq_hz: Optional[int] = None
+        freq_b_hz: Optional[int] = None
         try:
             freq_hz = ft.read_frequency()
-        except Exception:
+        except CatConnectionLostError:
+            raise
+        except CatError:
+            pass
+        try:
+            freq_b_hz = ft.read_frequency_b()
+        except CatConnectionLostError:
+            raise
+        except CatError:
             pass
         pc_power: Optional[int] = None
         try:
@@ -364,6 +374,7 @@ class MeterPoller(QObject):
                 transmitting=True,
                 values=values,
                 frequency_hz=freq_hz,
+                frequency_b_hz=freq_b_hz,
                 pc_power_watts=pc_power,
                 tx_state=self._current_tx_state,
             )
@@ -2407,6 +2418,13 @@ class MeterWidget(QWidget):
         self._sync_po_meter_scale()
         if sample.pc_power_watts is not None:
             self.power_slider.set_value(sample.pc_power_watts)
+        if sample.transmitting and (
+            sample.frequency_hz is not None or sample.frequency_b_hz is not None
+        ):
+            self._emit_rx_frequency_info(
+                sample.frequency_hz,
+                sample.frequency_b_hz,
+            )
         transmitting = sample.transmitting
         self.tx_led.set_active(transmitting)
         self.tx_label.setText("TX" if transmitting else "RX")
@@ -2489,16 +2507,15 @@ class MeterWidget(QWidget):
             self._tx_bw_panel.set_p2(sample.tx_bandwidth_sh, remote=True)
         self._sync_tx_bw_frame_visibility()
 
-        # Mode + Frequenzen an's Header weiterreichen
         if (
             sample.mode is not None
             or sample.frequency_hz is not None
             or sample.frequency_b_hz is not None
         ):
-            self.rx_info_changed.emit(
-                sample.mode,
-                sample.frequency_hz or 0,
-                sample.frequency_b_hz or 0,
+            self._emit_rx_frequency_info(
+                sample.frequency_hz,
+                sample.frequency_b_hz,
+                mode=sample.mode,
             )
 
         # Memory-Kanal-Wechsel am Gerät (User dreht MEM/CH-Knopf) an
@@ -2509,6 +2526,27 @@ class MeterWidget(QWidget):
             if self._last_memory_channel != mc:
                 self._last_memory_channel = mc
                 self.memory_channel_changed.emit(mc)
+
+    def _emit_rx_frequency_info(
+        self,
+        frequency_hz: Optional[int],
+        frequency_b_hz: Optional[int],
+        *,
+        mode: Optional[RxMode] = None,
+    ) -> None:
+        """VFO-Anzeige im Header (auch während TX, wenn nur FA/FB gelesen wurden)."""
+        if (
+            frequency_hz is None
+            and frequency_b_hz is None
+            and mode is None
+        ):
+            return
+        emit_mode = mode if mode is not None else self._last_mode_for_bw
+        self.rx_info_changed.emit(
+            emit_mode,
+            int(frequency_hz) if frequency_hz is not None else 0,
+            int(frequency_b_hz) if frequency_b_hz is not None else 0,
+        )
 
     def _sync_mode_dependent_slider_visibility(
         self,

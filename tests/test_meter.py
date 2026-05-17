@@ -217,6 +217,8 @@ class _MeterFakeRadio(SerialCAT):
             return "TX1;" if self.transmitting else "TX0;"
         if command == "FA;":
             return "FA014250000;"
+        if command == "FB;":
+            return "FB014255000;"
         if command == "PC;":
             return f"PC{int(self.pc_power_watts):03d};"
         for kind, info in METER_INFO.items():

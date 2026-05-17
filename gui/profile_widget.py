@@ -387,6 +387,8 @@ class ProfileWidget(QWidget):
     #: das ab und reagiert (LED, Reconnect-Watcher) — ohne Fehler-Dialog.
     connection_lost = Signal()
     active_profile_changed = Signal(str)
+    #: Stiller Read/Write-Worker beendet (Erfolg oder Fehler) — z. B. Connect-Init.
+    silent_worker_finished = Signal()
 
     def __init__(
         self,
@@ -1486,6 +1488,8 @@ class ProfileWidget(QWidget):
         was_silent = self._worker_silent
         self._worker_silent = False
         self._writing_profile = None
+        if was_silent:
+            self.silent_worker_finished.emit()
         # Profil-Combo wieder freigeben (nur wenn weiter verbunden).
         connected = self._cat.is_connected()
         self.profile_combo.setEnabled(connected)

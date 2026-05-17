@@ -4,8 +4,9 @@ Neuer schlanker Aufbau (ab 0.5.1):
 
 - Oben **rechts**: VFO-A/B und RX/TX-Anzeige; darunter ein **großer
   Meter-Bereich** (S-Meter + DSP links, AF/RF + TX-Meter rechts);
-  darunter **Tune / CH± / Band±**; unten **Mode-Gruppe**, **EQ-Profil**
-  und **Speicherkanal**.
+  darunter **Tune / REV** und Audio-Buttons; unten **Mode-Gruppe**,
+  **EQ-Profil**, **Speicherkanal** und **Band** (Dropdown rechts neben dem
+  Speicherkanal).
 - **EQ-Profil- und Mode-Auswahl** bleiben im Hauptfenster; der Equalizer-Editor
   (Grundwerte, EQ, Erweitert, Speichern) liegt in **Bearbeiten → Equalizer**.
 - Verbindung: **Datei → Verbinden** / **Datei → Trennen**.
@@ -70,7 +71,11 @@ from .profile_widget import ProfileWidget
 from .radio_control_bar import RadioControlBar
 from .settings_dialog import ConnectionSettingsDialog
 from .theme import apply_theme
-from mapping.amateur_bands import amateur_band_for_hz
+from mapping.amateur_bands import (
+    amateur_band_for_hz,
+    combo_entries_high_to_low,
+    VFO_BAND_CHOICE,
+)
 
 from .vfo_triplet_widget import VfoTripletWidget
 
@@ -136,6 +141,10 @@ class MainWindow(QMainWindow):
         # VFO-Modus). Beim REV-Ausschalten stellen wir diesen Zustand
         # wieder her, damit der User dort landet, wo er war.
         self._relay_pre_rev_memory_channel: Optional[int] = None
+        #: Speicherkanal beim Connect (``None`` = war VFO, sonst Kanalnr.).
+        self._connect_restore_memory_channel: Optional[int] = None
+        #: Zähler offener Connect-Init-Schritte (Profil-Write + Memory-Load).
+        self._connect_init_pending: int = 0
 
         self._build_ui()
         self._build_menu()
@@ -162,6 +171,9 @@ class MainWindow(QMainWindow):
             self._on_memory_channel_from_radio
         )
         self.profile_widget.connection_lost.connect(self._on_connection_lost)
+        self.profile_widget.silent_worker_finished.connect(
+            self._on_connect_profile_worker_finished
+        )
         # Meter-Poller liefert die Quelle der Wahrheit für TX/RX und Mode.
         # ProfileWidget hängt sich daran, um (a) bei TX→RX-Übergang einen
         # pausierten Auto-Write nachzuziehen und (b) bei Mode-Wechsel am
@@ -398,9 +410,6 @@ class MainWindow(QMainWindow):
         self._radio_control_bar = RadioControlBar()
         self._radio_control_bar.tune_clicked.connect(self._on_tune_clicked)
         self._radio_control_bar.rev_toggled.connect(self._on_rev_toggled)
-        self._radio_control_bar.band_choice_activated.connect(
-            self._on_band_choice_activated
-        )
         self._radio_control_bar.audio_player_clicked.connect(
             self._on_audio_player_action
         )
@@ -449,6 +458,19 @@ class MainWindow(QMainWindow):
         self._reset_memory_combo()
         self.memory_combo.activated.connect(self._on_memory_combo_activated)
         bottom_row2.addWidget(self.memory_combo, stretch=1)
+
+        bottom_row2.addWidget(QLabel("Band:"))
+        self.band_combo = QComboBox(bottom_bar)
+        self.band_combo.setEnabled(False)
+        self.band_combo.setMinimumWidth(280)
+        self.band_combo.setToolTip(
+            "VFO-Modus oder Amateurband (Mittenfrequenz auf VFO-A setzen)"
+        )
+        for label, data in combo_entries_high_to_low():
+            self.band_combo.addItem(label, data)
+        self.band_combo.activated.connect(self._on_band_combo_activated)
+        bottom_row2.addWidget(self.band_combo)
+
         bottom_outer.addLayout(bottom_row2)
 
         layout.addWidget(bottom_bar)
@@ -612,13 +634,16 @@ class MainWindow(QMainWindow):
         except CatConnectionLostError:
             self._on_connection_lost()
             return False
+        self._capture_connect_memory_state()
+        self._prepare_connect_for_cat_bulk_io()
+        self._begin_connect_init()
         self._refresh_header_status(connected=True, info=self._last_identity_info)
         self._on_connection_changed(True)
         # EQ-Profil wird in ``set_cat_available(True)`` per write_full
         # ins Gerät übertragen (siehe ProfileWidget).
-        # Speicherkanäle parallel im Hintergrund laden. Der Loader nutzt
-        # denselben SerialCAT (mit RLock), arbeitet aber zwischen den
-        # Profile-Lese-Roundtrips, sodass die GUI flüssig bleibt.
+        if not self.profile_widget.request_apply_active_profile():
+            self._connect_init_step_done("profile")
+        # Speicherkanäle im Hintergrund laden (nach kurzer Verzögerung).
         QTimer.singleShot(50, self._start_memory_load)
         return True
 
@@ -626,6 +651,8 @@ class MainWindow(QMainWindow):
         # Manuelles Trennen schaltet auch den Auto-Reconnect aus, bis der
         # User wieder explizit "Verbinden" wählt oder die App neu startet.
         self._reconnect_timer.stop()
+        self._connect_restore_memory_channel = None
+        self._connect_init_pending = 0
         self._memory_loader.stop()
         self._cat.disconnect()
         self._last_identity_info = ""
@@ -640,6 +667,8 @@ class MainWindow(QMainWindow):
         """Wird gerufen, wenn MeterPoller oder Profil-Worker einen IO-Fehler
         bekommen. SerialCAT hat sich intern schon getrennt.
         """
+        self._connect_restore_memory_channel = None
+        self._connect_init_pending = 0
         if self._cat.is_connected():
             # Sicherheitsnetz — sollte normalerweise schon im SerialCAT
             # passiert sein.
@@ -809,6 +838,7 @@ class MainWindow(QMainWindow):
                 self._relay_output_hz = output_hz
                 self._relay_pre_rev_memory_channel = pre_channel
                 self._relay_rev_active = True
+                self._apply_vfo_a_display_hz(listen_hz)
             else:
                 restore_channel = self._relay_pre_rev_memory_channel
                 restore_hz = self._relay_output_hz
@@ -819,12 +849,16 @@ class MainWindow(QMainWindow):
                     # Geraet wieder in den VFO werfen).
                     ft.select_memory_channel(int(restore_channel))
                     self._select_memory_combo_by_channel(int(restore_channel))
+                    restored_hz = ft.read_frequency()
+                    if restored_hz > 0:
+                        self._apply_vfo_a_display_hz(restored_hz)
                 else:
                     if restore_hz is None or restore_hz <= 0:
                         restore_hz = ft.read_frequency()
                     ft.write_frequency(restore_hz)
                     self._select_memory_combo_vfo()
-                    self._radio_control_bar.select_vfo_item()
+                    self._select_band_combo_vfo()
+                    self._apply_vfo_a_display_hz(restore_hz)
                 self._relay_rev_active = False
                 self._relay_output_hz = None
                 self._relay_pre_rev_memory_channel = None
@@ -837,10 +871,22 @@ class MainWindow(QMainWindow):
             if sb is not None:
                 sb.showMessage(str(exc), 5000)
 
+    def _on_band_combo_activated(self, _index: int) -> None:
+        data = self.band_combo.currentData()
+        if data is None:
+            return
+        self._on_band_choice_activated(int(data))
+
+    def _select_band_combo_vfo(self) -> None:
+        idx = self.band_combo.findData(VFO_BAND_CHOICE)
+        if idx >= 0:
+            self.band_combo.blockSignals(True)
+            self.band_combo.setCurrentIndex(idx)
+            self.band_combo.blockSignals(False)
+
     def _on_band_choice_activated(self, choice: int) -> None:
         if not self._cat.is_connected():
             return
-        from mapping.amateur_bands import VFO_BAND_CHOICE
 
         ft = FT991CAT(self._cat)
         try:
@@ -855,7 +901,7 @@ class MainWindow(QMainWindow):
                 ft.write_frequency(hz)
                 self._relay_output_hz = hz
             self._select_memory_combo_vfo()
-            self._radio_control_bar.select_vfo_item()
+            self._select_band_combo_vfo()
         except CatConnectionLostError:
             self._on_connection_lost()
         except CatError as exc:
@@ -911,6 +957,7 @@ class MainWindow(QMainWindow):
             self._memory_loader.stop()
             self._reset_memory_combo()
             self.memory_combo.setEnabled(False)
+            self.band_combo.setEnabled(False)
         else:
             self._vfo_a_triplet.set_interactive(True)
             self._vfo_b_triplet.set_interactive(True)
@@ -938,6 +985,15 @@ class MainWindow(QMainWindow):
             caption.setStyleSheet(_VFO_CAPTION_STYLE_OUT_OF_BAND)
             caption.setToolTip("Außerhalb der Amateurfunkbänder")
 
+    def _apply_vfo_a_display_hz(self, hz: int) -> None:
+        """VFO-A-Anzeige sofort setzen (z. B. nach REV oder CAT-Schreiben)."""
+        if hz <= 0:
+            return
+        self._vfo_a_display_hz = hz
+        self._vfo_a_triplet.set_frequency_hz(hz)
+        self._update_vfo_caption_band_color(self._vfo_a_caption, hz)
+        self._rig_bridge.update_from_radio(frequency_hz=hz)
+
     def _on_rx_info_changed(
         self, mode: object, frequency_hz: int, frequency_b_hz: int
     ) -> None:
@@ -946,12 +1002,9 @@ class MainWindow(QMainWindow):
             self._mode_label.setText(f"Mode: {mode.value}")
             self._rig_bridge.update_from_radio(mode=mode.value)
         if frequency_hz > 0:
-            self._rig_bridge.update_from_radio(frequency_hz=frequency_hz)
             if not self._relay_rev_active:
                 self._relay_output_hz = frequency_hz
-            self._vfo_a_display_hz = frequency_hz
-            self._vfo_a_triplet.set_frequency_hz(frequency_hz)
-            self._update_vfo_caption_band_color(self._vfo_a_caption, frequency_hz)
+            self._apply_vfo_a_display_hz(frequency_hz)
         if frequency_b_hz > 0:
             self._vfo_b_display_hz = frequency_b_hz
             self._vfo_b_triplet.set_frequency_hz(frequency_b_hz)
@@ -977,7 +1030,7 @@ class MainWindow(QMainWindow):
         if channel <= 0:
             if current != self._VFO_ITEM_DATA:
                 self._select_memory_combo_vfo()
-                self._radio_control_bar.select_vfo_item()
+                self._select_band_combo_vfo()
         else:
             if current != channel:
                 self._select_memory_combo_by_channel(channel)
@@ -1047,6 +1100,102 @@ class MainWindow(QMainWindow):
             self._log_window.set_dark_mode(checked)
         self._settings.ui.force_dark_mode = bool(checked)
         self._persist_settings()
+
+    # ------------------------------------------------------------------
+    # Connect-Init: Speicherkanal merken / wiederherstellen
+    # ------------------------------------------------------------------
+
+    def _capture_connect_memory_state(self) -> None:
+        """Merkt den aktiven Speicherkanal vor Profil-Write und MT-Scan."""
+        self._connect_restore_memory_channel = None
+        if not self._cat.is_connected():
+            return
+        try:
+            active = FT991CAT(self._cat).read_active_memory_channel()
+        except CatConnectionLostError:
+            self._on_connection_lost()
+            return
+        except CatError:
+            return
+        if active is not None and active > 0:
+            self._connect_restore_memory_channel = int(active)
+            self._cat_log.log_info(
+                f"Connect: Funkgerät stand auf Speicherkanal {active:03d} "
+                "(wird nach Init wiederhergestellt)"
+            )
+
+    def _prepare_connect_for_cat_bulk_io(self) -> None:
+        """VFO-Modus für MT-Scan und Profil-Roundtrips (nur wenn vorher Memory)."""
+        if self._connect_restore_memory_channel is None:
+            return
+        if not self._cat.is_connected():
+            return
+        try:
+            FT991CAT(self._cat).switch_to_vfo_mode()
+            self._cat_log.log_info(
+                "Connect: VFO-Modus für Speicherkanal-Scan und Profil-Sync"
+            )
+        except CatConnectionLostError:
+            self._on_connection_lost()
+        except CatError as exc:
+            self._cat_log.log_warn(
+                f"Connect: VFO-Umschaltung vor Init fehlgeschlagen: {exc}"
+            )
+
+    def _begin_connect_init(self) -> None:
+        self._connect_init_pending = 2
+
+    def _connect_init_step_done(self, _source: str) -> None:
+        if self._connect_init_pending <= 0:
+            return
+        self._connect_init_pending -= 1
+        if self._connect_init_pending > 0:
+            return
+        self._finish_connect_init()
+
+    def _on_connect_profile_worker_finished(self) -> None:
+        if self._connect_init_pending > 0:
+            self._connect_init_step_done("profile")
+
+    def _finish_connect_init(self) -> None:
+        """Nach Profil-Write und Memory-Load: ursprünglichen Kanal wieder setzen."""
+        if not self._cat.is_connected():
+            self._connect_init_pending = 0
+            return
+        restore_ch = self._connect_restore_memory_channel
+        self._connect_restore_memory_channel = None
+        self._connect_init_pending = 0
+        ft = FT991CAT(self._cat)
+        try:
+            if restore_ch is not None:
+                self._cat_log.log_info(
+                    f"=== Speicherkanal {restore_ch:03d} wiederherstellen "
+                    "(Zustand vor Software-Start) ==="
+                )
+                ft.select_memory_channel(restore_ch)
+                hz = ft.read_frequency()
+                if hz > 0:
+                    self._apply_vfo_a_display_hz(hz)
+                try:
+                    mode = ft.read_rx_mode()
+                    self._mode_label.setText(f"Mode: {mode.value}")
+                except CatError:
+                    pass
+            self._sync_memory_combo_from_radio()
+        except CatConnectionLostError:
+            self._on_connection_lost()
+            return
+        except CatError as exc:
+            self._cat_log.log_warn(
+                f"Speicherkanal nach Connect-Init nicht wiederherstellbar: {exc}"
+            )
+            self._sync_memory_combo_from_radio()
+        sb = self.statusBar()
+        if sb is not None and restore_ch is not None:
+            sb.showMessage(
+                f"Funkgerät wieder auf Speicherkanal {restore_ch:03d}",
+                4000,
+            )
 
     # ------------------------------------------------------------------
     # Speicherkanal-Combo
@@ -1138,42 +1287,31 @@ class MainWindow(QMainWindow):
             )
 
     def _on_memory_load_finished(self, found: int) -> None:
-        # Combo aktivieren, sobald mindestens der „VFO"-Eintrag vorhanden
-        # ist (also immer).
         self.memory_combo.setEnabled(self._cat.is_connected())
-        if self._cat.is_connected():
-            self._sync_memory_combo_from_radio()
-        # Statuszeile wieder auf die echte Verbindungsinfo umschalten.
+        self.band_combo.setEnabled(self._cat.is_connected())
         self._refresh_header_status(
             connected=self._cat.is_connected(),
             info=self._last_identity_info,
         )
-        # MeterPoller wieder aufdrehen — er war waehrend des Loads
-        # pausiert, damit der Loader die volle Bandbreite hatte.
         if self._cat.is_connected():
             self.meter_widget.resume_polling()
-            sb = self.statusBar()
-            if sb is not None:
-                active = self.memory_combo.currentData()
-                if active == self._VFO_ITEM_DATA:
-                    extra = ""
-                elif isinstance(active, int):
-                    extra = f" — Gerät auf Kanal {active:03d}"
-                else:
-                    extra = ""
-                sb.showMessage(
-                    f"Speicherkanäle: {found} belegte Slots geladen{extra}",
-                    4000,
-                )
+        sb = self.statusBar()
+        if sb is not None and self._cat.is_connected():
+            sb.showMessage(
+                f"Speicherkanäle: {found} belegte Slots geladen",
+                4000,
+            )
+        self._connect_init_step_done("memory")
 
     def _on_memory_load_failed(self, message: object) -> None:
         self.memory_combo.setEnabled(self._cat.is_connected())
+        self.band_combo.setEnabled(self._cat.is_connected())
         if self._cat.is_connected():
-            self._sync_memory_combo_from_radio()
             self._connection_footer_label.setText(
                 f"Verbunden — {message}"
             )
             self.meter_widget.resume_polling()
+        self._connect_init_step_done("memory")
 
     def _on_memory_combo_activated(self, index: int) -> None:
         """User hat einen Eintrag im Memory-Dropdown gewählt."""
@@ -1184,7 +1322,7 @@ class MainWindow(QMainWindow):
         try:
             if data == self._VFO_ITEM_DATA:
                 ft.switch_to_vfo_mode()
-                self._radio_control_bar.select_vfo_item()
+                self._select_band_combo_vfo()
             elif isinstance(data, int):
                 ft.select_memory_channel(int(data))
         except CatConnectionLostError:
@@ -1208,6 +1346,7 @@ class MainWindow(QMainWindow):
         # Loadings keinen halben Inhalt sieht.
         self._reset_memory_combo(placeholder="VFO (lade Kanäle…)")
         self.memory_combo.setEnabled(False)
+        self.band_combo.setEnabled(False)
         # MeterPoller stilllegen — der MT-Burst klemmt sonst minutenlang
         # zwischen Live-Polls. Resume passiert nach ``finished``/``failed``.
         self.meter_widget.pause_polling()
