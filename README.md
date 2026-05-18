@@ -111,14 +111,12 @@ geschrieben.
 
 Unter **Datei → Einstellungen → Rig-Bridge**:
 
-- **FLRig**-Kompatibilität (XML-RPC, Port konfigurierbar)
-- Mehrere **Hamlib rigctl**-Listener (Host/IP, Port, Name), per Drag &
-  Drop sortierbar, einzeln löschbar
+- **FLRig**-Kompatibilität (XML-RPC, Host und Port konfigurierbar)
 - Gemeinsame CAT-Serial-Verbindung zum FT-991 — die Bridge serialisiert
   Zugriffe mit der Haupt-App
 
 Damit können z. B. **WSJT-X**, **fldigi** oder **Ham Radio Deluxe** das
-Radio parallel nutzen, während der Audiomanager läuft.
+Radio parallel nutzen (über FLRig), während der Audiomanager läuft.
 
 ### Robustheit
 
@@ -142,7 +140,7 @@ Radio parallel nutzen, während der Audiomanager läuft.
 - **Einstellungs-Dialog** (wie RotorTcpBridge): linke Tab-Liste, rechter Inhalt
   - **CAT-Verbindung**: COM-Port, Baudrate, Timeout, Auto-Connect,
     TX-/RX-Polling, EQ-Profil-Anzeige
-  - **Rig-Bridge**: FLRig / Hamlib (siehe oben)
+  - **Rig-Bridge**: FLRig (siehe oben)
 - **Hilfe → Version**: About-Fenster mit Versionsnummer und Lizenz
 - Spaltenbreiten/Fenster-Geometrie bleiben über Neustarts erhalten.
 
@@ -273,7 +271,7 @@ ft991_audio_manager/
 ├── requirements.txt
 ├── cat/                     # Serielle CAT-Schicht (Threadsafe, Log)
 ├── audio/                   # Audio-Player, PTT-Worker, Funk-Umschaltung
-├── rig_bridge/              # FLRig / Hamlib rigctl
+├── rig_bridge/              # FLRig-TCP-Server
 ├── mapping/                 # Encoder/Decoder für alle CAT-Kommandos
 ├── model/                   # Settings, Profile, Persistierung
 ├── gui/                     # PySide6-Widgets (Main, Meter, Player, …)

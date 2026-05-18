@@ -1,4 +1,8 @@
-"""Funkgerät für Audio-Wiedergabe vorbereiten (DATA-Mode + EX048/070/072/077/109)."""
+"""Funkgerät für Audio-Wiedergabe vorbereiten (DATA-Mode + EX048/070/072/077/109).
+
+Optional kann nur die Menüumschaltung (048·070·072·077·109) erfolgen, ohne die
+Betriebsart sofort auf DATA zu stellen — siehe :meth:`RadioPlaybackSetup.apply_pc_audio_menus_only`.
+"""
 
 from __future__ import annotations
 
@@ -44,6 +48,21 @@ def voice_mode_for_data(mode: RxMode) -> RxMode:
     return DATA_TO_VOICE.get(mode, RxMode.USB)
 
 
+def data_mode_for_rx_mode(mode: RxMode) -> RxMode:
+    """Aktueller Funkmodus → passender DATA-Modus für Audio-Wiedergabe.
+
+    FM → DATA-FM, USB (und übliche USB-Spracharten) → DATA-USB,
+    LSB (und übliche LSB-Spracharten) → DATA-LSB. Bereits DATA-* bleibt unverändert.
+    """
+    if mode in DATA_TO_VOICE:
+        return mode
+    if mode in (RxMode.LSB, RxMode.CW_L, RxMode.RTTY_LSB):
+        return RxMode.DATA_LSB
+    if mode in (RxMode.FM, RxMode.FM_N, RxMode.C4FM):
+        return RxMode.DATA_FM
+    return RxMode.DATA_USB
+
+
 @dataclass
 class RadioAudioSnapshot:
     """Zustand vor dem Audio-Player / -Recorder."""
@@ -57,7 +76,12 @@ class RadioAudioSnapshot:
 
 
 class RadioPlaybackSetup:
-    """Schaltet DATA-Mode + EX048/070/072/077/109 (USB bzw. REAR); Restore der Altwerte."""
+    """Schaltet DATA-Mode + EX048/070/072/077/109 (USB bzw. REAR); Restore der Altwerte.
+
+    Optionales Teilen: :meth:`apply_pc_audio_menus_only` legt nur den Schnappschuss
+    der Menüs an und schreibt 048/070/072/077/109 — ohne Betriebsart (MD) zu
+    wechseln. :meth:`apply` bzw. :meth:`engage_data_mode` schalten später auf DATA.
+    """
 
     def __init__(
         self,
@@ -95,6 +119,10 @@ class RadioPlaybackSetup:
     def needs_plain_verify(self) -> bool:
         return self._needs_plain_verify
 
+    def align_data_mode_to_rx_mode(self, mode: RxMode) -> None:
+        """DATA-Zielmodus aus aktuellem Sprach-/DATA-Modus ableiten (ohne CAT)."""
+        self._data_mode = data_mode_for_rx_mode(mode)
+
     def set_data_mode(self, mode: RxMode) -> tuple[bool, str]:
         """Wechselt den gewünschten Data-Mode.
 
@@ -118,6 +146,67 @@ class RadioPlaybackSetup:
             return True, f"Funkgerät: {self._data_mode.value}"
         except CatError as exc:
             return False, str(exc)
+
+    def _write_pc_audio_menus(self) -> tuple[bool, str]:
+        """EX048/070/072/077/109 für PC-Audio (USB bzw. REAR; FM-PKT USB)."""
+        ft = FT991CAT(self._cat)
+        try:
+            rear = encode_mic_source(MicSource.REAR)
+            usb = PORT_SELECT_USB_RAW
+            fm_usb = FM_PKT_PORT_USB_RAW
+            ft.write_menu(AM_PORT_SELECT_MENU, usb, tx_lock=True)
+            ft.write_menu(DATA_IN_SELECT_MENU, rear, tx_lock=True)
+            ft.write_menu(DATA_PORT_MENU, rear, tx_lock=True)
+            ft.write_menu(FM_PKT_PORT_SELECT_MENU, fm_usb, tx_lock=True)
+            ft.write_menu(SSB_PORT_SELECT_MENU, usb, tx_lock=True)
+            return (
+                True,
+                "Menü 048/070/072/077/109 → PC-Audio "
+                "(048/109 USB, 077 USB, 070 REAR, 072 USB)",
+            )
+        except CatError as exc:
+            return False, str(exc)
+
+    def apply_pc_audio_menus_only(self) -> tuple[bool, str]:
+        """Schnappschuss laden, nur EX-Menüs setzen — RX-Mode (MD) unverändert.
+
+        Beim Schließen der Session :meth:`restore` stellt Menüs und Mode wieder her.
+        """
+        if not self._cat.is_connected():
+            return (
+                False,
+                "CAT nicht verbunden — Menüs 048/070/072/077/109 werden nicht geändert.",
+            )
+        if self._snapshot is not None:
+            if self._in_data_mode:
+                return True, ""
+            return self._write_pc_audio_menus()
+        ft = FT991CAT(self._cat)
+        try:
+            current_mode = ft.read_rx_mode()
+            am_port_raw = ft.read_menu(AM_PORT_SELECT_MENU)
+            data_in_raw = ft.read_menu(DATA_IN_SELECT_MENU)
+            data_port_raw = ft.read_menu(DATA_PORT_MENU)
+            fm_pkt_raw = ft.read_menu(FM_PKT_PORT_SELECT_MENU)
+            ssb_port_raw = ft.read_menu(SSB_PORT_SELECT_MENU)
+            self._snapshot = RadioAudioSnapshot(
+                rx_mode=current_mode,
+                am_port_raw=am_port_raw,
+                data_in_select_raw=data_in_raw,
+                data_port_raw=data_port_raw,
+                fm_pkt_port_raw=fm_pkt_raw,
+                ssb_port_raw=ssb_port_raw,
+            )
+        except CatError as exc:
+            self._snapshot = None
+            return False, str(exc)
+        ok_m, msg_m = self._write_pc_audio_menus()
+        if not ok_m:
+            self._snapshot = None
+            return False, msg_m
+        self._in_data_mode = False
+        self._needs_plain_verify = False
+        return True, msg_m
 
     def apply(self) -> tuple[bool, str]:
         """Schnappschuss + DATA-Mode; EX048/109→USB, EX077→USB, EX070/072→REAR (048·070·072·077·109)."""
@@ -153,14 +242,10 @@ class RadioPlaybackSetup:
             if not ft.set_rx_mode(self._data_mode):
                 self._snapshot = None
                 return False, f"Betriebsart {self._data_mode.value} konnte nicht gesetzt werden."
-            rear = encode_mic_source(MicSource.REAR)
-            usb = PORT_SELECT_USB_RAW
-            fm_usb = FM_PKT_PORT_USB_RAW
-            ft.write_menu(AM_PORT_SELECT_MENU, usb, tx_lock=True)
-            ft.write_menu(DATA_IN_SELECT_MENU, rear, tx_lock=True)
-            ft.write_menu(DATA_PORT_MENU, rear, tx_lock=True)
-            ft.write_menu(FM_PKT_PORT_SELECT_MENU, fm_usb, tx_lock=True)
-            ft.write_menu(SSB_PORT_SELECT_MENU, usb, tx_lock=True)
+            ok_m, msg_m = self._write_pc_audio_menus()
+            if not ok_m:
+                self._snapshot = None
+                return False, msg_m
             self._in_data_mode = True
             return True, (
                 f"Funkgerät: {self._data_mode.value}, "
@@ -241,18 +326,15 @@ class RadioPlaybackSetup:
             return True, ""
         if not self._cat.is_connected():
             return False, "CAT nicht verbunden — DATA-Mode nicht setzbar."
+        # ``_data_mode`` kommt vom Hauptfenster (sync_data_mode_from_main) —
+        # nicht aus ``snapshot.rx_mode`` (das ist nur der Wiederherstellungs-Mode).
         ft = FT991CAT(self._cat)
         try:
             if not ft.set_rx_mode(self._data_mode):
                 return False, f"DATA-Mode {self._data_mode.value} konnte nicht gesetzt werden."
-            rear = encode_mic_source(MicSource.REAR)
-            usb = PORT_SELECT_USB_RAW
-            fm_usb = FM_PKT_PORT_USB_RAW
-            ft.write_menu(AM_PORT_SELECT_MENU, usb, tx_lock=True)
-            ft.write_menu(DATA_IN_SELECT_MENU, rear, tx_lock=True)
-            ft.write_menu(DATA_PORT_MENU, rear, tx_lock=True)
-            ft.write_menu(FM_PKT_PORT_SELECT_MENU, fm_usb, tx_lock=True)
-            ft.write_menu(SSB_PORT_SELECT_MENU, usb, tx_lock=True)
+            ok_m, msg_m = self._write_pc_audio_menus()
+            if not ok_m:
+                return False, msg_m
             self._in_data_mode = True
             self._needs_plain_verify = False
             return True, f"Funkgerät: {self._data_mode.value} (048/070/072/077/109 für PC-Audio)"
@@ -296,6 +378,7 @@ class RadioSetupWorker(QObject):
 
     apply_finished = Signal(bool, str)
     restore_finished = Signal(bool, str)
+    pc_menus_finished = Signal(bool, str)
     data_mode_finished = Signal(bool, str)
     engage_plain_finished = Signal(bool, str)
     engage_data_finished = Signal(bool, str)
@@ -303,6 +386,11 @@ class RadioSetupWorker(QObject):
     def __init__(self, setup: RadioPlaybackSetup) -> None:
         super().__init__()
         self._setup = setup
+
+    @Slot()
+    def run_apply_pc_menus(self) -> None:
+        ok, msg = self._setup.apply_pc_audio_menus_only()
+        self.pc_menus_finished.emit(ok, msg)
 
     @Slot()
     def run_apply(self) -> None:

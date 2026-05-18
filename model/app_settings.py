@@ -27,6 +27,7 @@ from ._app_paths import app_data_dir
 from .audio_player_settings import AudioPlayerSettings
 from .audio_recorder_settings import AudioRecorderSettings
 from .rig_bridge_settings import RigBridgeSettings
+from .smeter_calibration_settings import SmeterCalibrationSettings
 
 
 DEFAULT_BAUDRATE = 38400
@@ -46,7 +47,7 @@ class CatSettings:
     #: Beim Programmstart automatisch verbinden — und nach einem
     #: Verbindungsverlust (Kabel gezogen, Gerät aus) im Hintergrund
     #: solange neu probieren, bis der Port wieder erreichbar ist.
-    auto_connect: bool = False
+    auto_connect: bool = True
 
 
 @dataclass
@@ -94,6 +95,9 @@ class AppSettings:
     rig_bridge: RigBridgeSettings = field(default_factory=RigBridgeSettings)
     audio_player: AudioPlayerSettings = field(default_factory=AudioPlayerSettings)
     audio_recorder: AudioRecorderSettings = field(default_factory=AudioRecorderSettings)
+    smeter_calibration: SmeterCalibrationSettings = field(
+        default_factory=SmeterCalibrationSettings
+    )
 
     # ------------------------------------------------------------------
     # Laden / Speichern
@@ -125,12 +129,13 @@ class AppSettings:
         rig_bridge_raw = data.get("rig_bridge", {}) or {}
         audio_player_raw = data.get("audio_player", {}) or {}
         audio_recorder_raw = data.get("audio_recorder", {}) or {}
+        smeter_cal_raw = data.get("smeter_calibration", {}) or {}
 
         cat = CatSettings(
             port=cat_raw.get("port"),
             baudrate=int(cat_raw.get("baudrate", DEFAULT_BAUDRATE) or DEFAULT_BAUDRATE),
             timeout_ms=int(cat_raw.get("timeout_ms", DEFAULT_TIMEOUT_MS) or DEFAULT_TIMEOUT_MS),
-            auto_connect=bool(cat_raw.get("auto_connect", False)),
+            auto_connect=bool(cat_raw.get("auto_connect", True)),
         )
         polling = PollingSettings(
             tx_interval_ms=_clamp_poll(
@@ -157,6 +162,7 @@ class AppSettings:
         rig_bridge = RigBridgeSettings.from_dict(rig_bridge_raw)
         audio_player = AudioPlayerSettings.from_dict(audio_player_raw)
         audio_recorder = AudioRecorderSettings.from_dict(audio_recorder_raw)
+        smeter_calibration = SmeterCalibrationSettings.from_dict(smeter_cal_raw)
         return cls(
             cat=cat,
             polling=polling,
@@ -164,6 +170,7 @@ class AppSettings:
             rig_bridge=rig_bridge,
             audio_player=audio_player,
             audio_recorder=audio_recorder,
+            smeter_calibration=smeter_calibration,
         )
 
     def save(self, path: Optional[Path] = None) -> None:
@@ -176,6 +183,7 @@ class AppSettings:
             "rig_bridge": self.rig_bridge.to_dict(),
             "audio_player": self.audio_player.to_dict(),
             "audio_recorder": self.audio_recorder.to_dict(),
+            "smeter_calibration": self.smeter_calibration.to_dict(),
         }
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)

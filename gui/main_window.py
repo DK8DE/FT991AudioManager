@@ -76,6 +76,10 @@ from mapping.amateur_bands import (
     combo_entries_high_to_low,
     VFO_BAND_CHOICE,
 )
+from mapping.meter_mapping import (
+    apply_smeter_calibration_from_settings,
+    smeter_set_calibration_frequency_hz,
+)
 
 from .vfo_triplet_widget import VfoTripletWidget
 
@@ -100,6 +104,7 @@ class MainWindow(QMainWindow):
         # auf Windows/macOS, aber manche Linux-Window-Manager (X11) lesen
         # das Icon nur vom konkreten Toplevel.
         self.setWindowIcon(app_icon())
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, True)
 
         self._settings = settings
         self._cat_log = CatLog()
@@ -116,12 +121,15 @@ class MainWindow(QMainWindow):
         )
         self._preset_store = PresetStore.load()
 
+        apply_smeter_calibration_from_settings(settings.smeter_calibration)
+
         self._log_window: Optional[LogWindow] = None
         self._equalizer_window: Optional[EqualizerWindow] = None
         self._audio_player_window: Optional[AudioPlayerWindow] = None
         self._audio_recorder_window: Optional[AudioRecorderWindow] = None
         self._memory_editor: Optional[QWidget] = None
         self._calibration_dialog: Optional[QWidget] = None
+        self._application_shutting_down = False
         self._last_identity_info: str = ""
         self._vfo_a_pending_hz: Optional[int] = None
         self._vfo_b_pending_hz: Optional[int] = None
@@ -200,7 +208,7 @@ class MainWindow(QMainWindow):
         )
 
         self.profile_widget.mode_combo.currentTextChanged.connect(
-            self._sync_meter_dsp_mode_visibility
+            self._on_main_operating_mode_changed
         )
 
         # Reconnect-Watcher: läuft bei Verbindungsverlust und bei
@@ -208,6 +216,11 @@ class MainWindow(QMainWindow):
         self._reconnect_timer = QTimer(self)
         self._reconnect_timer.setInterval(2000)
         self._reconnect_timer.timeout.connect(self._try_reconnect)
+
+        self._rig_bridge_ui_timer = QTimer(self)
+        self._rig_bridge_ui_timer.setInterval(150)
+        self._rig_bridge_ui_timer.timeout.connect(self._refresh_rig_bridge_toolbar_leds)
+        self._rig_bridge_ui_timer.start()
 
         # Speicherkanal-Loader: liest beim Connect im Hintergrund alle
         # belegten Memory-Slots aus und befüllt die Combo neben VFO-B.
@@ -261,6 +274,21 @@ class MainWindow(QMainWindow):
             return super().eventFilter(_watched, event)
         fw.clearFocus()
         return super().eventFilter(_watched, event)
+
+    def _main_operating_mode(self) -> RxMode:
+        """Aktuelle Betriebsart aus der Hauptfenster-Mode-Combo."""
+        return rx_mode_from_selection(self.profile_widget.mode_combo.currentText())
+
+    def _on_main_operating_mode_changed(self, _text: str) -> None:
+        """DSP-Anzeige + Audio-Player/Recorder-DATA-Modus anpassen."""
+        self._sync_meter_dsp_mode_visibility()
+        mode = self._main_operating_mode()
+        player = self._audio_player_window
+        if player is not None and player.isVisible():
+            player.sync_data_mode_from_main(mode)
+        recorder = self._audio_recorder_window
+        if recorder is not None and recorder.isVisible():
+            recorder.sync_data_mode_from_main(mode)
 
     def _sync_meter_dsp_mode_visibility(self) -> None:
         """DSP-Slider ausblenden, wenn die Betriebsart sie am FT-991 nicht nutzt."""
@@ -930,6 +958,15 @@ class MainWindow(QMainWindow):
         else:
             self._cat_log.log_info(msg)
 
+    def _refresh_rig_bridge_toolbar_leds(self) -> None:
+        """FLRig-LED und Client-Zähler (inkl. TCP-Aktivitäts-Blink)."""
+        fl_io = self._rig_bridge.take_bridge_activity_flags()
+        self._radio_control_bar.refresh_rig_bridge_indicators(
+            self._settings.rig_bridge.to_dict(),
+            self._rig_bridge.protocol_status(),
+            fl_io,
+        )
+
     def _on_connection_changed(self, connected: bool) -> None:
         self.profile_widget.set_cat_available(connected)
         self.meter_widget.on_connection_changed(connected)
@@ -1380,6 +1417,7 @@ class MainWindow(QMainWindow):
                 self._settings,
                 self._cat,
                 audio_radio_session=self._audio_radio_session,
+                operating_mode_provider=self._main_operating_mode,
                 parent=self,
             )
             self._audio_player_window.closed.connect(
@@ -1408,6 +1446,7 @@ class MainWindow(QMainWindow):
                 self._settings,
                 self._cat,
                 audio_radio_session=self._audio_radio_session,
+                operating_mode_provider=self._main_operating_mode,
                 parent=self,
             )
             self._audio_recorder_window.closed.connect(
@@ -1591,16 +1630,48 @@ class MainWindow(QMainWindow):
         self.profile_widget.set_hide_extended_in_ssb(
             self._settings.ui.hide_extended_in_ssb
         )
+        apply_smeter_calibration_from_settings(self._settings.smeter_calibration)
+        smeter_set_calibration_frequency_hz(
+            int(getattr(self.meter_widget, "_last_vfo_a_hz", 0) or 0)
+        )
+        self.meter_widget.refresh_smeter_scale_ticks()
         self._audio_radio_session.reload_data_mode_from_settings()
         try:
             self._settings.save()
         except OSError:
             pass
 
+    def _shutdown_auxiliary_windows(self) -> None:
+        """Alle Hilfsfenster endgültig schließen (nicht nur verstecken)."""
+        if self._log_window is not None:
+            self._settings.ui.log_window_geometry = (
+                self._log_window.geometry_to_base64()
+            )
+            self._log_window.close()
+            self._log_window = None
+        if self._equalizer_window is not None:
+            self._equalizer_window.force_close()
+            self._equalizer_window = None
+        if self._audio_player_window is not None:
+            self._audio_player_window.force_close()
+            self._audio_player_window = None
+        if self._audio_recorder_window is not None:
+            self._audio_recorder_window.force_close()
+            self._audio_recorder_window = None
+        if self._memory_editor is not None:
+            self._memory_editor.close()
+            self._memory_editor = None
+        if self._calibration_dialog is not None:
+            self._calibration_dialog.close()
+            self._calibration_dialog = None
+
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._application_shutting_down = True
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
+        self._reconnect_timer.stop()
+        self._rig_bridge_ui_timer.stop()
         try:
             self._rig_bridge.on_app_disconnected()
         except Exception:
@@ -1611,24 +1682,12 @@ class MainWindow(QMainWindow):
             try:
                 self._cat.disconnect()
             finally:
-                # Log-Fenster sauber schließen + Geometrie sichern
-                if self._log_window is not None:
-                    self._settings.ui.log_window_geometry = (
-                        self._log_window.geometry_to_base64()
-                    )
-                    self._log_window.close()
-                if self._equalizer_window is not None:
-                    self._equalizer_window.force_close()
-                    self._equalizer_window = None
-                if self._audio_player_window is not None:
-                    self._audio_player_window.force_close()
-                    self._audio_player_window = None
-                if self._audio_recorder_window is not None:
-                    self._audio_recorder_window.force_close()
-                    self._audio_recorder_window = None
+                self._shutdown_auxiliary_windows()
                 self._audio_radio_session.shutdown()
                 self._persist_settings()
                 super().closeEvent(event)
+        if app is not None:
+            app.quit()
 
     # ------------------------------------------------------------------
     # showEvent — Header-Status initial setzen

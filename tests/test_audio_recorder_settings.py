@@ -27,6 +27,7 @@ class AudioRecorderSettingsTest(unittest.TestCase):
         self.assertEqual(s.selected_filename, "")
         self.assertEqual(s.input_volume_percent, DEFAULT_VOLUME_PERCENT)
         self.assertEqual(s.output_volume_percent, DEFAULT_VOLUME_PERCENT)
+        self.assertFalse(s.tx_monitor_to_pc_enabled)
 
     def test_from_dict_volume_defaults_when_missing(self) -> None:
         s = AudioRecorderSettings.from_dict({})
@@ -95,7 +96,8 @@ class AudioRecorderSettingsTest(unittest.TestCase):
             input_volume_percent=33,
             output_volume_percent=77,
             pc_output_volume_percent=42,
-            normalize_enabled=False,
+            normalize_enabled=True,
+            tx_monitor_to_pc_enabled=True,
         )
         restored = AudioRecorderSettings.from_dict(original.to_dict())
         self.assertEqual(restored, original)
@@ -113,9 +115,9 @@ class AudioRecorderSettingsTest(unittest.TestCase):
         s = AudioRecorderSettings.from_dict({})
         self.assertTrue(s.normalize_enabled)
 
-    def test_normalize_enabled_can_be_disabled(self) -> None:
+    def test_normalize_enabled_always_on_legacy_false_migrates(self) -> None:
         s = AudioRecorderSettings.from_dict({"normalize_enabled": False})
-        self.assertFalse(s.normalize_enabled)
+        self.assertTrue(s.normalize_enabled)
 
 
 class BuildRecordingFilenameTest(unittest.TestCase):

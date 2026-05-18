@@ -12,7 +12,7 @@ from cat.ft991_cat import FT991CAT
 from cat.serial_cat import SerialCAT
 from mapping.meter_mapping import (
     METER_INFO,
-    SMETER_TICKS,
+    SMETER_SCALE_MARKS,
     format_smeter_label,
     MeterKind,
     classify_value,
@@ -22,6 +22,7 @@ from mapping.meter_mapping import (
     parse_rm_response,
     parse_sm_response,
     parse_tx_response,
+    smeter_scale_ticks,
 )
 
 
@@ -35,8 +36,10 @@ class MeterMappingTest(unittest.TestCase):
         from mapping.meter_mapping import (
             PO_WATTS_CALIB_HF_DEFAULT,
             apply_po_calibration_watt_raw,
+            reset_smeter_calibration,
         )
 
+        reset_smeter_calibration()
         d = [(w, r) for r, w in PO_WATTS_CALIB_HF_DEFAULT if w > 0]
         apply_po_calibration_watt_raw({"hf_10m": d})
 
@@ -85,11 +88,20 @@ class MeterMappingTest(unittest.TestCase):
             parse_sm_response("SM0;")       # leer
 
     def test_smeter_ticks_monotonic(self) -> None:
-        # S-Punkte-Tabelle muss aufsteigend sortiert sein.
-        values = [v for v, _ in SMETER_TICKS]
+        ticks = smeter_scale_ticks()
+        values = [v for v, _ in ticks]
         self.assertEqual(values, sorted(values))
-        self.assertEqual(values[0], 0)
+        self.assertLessEqual(values[0], values[-1])
         self.assertLessEqual(values[-1], 255)
+        labels = [lbl for _, lbl in ticks]
+        self.assertEqual(labels, [lbl for _, lbl in SMETER_SCALE_MARKS])
+
+    def test_smeter_db_to_raw_roundtrip_builtin(self) -> None:
+        from mapping.meter_mapping import smeter_db_to_raw, smeter_raw_to_db
+
+        for db in (-48.0, -36.0, 0.0, 20.0, 60.0):
+            r = smeter_db_to_raw(db)
+            self.assertAlmostEqual(smeter_raw_to_db(r), db, delta=1.5)
 
     def test_smeter_panel_scale(self) -> None:
         from mapping.meter_mapping import (
@@ -110,7 +122,75 @@ class MeterMappingTest(unittest.TestCase):
         self.assertIn("S1", format_smeter_label(12))
         self.assertEqual(format_smeter_label(193), "S9+56 · 193")
         self.assertGreater(smeter_bar_fraction(144), smeter_bar_fraction(SMETER_RAW_S9))
-        self.assertEqual(SMETER_TICKS[-1], (SMETER_RAW_S9P60, "+60"))
+        ticks = smeter_scale_ticks()
+        self.assertEqual(ticks[-1][1], "S9+60")
+        self.assertEqual(ticks[0][1], "S1")
+
+    def test_smeter_user_calibration_overrides_builtin(self) -> None:
+        from mapping.meter_mapping import (
+            apply_smeter_calibration_from_settings,
+            reset_smeter_calibration,
+            smeter_raw_to_db,
+            smeter_set_calibration_frequency_hz,
+        )
+        from model.smeter_calibration_settings import (
+            SmeterCalibrationPoint,
+            SmeterCalibrationSettings,
+        )
+
+        try:
+            apply_smeter_calibration_from_settings(
+                SmeterCalibrationSettings(
+                    use_custom=True,
+                    points_hf=[
+                        SmeterCalibrationPoint(10, -48.0),
+                        SmeterCalibrationPoint(100, 0.0),
+                        SmeterCalibrationPoint(200, 40.0),
+                    ],
+                )
+            )
+            smeter_set_calibration_frequency_hz(14_000_000)
+            self.assertAlmostEqual(smeter_raw_to_db(100), 0.0, places=5)
+            mid = smeter_raw_to_db(150)
+            self.assertGreater(mid, 0.0)
+            self.assertLess(mid, 40.0)
+        finally:
+            reset_smeter_calibration()
+
+    def test_smeter_user_calibration_selects_hf_vs_vhf_by_frequency(self) -> None:
+        from mapping.meter_mapping import (
+            apply_smeter_calibration_from_settings,
+            reset_smeter_calibration,
+            smeter_raw_to_db,
+            smeter_set_calibration_frequency_hz,
+        )
+        from model.smeter_calibration_settings import (
+            SmeterCalibrationPoint,
+            SmeterCalibrationSettings,
+        )
+
+        try:
+            apply_smeter_calibration_from_settings(
+                SmeterCalibrationSettings(
+                    use_custom=True,
+                    points_hf=[
+                        SmeterCalibrationPoint(10, -48.0),
+                        SmeterCalibrationPoint(100, 0.0),
+                        SmeterCalibrationPoint(200, 40.0),
+                    ],
+                    points_vhf=[
+                        SmeterCalibrationPoint(10, 0.0),
+                        SmeterCalibrationPoint(100, 100.0),
+                        SmeterCalibrationPoint(200, 200.0),
+                    ],
+                )
+            )
+            smeter_set_calibration_frequency_hz(14_000_000)
+            self.assertAlmostEqual(smeter_raw_to_db(100), 0.0, places=5)
+            smeter_set_calibration_frequency_hz(145_000_000)
+            self.assertAlmostEqual(smeter_raw_to_db(100), 100.0, places=5)
+        finally:
+            reset_smeter_calibration()
 
     def test_parse_tx(self) -> None:
         self.assertFalse(parse_tx_response("TX0;"))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -14,6 +15,7 @@ from PySide6.QtCore import (
     QTimer,
     QUrl,
     Signal,
+    Q_ARG,
 )
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
@@ -49,10 +51,13 @@ from audio.qt_multimedia_lazy import qt_multimedia_types, recorder_import_ok
 from audio.radio_playback_setup import (
     RadioPlaybackSetup,
     RadioSetupWorker,
+    data_mode_for_rx_mode,
     data_mode_from_string,
 )
 from cat import SerialCAT
+from cat.ft991_cat import FT991CAT
 from mapping import TX_STATE_MIC_PTT, TX_STATE_RX
+from mapping.rx_mapping import RxMode
 from model import AppSettings
 from model.audio_recorder_settings import (
     ALLOWED_BITRATES_KBPS,
@@ -62,6 +67,7 @@ from model.audio_recorder_settings import (
 )
 
 from .app_icon import app_icon
+from .window_lifecycle import application_exit_close_requested
 
 if TYPE_CHECKING:
     from .audio_radio_session import AudioRadioSessionHost
@@ -110,12 +116,14 @@ class AudioRecorderWindow(QMainWindow):
         serial_cat: SerialCAT,
         *,
         audio_radio_session: Optional[AudioRadioSessionHost] = None,
+        operating_mode_provider: Optional[Callable[[], RxMode]] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._settings = settings
         self._cat = serial_cat
         self._audio_radio_session = audio_radio_session
+        self._operating_mode_provider = operating_mode_provider
 
         folder_str = settings.audio_recorder.folder_path
         if folder_str:
@@ -126,6 +134,7 @@ class AudioRecorderWindow(QMainWindow):
 
         self.setWindowTitle("FT-991/A Audio-Recorder")
         self.setWindowIcon(app_icon())
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.resize(560, 600)
 
         # Aufnahme-Komponente
@@ -159,7 +168,10 @@ class AudioRecorderWindow(QMainWindow):
         self._pc_is_playing = False
 
         # CAT-Setup (EX048/109=USB, EX077=USB, EX070=REAR, EX072=USB), Mode wird mit dem Player geteilt.
-        initial_data_mode = data_mode_from_string(settings.audio_player.data_mode)
+        if operating_mode_provider is not None:
+            initial_data_mode = data_mode_for_rx_mode(operating_mode_provider())
+        else:
+            initial_data_mode = data_mode_from_string(settings.audio_player.data_mode)
         if audio_radio_session is not None:
             self._radio_setup = audio_radio_session.setup
             self._setup_thread = audio_radio_session.thread
@@ -179,6 +191,7 @@ class AudioRecorderWindow(QMainWindow):
         self._setup_worker.engage_data_finished.connect(
             self._on_radio_engage_data_finished
         )
+        self._setup_worker.pc_menus_finished.connect(self._on_pc_menus_finished)
         if self._owns_radio_thread:
             self._setup_thread.start()
 
@@ -201,6 +214,8 @@ class AudioRecorderWindow(QMainWindow):
         self._files: list[str] = []
         self._duration_ms = 0
         self._last_player_state: Optional[PlayerState] = None
+        self._pending_radio_restore_on_close = False
+        self._force_close_after_radio_restore = False
 
         self._build_ui()
         self._load_settings_to_ui()
@@ -431,6 +446,14 @@ class AudioRecorderWindow(QMainWindow):
         pc_vol_row.addWidget(self.lbl_pc_volume)
         dev_l.addLayout(pc_vol_row)
 
+        self.check_tx_monitor_pc = QCheckBox("Ausgabe Mithören")
+        self.check_tx_monitor_pc.setToolTip(
+            "Während des CAT-Replays dieselbe Tonspur wie auf dem Wiedergabe-Gerät "
+            "zusätzlich auf dem PC-Ausgabegerät ausgeben."
+        )
+        self.check_tx_monitor_pc.toggled.connect(self._on_tx_monitor_pc_toggled)
+        dev_l.addWidget(self.check_tx_monitor_pc)
+
         fmt_row = QHBoxLayout()
         fmt_row.addWidget(_form_label("MP3-Bitrate:"))
         self.combo_bitrate = QComboBox()
@@ -440,21 +463,6 @@ class AudioRecorderWindow(QMainWindow):
         fmt_row.addWidget(self.combo_bitrate)
         fmt_row.addStretch(1)
         dev_l.addLayout(fmt_row)
-
-        norm_row = QHBoxLayout()
-        norm_row.addWidget(_form_label("Lautstärke:"))
-        self.chk_normalize = QCheckBox("Soft-Kompressor")
-        self.chk_normalize.setToolTip(
-            "Hebt nach jeder Aufnahme den RMS-Pegel auf -14 dBFS "
-            "(Streaming-Loudness-Norm) an und limitiert Spitzen sanft "
-            "auf -1 dBFS. Macht leise FT-991-USB-CODEC-Aufnahmen so "
-            "laut wie eine kommerzielle Musik-MP3, ohne harte "
-            "Clipping-Verzerrungen.\n\n"
-            "Ausgeschaltet = roher Pegel direkt vom USB-Codec."
-        )
-        self.chk_normalize.toggled.connect(self._on_normalize_toggled)
-        norm_row.addWidget(self.chk_normalize, 1)
-        dev_l.addLayout(norm_row)
 
         root.addWidget(dev_box)
 
@@ -560,13 +568,17 @@ class AudioRecorderWindow(QMainWindow):
         finally:
             self.slider_pc_volume.blockSignals(False)
         self._pc_pending_volume_percent = int(ar.pc_output_volume_percent)
-        # Soft-Compressor/Normalize-Flag in UI + Recorder.
-        self.chk_normalize.blockSignals(True)
+        self.check_tx_monitor_pc.blockSignals(True)
         try:
-            self.chk_normalize.setChecked(bool(ar.normalize_enabled))
+            self.check_tx_monitor_pc.setChecked(
+                bool(ar.tx_monitor_to_pc_enabled)
+            )
         finally:
-            self.chk_normalize.blockSignals(False)
-        self._recorder.set_normalize_enabled(bool(ar.normalize_enabled))
+            self.check_tx_monitor_pc.blockSignals(False)
+        self._apply_tx_monitor_pc_to_player()
+        # Soft-Kompressor nach Aufnahme: fest eingeschaltet (keine UI-Option).
+        self._settings.audio_recorder.normalize_enabled = True
+        self._recorder.set_normalize_enabled(True)
 
     def _restore_geometry(self) -> None:
         geo = self._settings.audio_recorder.window_geometry
@@ -664,6 +676,12 @@ class AudioRecorderWindow(QMainWindow):
     # Aufnahme
     # ------------------------------------------------------------------
 
+    def _on_pc_menus_finished(self, ok: bool, message: str) -> None:
+        if message:
+            self.lbl_status.setText(message)
+        if not ok and message and self._audio_radio_session is None:
+            QMessageBox.warning(self, "Audio-Recorder", message)
+
     def _on_record_clicked(self) -> None:
         if self._recorder.is_busy():
             return
@@ -732,6 +750,7 @@ class AudioRecorderWindow(QMainWindow):
                 "Aufnahme wird normalisiert und nach MP3 encodiert …"
             )
         self._update_buttons()
+        self._try_complete_radio_restore_after_close()
 
     def _on_record_duration(self, ms: int) -> None:
         self.lbl_rec_duration.setText(_format_ms(ms))
@@ -821,6 +840,7 @@ class AudioRecorderWindow(QMainWindow):
             )
             return
         self._mic_ptt_interrupted = False
+        self.sync_data_mode_from_main()
         # Vorlauf wird vom Audio-Player übernommen — falls dort live geändert,
         # ziehen wir den aktuellen Wert frisch nach.
         self._player.set_timing(self._settings.audio_player.pre_roll_ms, 0)
@@ -837,6 +857,7 @@ class AudioRecorderWindow(QMainWindow):
     def _on_player_state(self, state: PlayerState) -> None:
         self._last_player_state = state
         self._update_buttons()
+        self._try_complete_radio_restore_after_close()
 
     def _on_player_position(self, pos_ms: int, dur_ms: int) -> None:
         self._duration_ms = max(0, dur_ms)
@@ -907,12 +928,30 @@ class AudioRecorderWindow(QMainWindow):
         self._pc_pending_device_id = dev_id
         if self._pc_player_ready:
             self._apply_pc_output_device(dev_id)
+        self._player.set_tx_monitor_pc_device_id(dev_id)
 
     def _on_pc_volume_changed(self, value: int) -> None:
         value = max(0, min(100, int(value)))
         self.lbl_pc_volume.setText(f"{value} %")
         self._settings.audio_recorder.pc_output_volume_percent = value
         self._apply_pc_volume(value)
+        self._player.set_tx_monitor_pc_volume_percent(value)
+
+    def _on_tx_monitor_pc_toggled(self, checked: bool) -> None:
+        self._settings.audio_recorder.tx_monitor_to_pc_enabled = bool(checked)
+        self._player.set_tx_monitor_to_pc_enabled(bool(checked))
+
+    def _apply_tx_monitor_pc_to_player(self) -> None:
+        pc_id = self.combo_pc_output.currentData()
+        if not isinstance(pc_id, str):
+            pc_id = ""
+        self._player.set_tx_monitor_pc_device_id(pc_id)
+        self._player.set_tx_monitor_pc_volume_percent(
+            int(self.slider_pc_volume.value())
+        )
+        self._player.set_tx_monitor_to_pc_enabled(
+            self.check_tx_monitor_pc.isChecked()
+        )
 
     # ------------------------------------------------------------------
     # Lokale PC-Vorhöre (zweiter Player, kein CAT, keine PTT)
@@ -1148,21 +1187,46 @@ class AudioRecorderWindow(QMainWindow):
         if isinstance(val, int):
             self._settings.audio_recorder.mp3_bitrate_kbps = val
 
-    def _on_normalize_toggled(self, checked: bool) -> None:
-        # Wirkung ab der nächsten Aufnahme. Während einer laufenden
-        # Aufnahme bleibt die zuvor gewählte Einstellung wirksam.
-        self._settings.audio_recorder.normalize_enabled = bool(checked)
-        self._recorder.set_normalize_enabled(bool(checked))
-
     # ------------------------------------------------------------------
     # CAT-Setup
     # ------------------------------------------------------------------
 
+    def sync_data_mode_from_main(self, mode: Optional[RxMode] = None) -> None:
+        """DATA-Modus aus Hauptfenster-Betriebsart (FM→DATA-FM, USB→DATA-USB, …)."""
+        if mode is None:
+            if self._operating_mode_provider is not None:
+                mode = self._operating_mode_provider()
+            elif self._cat.is_connected():
+                try:
+                    mode = FT991CAT(self._cat).read_rx_mode()
+                except Exception:
+                    return
+            else:
+                return
+        data_mode = data_mode_for_rx_mode(mode)
+        self._settings.audio_player.data_mode = data_mode.value  # type: ignore[assignment]
+        self._radio_setup.align_data_mode_to_rx_mode(mode)
+        if not self._radio_setup.is_applied or not self._radio_setup.in_data_mode:
+            return
+        if self._player.is_busy() or self._recorder.is_busy():
+            self.lbl_status.setText(
+                "Betriebsart-Wechsel während Aufnahme/Sendung nicht möglich."
+            )
+            return
+        if self._radio_setup.data_mode == data_mode:
+            return
+        self.lbl_status.setText(f"Funkgerät wird auf {data_mode.value} geschaltet …")
+        QMetaObject.invokeMethod(
+            self._setup_worker,
+            "run_set_data_mode",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, data_mode.value),
+        )
+
     def _apply_or_engage_data(self) -> None:
         """Setup anwenden oder vom Voice-Mode zurück in DATA-Mode wechseln."""
-        target = data_mode_from_string(self._settings.audio_player.data_mode)
-        if target != self._radio_setup.data_mode:
-            self._radio_setup.set_data_mode(target)
+        self.sync_data_mode_from_main()
+        target = self._radio_setup.data_mode
         if not self._radio_setup.is_applied:
             self.lbl_status.setText(
                 f"Funkgerät wird auf {target.value} / 048+077+109→USB, 070→REAR, 072→USB geschaltet …"
@@ -1217,6 +1281,58 @@ class AudioRecorderWindow(QMainWindow):
             Qt.ConnectionType.QueuedConnection,
         )
 
+    def _radio_transmit_activity_busy(self) -> bool:
+        return self._recorder.is_busy() or self._player.is_busy()
+
+    def _request_radio_restore_on_close(self) -> None:
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.request_restore_if_no_windows()
+        else:
+            self._request_radio_restore()
+
+    def _try_complete_radio_restore_after_close(self) -> None:
+        if not self._pending_radio_restore_on_close:
+            return
+        if self._radio_transmit_activity_busy():
+            return
+        if self._radio_setup.is_applied and self._radio_setup.in_data_mode:
+            return
+        self._pending_radio_restore_on_close = False
+        self._request_radio_restore_on_close()
+        if self._force_close_after_radio_restore:
+            self._force_close_after_radio_restore = False
+            self._finish_force_close()
+
+    def _begin_radio_restore_on_close(self) -> None:
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.on_window_hidden(self)
+        if self._radio_transmit_activity_busy():
+            self._pending_radio_restore_on_close = True
+            self.lbl_status.setText(
+                "Aktivität wird beendet — Funkgerät wird zurückgestellt …"
+            )
+            if self._recorder.is_busy():
+                self._recorder.stop()
+            if self._player.is_busy():
+                self._player.stop()
+            return
+        self._request_radio_restore_on_close()
+
+    def _detach_radio_for_force_close(self) -> None:
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.detach_for_force_close(self)
+        elif self._radio_setup.is_applied:
+            self._radio_setup.restore()
+
+    def _finish_force_close(self) -> None:
+        self._detach_radio_for_force_close()
+        if self._owns_radio_thread:
+            self._setup_thread.quit()
+            self._setup_thread.wait(2000)
+        self._recorder.shutdown()
+        self._player.shutdown()
+        self.close()
+
     def _on_radio_apply_finished(self, ok: bool, message: str) -> None:
         if message:
             self.lbl_status.setText(message)
@@ -1236,6 +1352,7 @@ class AudioRecorderWindow(QMainWindow):
             self.lbl_status.setText(message)
         if not ok and message:
             QMessageBox.warning(self, "Audio-Recorder", message)
+        self._try_complete_radio_restore_after_close()
 
     def _on_radio_engage_data_finished(self, ok: bool, message: str) -> None:
         if message:
@@ -1323,6 +1440,7 @@ class AudioRecorderWindow(QMainWindow):
             and not any_busy
         )
         self.btn_stop_pc.setEnabled(pc_busy)
+        self.check_tx_monitor_pc.setEnabled(multimedia_available())
         # Löschen: keine Aktivität, gültige Auswahl.
         self.btn_delete.setEnabled(has_selection and not any_busy)
 
@@ -1346,43 +1464,46 @@ class AudioRecorderWindow(QMainWindow):
 
     def force_close(self) -> None:
         self._force_close = True
-        if self._recorder.is_busy():
-            self._recorder.shutdown()
-        if self._player.is_busy():
-            self._player.stop()
         self._release_pc_source()
         if self._audio_radio_session is not None:
-            self._audio_radio_session.detach_for_force_close(self)
-        elif self._radio_setup.is_applied:
-            self._radio_setup.restore()
-        if self._owns_radio_thread:
-            self._setup_thread.quit()
-            self._setup_thread.wait(2000)
-        self._player.shutdown()
-        self.close()
+            self._audio_radio_session.on_window_hidden(self)
+        if self._radio_transmit_activity_busy():
+            self._pending_radio_restore_on_close = True
+            self._force_close_after_radio_restore = True
+            if self._recorder.is_busy():
+                self._recorder.stop()
+            if self._player.is_busy():
+                self._player.stop()
+            return
+        self._finish_force_close()
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
+        if self._cat.is_connected():
+            self.sync_data_mode_from_main()
         if self._audio_radio_session is not None:
             self._audio_radio_session.on_window_shown(self)
+            return
+        if self._cat.is_connected():
+            QMetaObject.invokeMethod(
+                self._setup_worker,
+                "run_apply_pc_menus",
+                Qt.ConnectionType.QueuedConnection,
+            )
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self.persist_settings()
+        if application_exit_close_requested(self):
+            if not getattr(self, "_force_close", False):
+                self.force_close()
+                event.accept()
+                return
         if getattr(self, "_force_close", False):
             super().closeEvent(event)
             self.closed.emit()
             return
-        if self._recorder.is_busy():
-            self._recorder.stop()
-        if self._player.is_busy():
-            self._player.stop()
         self._release_pc_source()
-        if self._audio_radio_session is not None:
-            self._audio_radio_session.on_window_closed_hidden(self)
-        elif self._radio_setup.is_applied:
-            ok, msg = self._radio_setup.restore()
-            if msg and not ok:
-                QMessageBox.warning(self, "Audio-Recorder", msg)
+        self._begin_radio_restore_on_close()
         self.hide()
         event.ignore()
         self.closed.emit()

@@ -68,6 +68,8 @@ class PlayerController(QObject):
     status_message = Signal(str)
     #: Sprach-Mode (USB/LSB/FM) — nach Stopp oder Einzeldatei-Ende.
     voice_mode_requested = Signal()
+    #: Kontest: Hörpause zu Ende — Vorlauf erst nach DATA-Mode (Fenster entscheidet).
+    contest_pre_roll_requested = Signal()
 
     def __init__(self, serial_cat: SerialCAT, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -82,6 +84,12 @@ class PlayerController(QObject):
         self._after_rx: AfterRx = "idle"
         self._output_device_id = ""
         self._volume_percent = 100
+        #: Sende-Out zusätzlich auf PC-Ausgabegerät (Mithören, zweiter Player).
+        self._tx_monitor_pc_enabled = False
+        self._tx_monitor_pc_device_id = ""
+        self._tx_monitor_pc_volume_percent = 100
+        self._monitor_player = None
+        self._monitor_audio_out = None
         #: Kontest-Loop: dieselbe Datei wiederholen mit langer Hörpause.
         self._contest_mode = False
         self._contest_listen_pause_ms = 5000
@@ -120,6 +128,7 @@ class PlayerController(QObject):
         self._init_multimedia()
 
     def shutdown(self) -> None:
+        self._stop_monitor_playback()
         self.stop()
         self._ptt_thread.quit()
         self._ptt_thread.wait(3000)
@@ -196,6 +205,7 @@ class PlayerController(QObject):
             self._index = index
         if self.is_busy():
             return
+        self._stop_monitor_playback()
         path = self._current_path()
         if path is None:
             self.position_changed.emit(0, 0)
@@ -255,6 +265,24 @@ class PlayerController(QObject):
     def volume_percent(self) -> int:
         return self._volume_percent
 
+    def set_tx_monitor_to_pc_enabled(self, enabled: bool) -> None:
+        """CAT-Sendewiedergabe zusätzlich auf dem PC-Ausgabegerät mithören."""
+        self._tx_monitor_pc_enabled = bool(enabled)
+        if not self._tx_monitor_pc_enabled:
+            self._stop_monitor_playback()
+        elif self._state == PlayerState.PLAYING:
+            self._sync_monitor_with_main_playback()
+
+    def set_tx_monitor_pc_device_id(self, device_id: str) -> None:
+        self._tx_monitor_pc_device_id = device_id or ""
+        self._apply_monitor_device()
+        if self._tx_monitor_pc_enabled and self._state == PlayerState.PLAYING:
+            self._sync_monitor_with_main_playback()
+
+    def set_tx_monitor_pc_volume_percent(self, percent: int) -> None:
+        self._tx_monitor_pc_volume_percent = max(0, min(100, int(percent)))
+        self._apply_monitor_volume()
+
     def _apply_output_device(self) -> None:
         if not _MULTIMEDIA_AVAILABLE or self._audio_out is None:
             return
@@ -303,6 +331,100 @@ class PlayerController(QObject):
         if self._audio_out is not None:
             self._audio_out.setVolume(self._volume_percent / 100.0)
 
+    def _init_monitor_player(self) -> None:
+        if self._monitor_player is not None:
+            return
+        if not self._media_ok or self._player is None:
+            return
+        mm = qt_multimedia_types()
+        if mm is None:
+            return
+        QAudioOutput, QMediaDevices, QMediaPlayer = mm
+        self._monitor_audio_out = QAudioOutput(self)
+        self._monitor_player = QMediaPlayer(self)
+        if not _player_backend_ok(self._monitor_player, QMediaPlayer):
+            err = self._monitor_player.errorString()
+            self._monitor_player.deleteLater()
+            self._monitor_player = None
+            self._monitor_audio_out.deleteLater()
+            self._monitor_audio_out = None
+            self.status_message.emit(
+                f"Mithören PC: kein zweiter Player ({err})."
+            )
+            return
+        self._monitor_player.setAudioOutput(self._monitor_audio_out)
+        self._monitor_player.errorOccurred.connect(self._on_monitor_media_error)
+        self._apply_monitor_device()
+        self._apply_monitor_volume()
+
+    def _apply_monitor_device(self) -> None:
+        if not _MULTIMEDIA_AVAILABLE or self._monitor_audio_out is None:
+            return
+        mm = qt_multimedia_types()
+        if mm is None:
+            return
+        _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
+        if not self._tx_monitor_pc_device_id:
+            self._monitor_audio_out.setDevice(QMediaDevices.defaultAudioOutput())
+            return
+        for dev in QMediaDevices.audioOutputs():
+            dev_id = dev.id().data().decode("utf-8", errors="replace")
+            if dev_id == self._tx_monitor_pc_device_id:
+                self._monitor_audio_out.setDevice(dev)
+                return
+        self._monitor_audio_out.setDevice(QMediaDevices.defaultAudioOutput())
+
+    def _apply_monitor_volume(self) -> None:
+        if self._monitor_audio_out is not None:
+            try:
+                self._monitor_audio_out.setVolume(
+                    self._tx_monitor_pc_volume_percent / 100.0
+                )
+            except (AttributeError, TypeError):
+                pass
+
+    def _stop_monitor_playback(self) -> None:
+        if self._monitor_player is None:
+            return
+        try:
+            self._monitor_player.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._monitor_player.setSource(QUrl())
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _sync_monitor_with_main_playback(self) -> None:
+        """Hauptplayer sendet — optional identisches Signal auf PC-Gerät."""
+        if not self._tx_monitor_pc_enabled:
+            self._stop_monitor_playback()
+            return
+        if self._state != PlayerState.PLAYING:
+            return
+        if not _MULTIMEDIA_AVAILABLE or not self._media_ok or self._player is None:
+            return
+        path = self._current_path()
+        if path is None:
+            return
+        self._init_monitor_player()
+        if self._monitor_player is None:
+            return
+        url = QUrl.fromLocalFile(str(path.resolve()))
+        pos = int(self._player.position() or 0)
+        try:
+            if self._monitor_player.source() != url:
+                self._monitor_player.setSource(url)
+            self._monitor_player.setPosition(pos)
+            self._monitor_player.play()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_monitor_media_error(self, _error, message: str = "") -> None:
+        self._stop_monitor_playback()
+        if message:
+            self.status_message.emit(f"Mithören PC: {message}")
+
     def is_busy(self) -> bool:
         return self._state not in (PlayerState.IDLE, PlayerState.PAUSED_RX)
 
@@ -346,7 +468,13 @@ class PlayerController(QObject):
             PlayerState.PAUSED_RX,
         ):
             return
-        self._player.setPosition(max(0, int(pos_ms)))
+        pos_ms = max(0, int(pos_ms))
+        self._player.setPosition(pos_ms)
+        if self._state == PlayerState.PLAYING and self._monitor_player is not None:
+            try:
+                self._monitor_player.setPosition(pos_ms)
+            except Exception:  # noqa: BLE001
+                pass
         if self._state in (
             PlayerState.IDLE,
             PlayerState.PLAYING,
@@ -357,6 +485,11 @@ class PlayerController(QObject):
     def pause(self) -> None:
         if self._state != PlayerState.PLAYING:
             return
+        if self._monitor_player is not None:
+            try:
+                self._monitor_player.pause()
+            except Exception:  # noqa: BLE001
+                pass
         if self._player is not None:
             self._player.pause()
         self._tick_timer.stop()
@@ -384,8 +517,10 @@ class PlayerController(QObject):
             self._player.setSource(QUrl())
         except Exception:  # noqa: BLE001
             pass
+        self._stop_monitor_playback()
 
     def stop(self) -> None:
+        self._stop_monitor_playback()
         self._pre_roll_timer.stop()
         self._gap_timer.stop()
         self._contest_pause_timer.stop()
@@ -417,6 +552,10 @@ class PlayerController(QObject):
     def _goto_waiting_rx(self) -> None:
         self._set_state(PlayerState.WAITING_RX)
         self._request_ptt(False)
+
+    def begin_pre_roll_now(self) -> None:
+        """Vorlauf starten (nach asynchronem CAT, z. B. DATA-Mode beim Kontest)."""
+        self._begin_pre_roll()
 
     def _begin_pre_roll(self) -> None:
         path = self._current_path()
@@ -464,6 +603,7 @@ class PlayerController(QObject):
         self._tick_timer.stop()
         if self._player is not None:
             self._player.stop()
+        self._stop_monitor_playback()
         self._set_state(PlayerState.IDLE)
         self.status_message.emit("Fehler")
 
@@ -502,6 +642,7 @@ class PlayerController(QObject):
             self._pending_media_play = False
             self._player.play()
             self._tick_timer.start()
+            self._sync_monitor_with_main_playback()
         else:
             url = QUrl.fromLocalFile(str(path.resolve()))
             if self._try_play_loaded_url(url):
@@ -554,6 +695,14 @@ class PlayerController(QObject):
                 self.load_track()
             return
 
+        if action == "playlist_done_voice":
+            self._set_state(PlayerState.IDLE)
+            self.status_message.emit("Playlist Ende — Sprach-Mode (MIC)")
+            self.voice_mode_requested.emit()
+            if self._paths:
+                self.load_track()
+            return
+
         self._set_state(PlayerState.IDLE)
         self.status_message.emit("Bereit (RX)")
 
@@ -565,7 +714,7 @@ class PlayerController(QObject):
     def _on_contest_pause_done(self) -> None:
         if self._state != PlayerState.LISTEN_PAUSE:
             return
-        self._begin_pre_roll()
+        self.contest_pre_roll_requested.emit()
 
     def _try_play_loaded_url(self, url: QUrl) -> bool:
         """Dieselbe URL erneut abspielen, wenn Qt kein erneutes LoadedMedia sendet."""
@@ -585,6 +734,7 @@ class PlayerController(QObject):
         self._pending_media_play = False
         self._player.play()
         self._tick_timer.start()
+        self._sync_monitor_with_main_playback()
         return True
 
     def _on_media_status(self, status) -> None:
@@ -618,6 +768,7 @@ class PlayerController(QObject):
                 self._pending_media_play = False
                 self._player.play()
                 self._tick_timer.start()
+                self._sync_monitor_with_main_playback()
                 return
             if status == QMP.MediaStatus.InvalidMedia:
                 self._pending_media_play = False
@@ -632,6 +783,7 @@ class PlayerController(QObject):
         if self._state != PlayerState.PLAYING:
             return
         self._tick_timer.stop()
+        self._stop_monitor_playback()
         self._player.stop()
         self._resume_after_pause = False
         if self._contest_mode:
@@ -645,7 +797,8 @@ class PlayerController(QObject):
             # Einzeldatei: stoppen und auf Sprach-Mode (MIC vorne).
             self._after_rx = "single_voice"
         else:
-            self._after_rx = "idle"
+            # Letzter Titel der Playlist: Sprach-Mode, Index bleibt (letzte Datei).
+            self._after_rx = "playlist_done_voice"
         self.status_message.emit("Datei Ende — RX …")
         self._goto_waiting_rx()
 
@@ -662,6 +815,17 @@ class PlayerController(QObject):
         dur = int(self._player.duration() or 0)
         if dur < 0:
             dur = 0
+        if (
+            self._state == PlayerState.PLAYING
+            and self._tx_monitor_pc_enabled
+            and self._monitor_player is not None
+        ):
+            try:
+                mpos = int(self._monitor_player.position() or 0)
+                if abs(mpos - pos) > 300:
+                    self._monitor_player.setPosition(pos)
+            except Exception:  # noqa: BLE001
+                pass
         self.position_changed.emit(pos, dur)
 
     def _current_path(self) -> Optional[Path]:

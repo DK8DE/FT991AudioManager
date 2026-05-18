@@ -29,10 +29,10 @@ class RadioStateCache:
     last_error: str = ""
     last_success_ts: float = 0.0
     protocol_active: dict[str, bool] = field(
-        default_factory=lambda: {"flrig": False, "hamlib": False}
+        default_factory=lambda: {"flrig": False}
     )
     protocol_clients: dict[str, int] = field(
-        default_factory=lambda: {"flrig": 0, "hamlib": 0}
+        default_factory=lambda: {"flrig": 0}
     )
 
     def __post_init__(self) -> None:

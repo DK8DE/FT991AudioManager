@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
+
+from .led_widget import Led
+
+# Kurze rot/grün-Sequenz bei TCP-Daten (FLRig) — wie RotorTcpBridge.
+_RIG_IO_BLINK_SEQ = (True, False, True, False, True, False, True, False)
 
 
 class RadioControlBar(QFrame):
@@ -20,6 +25,9 @@ class RadioControlBar(QFrame):
         super().__init__(parent)
         self.setObjectName("panelFrame")
         self.setFrameShape(QFrame.Shape.StyledPanel)
+
+        self._flrig_blink_active = False
+        self._flrig_blink_phase = 0
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
@@ -67,8 +75,65 @@ class RadioControlBar(QFrame):
         layout.addWidget(self._audio_btn)
         layout.addWidget(self._recorder_btn)
 
+        # --- Rig-Bridge: FLRig (nach Audiorecorder) ----------------
+        bridge_tip = (
+            "FLRig-Rig-Bridge über die App-CAT-Leitung.\n"
+            "Grün: Server läuft. Rot: in Einstellungen aus oder gestoppt / kein CAT.\n"
+            "Rot/Grün wechselnd: gerade TCP-Datenverkehr."
+        )
+        self._lbl_flrig_title = QLabel("FLRig")
+        self._lbl_flrig_title.setToolTip(bridge_tip)
+        lf = self._lbl_flrig_title.font()
+        lf.setBold(True)
+        self._lbl_flrig_title.setFont(lf)
+        self._led_flrig = Led(9, self)
+        self._led_flrig.setToolTip(bridge_tip)
+        self._lbl_flrig_clients = QLabel("—")
+        self._lbl_flrig_clients.setMinimumWidth(22)
+        self._lbl_flrig_clients.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._lbl_flrig_clients.setToolTip("Anzahl verbundener Clients (logische Gegenstellen)")
+
+        layout.addSpacing(10)
+        layout.addWidget(self._lbl_flrig_title)
+        layout.addWidget(self._led_flrig)
+        layout.addWidget(self._lbl_flrig_clients)
+
         layout.addStretch(1)
         self.set_controls_enabled(False)
+
+    def refresh_rig_bridge_indicators(
+        self,
+        rig_bridge_cfg: dict[str, Any],
+        proto_status: dict[str, Any],
+        flrig_io: bool,
+    ) -> None:
+        """Aktualisiert LED und Client-Zähler (periodisch vom Hauptfenster)."""
+        rb = rig_bridge_cfg or {}
+        rb_on = bool(rb.get("enabled", True))
+        fl_cfg = rb.get("flrig") if isinstance(rb.get("flrig"), dict) else {}
+        fl_want = rb_on and bool(fl_cfg.get("enabled", True))
+
+        fl_on = bool(proto_status.get("flrig_active"))
+        n_fl = int(proto_status.get("flrig_clients", 0) or 0)
+
+        seq = _RIG_IO_BLINK_SEQ
+        if flrig_io and fl_want and fl_on:
+            self._flrig_blink_active = True
+            self._flrig_blink_phase = 0
+        if self._flrig_blink_active:
+            if self._flrig_blink_phase < len(seq):
+                self._led_flrig.set_state(bool(seq[self._flrig_blink_phase]))
+                self._flrig_blink_phase += 1
+            else:
+                self._flrig_blink_active = False
+        if not self._flrig_blink_active:
+            self._led_flrig.set_state(bool(fl_want and fl_on))
+        if fl_want and fl_on:
+            self._lbl_flrig_clients.setText(str(n_fl))
+        else:
+            self._lbl_flrig_clients.setText("—")
 
     def set_rev_checked(self, checked: bool) -> None:
         self._rev_btn.blockSignals(True)

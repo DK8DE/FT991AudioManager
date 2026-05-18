@@ -132,6 +132,34 @@ class PlayerControllerLogicTest(unittest.TestCase):
             finally:
                 ctrl.shutdown()
 
+    def test_contest_pause_done_emits_signal_without_beginning_pre_roll(self) -> None:
+        cat = _FakeCat()
+        mock_player = MagicMock()
+        mock_player.error.return_value = 0
+
+        def _fake_init(self: PlayerController) -> None:
+            import audio.player_controller as pc
+
+            pc._MULTIMEDIA_IMPORT = True
+            pc._MULTIMEDIA_AVAILABLE = True
+            self._media_ok = True
+            self._player = mock_player
+            self._QMediaPlayer = MagicMock()
+            self._QMediaPlayer.Error.NoError = 0
+            self._audio_out = MagicMock()
+
+        with patch.object(PlayerController, "_init_multimedia", _fake_init):
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                hits: list[bool] = []
+                ctrl.contest_pre_roll_requested.connect(lambda: hits.append(True))
+                ctrl._state = PlayerState.LISTEN_PAUSE
+                ctrl._on_contest_pause_done()
+                self.assertEqual(hits, [True])
+                self.assertEqual(ctrl.state, PlayerState.LISTEN_PAUSE)
+            finally:
+                ctrl.shutdown()
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

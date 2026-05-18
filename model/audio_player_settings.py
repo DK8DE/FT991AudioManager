@@ -30,7 +30,13 @@ class AudioPlayerSettings:
     gap_between_files_ms: int = DEFAULT_GAP_BETWEEN_FILES_MS
     playback_mode: PlaybackMode = "single"
     output_device_id: str = ""
+    #: Separates PC-Ausgabegerät für lokale Vorhöre (Play PC, kein TX).
+    pc_output_device_id: str = ""
     volume_percent: int = DEFAULT_VOLUME_PERCENT
+    #: Lautstärke der lokalen PC-Vorhöre (Play PC).
+    pc_output_volume_percent: int = DEFAULT_VOLUME_PERCENT
+    #: Mithören: CAT-Sendesignal zusätzlich auf dem PC-Wiedergabegerät.
+    tx_monitor_to_pc_enabled: bool = False
     playlist_order: list[str] = field(default_factory=list)
     window_geometry: str = ""
     data_mode: DataMode = DEFAULT_DATA_MODE
@@ -45,7 +51,10 @@ class AudioPlayerSettings:
             "gap_between_files_ms": int(self.gap_between_files_ms),
             "playback_mode": self.playback_mode,
             "output_device_id": self.output_device_id,
+            "pc_output_device_id": self.pc_output_device_id,
             "volume_percent": int(self.volume_percent),
+            "pc_output_volume_percent": int(self.pc_output_volume_percent),
+            "tx_monitor_to_pc_enabled": bool(self.tx_monitor_to_pc_enabled),
             "playlist_order": list(self.playlist_order),
             "window_geometry": self.window_geometry,
             "data_mode": self.data_mode,
@@ -74,7 +83,12 @@ class AudioPlayerSettings:
             ),
             playback_mode=mode,  # type: ignore[arg-type]
             output_device_id=str(r.get("output_device_id", "") or ""),
+            pc_output_device_id=str(r.get("pc_output_device_id", "") or ""),
             volume_percent=_clamp_volume(r.get("volume_percent")),
+            pc_output_volume_percent=_clamp_volume(
+                r.get("pc_output_volume_percent", DEFAULT_VOLUME_PERCENT)
+            ),
+            tx_monitor_to_pc_enabled=bool(r.get("tx_monitor_to_pc_enabled", False)),
             playlist_order=order,
             window_geometry=str(r.get("window_geometry", "") or ""),
             data_mode=data_mode,  # type: ignore[arg-type]

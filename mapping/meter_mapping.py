@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Dict, List, Optional, Tuple
 
+from model.smeter_calibration_settings import SmeterCalibrationSettings
+
 #: PO (RM5): Standard-Stützpunkte (werden durch ``po_calibration.json`` ersetzt).
 PO_WATTS_CALIB_HF_DEFAULT: List[Tuple[int, int]] = [
     (0, 0),
@@ -570,24 +572,189 @@ SMETER_RAW_S9P60 = 204
 SMETER_DB_MIN = SMETER_CAL_RAW_DB[0][1]
 SMETER_DB_MAX = SMETER_CAL_RAW_DB[-1][1]
 
-#: Skalen-Ticks (Positionen aus ``SMETER_CAL_RAW_DB`` / Messpunkte).
-SMETER_TICKS: List[Tuple[int, str]] = [
-    (0,   "S0"),
-    (34,  "S3"),
-    (56,  "S5"),
-    (SMETER_RAW_S9, "S9"),
-    (115, "+10"),
-    (125, "+20"),
-    (135, "+30"),
-    (144, "+40"),
-    (174, "+50"),
-    (SMETER_RAW_S9P60, "+60"),
+#: Balkenfüllung: die Spitze entspricht immer S9+60 (nicht dem Extrapolationswert bei raw 255).
+SMETER_BAR_DISPLAY_DB_MAX = float(SMETER_DB_MAX)
+
+#: Ab dieser VFO-Frequenz (Hz): zweite Kalibrierkurve (2 m / 70 cm); darunter Kurzwelle/HF inkl. 6 m.
+SMETER_CALIB_VHF_MIN_HZ = 50_000_000
+
+#: S-Meter: je Band mindestens zwei ``(raw, db_über_s9)``, sonst :data:`SMETER_CAL_RAW_DB`.
+_user_smeter_pts_hf: Optional[List[Tuple[int, float]]] = None
+_user_smeter_pts_vhf: Optional[List[Tuple[int, float]]] = None
+_smeter_calibration_freq_hz: int = 0
+
+#: Feste Skalen-Beschriftung: dB über S9 → Rohwert per aktueller Kalibrierung.
+#: Nur diese Marken werden gezeichnet (keine weiteren Zwischenstriche).
+SMETER_SCALE_MARKS: List[Tuple[float, str]] = [
+    (-48.0, "S1"),
+    (-36.0, "S3"),
+    (-24.0, "S5"),
+    (-12.0, "S7"),
+    (0.0, "S9"),
+    (20.0, "S9+20"),
+    (40.0, "S9+40"),
+    (60.0, "S9+60"),
 ]
 
 
+def smeter_set_calibration_frequency_hz(hz: Optional[int]) -> None:
+    """VFO-A-Frequenz für die Wahl HF- vs. VHF-Kalibrierkurve (Rig-Bridge / Anzeige)."""
+    global _smeter_calibration_freq_hz
+    try:
+        _smeter_calibration_freq_hz = max(0, int(hz or 0))
+    except (TypeError, ValueError):
+        _smeter_calibration_freq_hz = 0
+
+
+def _smeter_use_vhf_calibration(hz: int) -> bool:
+    return int(hz) >= SMETER_CALIB_VHF_MIN_HZ
+
+
+def _active_user_smeter_pts() -> Optional[List[Tuple[int, float]]]:
+    """Nutzerkurve für aktuelle Frequenz, oder ``None`` → Werkstabelle."""
+    hz = _smeter_calibration_freq_hz
+    cand = (
+        _user_smeter_pts_vhf
+        if _smeter_use_vhf_calibration(hz)
+        else _user_smeter_pts_hf
+    )
+    if cand is not None and len(cand) >= 2:
+        return cand
+    return None
+
+
+def _smeter_cal_sequence_raw_sorted() -> List[Tuple[float, float]]:
+    """Stützpunkte ``(raw, db)`` sortiert nach *raw* (aktuelle Kalibrierkurve)."""
+    u = _active_user_smeter_pts()
+    if u is not None:
+        return sorted((float(r), float(db)) for r, db in u)
+    return [(float(r), float(db)) for r, db in SMETER_CAL_RAW_DB]
+
+
+def _piecewise_smeter_db_to_raw(target_db: float) -> float:
+    """Umkehrung der Rohwert→dB-Kurve (linear pro Segment, Rand extrapoliert)."""
+    seq = _smeter_cal_sequence_raw_sorted()
+    if not seq:
+        raise ValueError("S-Meter-Kalibrierung: leere Kurve")
+    if len(seq) == 1:
+        return seq[0][0]
+    t = float(target_db)
+    r0, d0 = seq[0]
+    r1, d1 = seq[1]
+    if t <= min(d0, d1):
+        if d1 == d0:
+            return r0
+        return r0 + (t - d0) * (r1 - r0) / (d1 - d0)
+    r_lm1, d_lm1 = seq[-2]
+    r_l, d_l = seq[-1]
+    if t >= max(d_lm1, d_l):
+        if d_l == d_lm1:
+            return r_l
+        return r_l + (t - d_l) * (r_l - r_lm1) / (d_l - d_lm1)
+    for i in range(len(seq) - 1):
+        ra, da = seq[i]
+        rb, db_ = seq[i + 1]
+        lo, hi = min(da, db_), max(da, db_)
+        if lo <= t <= hi:
+            if db_ == da:
+                return rb
+            return ra + (t - da) / (db_ - da) * (rb - ra)
+    return r_l
+
+
+def smeter_db_to_raw(target_db: float) -> int:
+    """Ziel-dB über S9 → ``SM0``-Rohwert (0…255) laut Kalibrierung."""
+    x = _piecewise_smeter_db_to_raw(float(target_db))
+    return int(max(SMETER_RAW_MIN, min(SMETER_RAW_MAX, round(x))))
+
+
+def smeter_scale_ticks() -> List[Tuple[int, str]]:
+    """Skalen-Ticks nur für :data:`SMETER_SCALE_MARKS`; Rohwerte aus der Kurve."""
+    return [(smeter_db_to_raw(db), label) for db, label in SMETER_SCALE_MARKS]
+
+
+def _piecewise_linear_smeter_db(
+    x: float, pts: List[Tuple[int, float]]
+) -> float:
+    """Linear zwischen Stützpunkten; nach außen mit dem Steigungsmaß des Randsegments."""
+    if not pts:
+        raise ValueError("S-Meter-Kalibrierung: keine Stützpunkte")
+    seq = sorted((float(r), float(db)) for r, db in pts)
+    x = max(float(SMETER_RAW_MIN), min(float(SMETER_RAW_MAX), float(x)))
+    if len(seq) == 1:
+        return seq[0][1]
+    x0, y0 = seq[0]
+    x1, y1 = seq[1]
+    if x <= x0:
+        if x1 == x0:
+            return y0
+        slope = (y1 - y0) / (x1 - x0)
+        return y0 + (x - x0) * slope
+    xm1, ym1 = seq[-2]
+    x_last, y_last = seq[-1]
+    if x >= x_last:
+        if x_last == xm1:
+            return y_last
+        slope = (y_last - ym1) / (x_last - xm1)
+        return y_last + (x - x_last) * slope
+    for i in range(len(seq) - 1):
+        xa, ya = seq[i]
+        xb, yb = seq[i + 1]
+        if xa <= x <= xb:
+            if xb == xa:
+                return yb
+            return ya + (x - xa) / (xb - xa) * (yb - ya)
+    return seq[-1][1]
+
+
+def _smeter_bar_db_endpoints() -> Tuple[float, float]:
+    """Untere Grenze aus der Kurve; obere Grenze fest :data:`SMETER_BAR_DISPLAY_DB_MAX` (S9+60)."""
+    hi = SMETER_BAR_DISPLAY_DB_MAX
+    u = _active_user_smeter_pts()
+    if u is not None:
+        pts = u
+        at0 = _piecewise_linear_smeter_db(0.0, pts)
+        at255 = _piecewise_linear_smeter_db(255.0, pts)
+        anchor = [db for _, db in pts]
+        lo = min(at0, at255, *anchor)
+    else:
+        lo = float(SMETER_DB_MIN)
+    if hi <= lo:
+        return lo, lo + 1.0
+    return lo, hi
+
+
+def reset_smeter_calibration() -> None:
+    """Zur fest eingebauten S-Meter-Tabelle zurück (Tests / nach Deaktivierung)."""
+    global _user_smeter_pts_hf, _user_smeter_pts_vhf, _smeter_calibration_freq_hz
+    _user_smeter_pts_hf = None
+    _user_smeter_pts_vhf = None
+    _smeter_calibration_freq_hz = 0
+
+
+def apply_smeter_calibration_from_settings(s: SmeterCalibrationSettings) -> None:
+    """Übernimmt die Kalibrierung aus den App-Einstellungen (oder schaltet sie ab)."""
+    global _user_smeter_pts_hf, _user_smeter_pts_vhf
+    if not s.use_custom:
+        _user_smeter_pts_hf = None
+        _user_smeter_pts_vhf = None
+        return
+    hf = s.effective_points_hf()
+    vhf = s.effective_points_vhf()
+    _user_smeter_pts_hf = (
+        [(p.raw, p.db_over_s9) for p in hf] if len(hf) >= 2 else None
+    )
+    _user_smeter_pts_vhf = (
+        [(p.raw, p.db_over_s9) for p in vhf] if len(vhf) >= 2 else None
+    )
+
+
 def _smeter_interp_db(raw: int) -> float:
-    """Rohwert → dB über S9 entlang ``SMETER_CAL_RAW_DB``."""
+    """Rohwert → dB über S9 (Nutzerkurve oder :data:`SMETER_CAL_RAW_DB`)."""
     val = max(SMETER_RAW_MIN, min(SMETER_RAW_MAX, int(raw)))
+    u = _active_user_smeter_pts()
+    if u is not None:
+        return _piecewise_linear_smeter_db(float(val), u)
     pts = SMETER_CAL_RAW_DB
     if val <= pts[0][0]:
         return float(pts[0][1])
@@ -610,10 +777,11 @@ def smeter_raw_to_db(raw: int) -> float:
 def smeter_bar_fraction(raw: int) -> float:
     """Balkenfüllgrad 0..1 entlang der kalibrierten dB-Skala."""
     db = _smeter_interp_db(raw)
-    span = SMETER_DB_MAX - SMETER_DB_MIN
+    lo, hi = _smeter_bar_db_endpoints()
+    span = hi - lo
     if span <= 0:
         return 0.0
-    return max(0.0, min(1.0, (db - SMETER_DB_MIN) / span))
+    return max(0.0, min(1.0, (db - lo) / span))
 
 
 def format_smeter_label(raw: int) -> str:

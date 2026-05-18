@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
 
 from .app_icon import app_icon
 from .profile_widget import ProfileWidget
+from .window_lifecycle import application_exit_close_requested
 
 
 class EqualizerWindow(QMainWindow):
@@ -26,6 +27,7 @@ class EqualizerWindow(QMainWindow):
         self._profile_widget = profile_widget
         self.setWindowTitle("FT-991/A EQ-Profil")
         self.setWindowIcon(app_icon())
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.resize(920, 780)
 
         central = QWidget()
@@ -41,6 +43,11 @@ class EqualizerWindow(QMainWindow):
         self.close()
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        if application_exit_close_requested(self):
+            if not getattr(self, "_force_close", False):
+                self.force_close()
+                event.accept()
+                return
         if getattr(self, "_force_close", False):
             super().closeEvent(event)
             self.closed.emit()

@@ -4,7 +4,8 @@ Layout wie in RotorTcpBridge: linke Tab-Liste, rechter Inhalt (QStackedWidget).
 
 - **CAT-Verbindung**: Port, Baudrate, Timeout, Auto-Connect, Live-Meter-Polling,
   EQ-Profil-Anzeige.
-- **Rig-Bridge**: FLRig / Hamlib rigctl.
+- **Rig-Bridge**: FLRig.
+- **Kalibrierung**: S-Meter (SM0-Rohwerte vs. Anzeige).
 
 Beim ``OK`` werden die Werte auf die übergebene :class:`AppSettings`
 geschrieben und ``settings_changed`` emittiert.
@@ -59,6 +60,7 @@ from model.app_settings import POLL_MAX_MS, POLL_MIN_MS
 from rig_bridge.manager import RigBridgeManager
 
 from .rig_bridge_settings_widget import RigBridgeSettingsWidget
+from .smeter_calibration_widget import SmeterCalibrationSettingsWidget
 
 
 COMMON_BAUDRATES = [4800, 9600, 19200, 38400]
@@ -141,6 +143,7 @@ class ConnectionSettingsDialog(QDialog):
         self._settings_nav.setUniformItemSizes(True)
         self._settings_nav.addItem("CAT-Verbindung")
         self._settings_nav.addItem("Rig-Bridge")
+        self._settings_nav.addItem("Kalibrierung")
 
         self._settings_stack = QStackedWidget()
         self._settings_stack.setSizePolicy(
@@ -149,6 +152,10 @@ class ConnectionSettingsDialog(QDialog):
         )
 
         page_cat = QWidget()
+        page_cat.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
         cat_layout = QVBoxLayout(page_cat)
         cat_layout.setContentsMargins(0, 0, 0, 0)
         cat_layout.setSpacing(10)
@@ -162,14 +169,37 @@ class ConnectionSettingsDialog(QDialog):
             get_bridge=self._bridge_for_widget,
             parent=self,
         )
+        self._rig_bridge_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
         page_rig = QWidget()
+        page_rig.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
         rig_layout = QVBoxLayout(page_rig)
         rig_layout.setContentsMargins(0, 0, 0, 0)
         rig_layout.addWidget(self._rig_bridge_widget)
         rig_layout.addStretch(1)
 
+        self._smeter_cal_widget = SmeterCalibrationSettingsWidget(
+            self._settings.smeter_calibration,
+            parent=self,
+        )
+        page_cal = QWidget()
+        page_cal.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
+        cal_layout = QVBoxLayout(page_cal)
+        cal_layout.setContentsMargins(0, 0, 0, 0)
+        cal_layout.addWidget(self._smeter_cal_widget)
+        cal_layout.addStretch(1)
+
         self._settings_stack.addWidget(_scroll_page(page_cat))
         self._settings_stack.addWidget(_scroll_page(page_rig))
+        self._settings_stack.addWidget(_scroll_page(page_cal))
 
         self._settings_nav.currentRowChanged.connect(self._on_settings_nav_changed)
         self._settings_nav.setCurrentRow(0)
@@ -555,6 +585,12 @@ class ConnectionSettingsDialog(QDialog):
         self._settings.ui.hide_extended_in_ssb = bool(
             self.hide_extended_ssb_check.isChecked()
         )
+        self._smeter_cal_widget.apply_to_settings(self._settings.smeter_calibration)
+        sc = self._settings.smeter_calibration
+        if sc.use_custom and len(sc.effective_points_hf()) < 2 and len(
+            sc.effective_points_vhf()
+        ) < 2:
+            sc.use_custom = False
         self._rig_bridge_widget.apply_to_settings()
 
         self.settings_changed.emit()

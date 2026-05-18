@@ -1,9 +1,10 @@
 """Gemeinsame CAT-Session für Audio-Player und Audio-Recorder.
 
-Solange mindestens eines der Fenster sichtbar/offen ist, bleiben die
-Menüs für PC-Audio (EX048/070/072/077/109) auf USB/Rear. Erst wenn
-beides zu ist, wird per ``restore()`` der Funkzustand vom ersten
-``apply()`` wiederhergestellt.
+Beim Öffnen eines Fensters werden die Menüs EX048/070/072/077/109 sofort
+für PC-Audio gesetzt und der Vormerkzustand für :meth:`restore` geladen; die
+Betriebsart (DATA-FM / …) wechselt erst bei Start von Wiedergabe, Replay oder
+Aufnahme. Sind beide Fenster zu, wird per :meth:`RadioPlaybackSetup.restore`
+wiederhergestellt.
 """
 
 from __future__ import annotations
@@ -38,9 +39,17 @@ class AudioRadioSessionHost(QObject):
         self.worker = RadioSetupWorker(self.setup)
         self.worker.moveToThread(self._thread)
         self.worker.apply_finished.connect(self._on_apply_finished_warn)
+        self.worker.pc_menus_finished.connect(self._on_pc_menus_finished_warn)
         self.worker.restore_finished.connect(self._on_restore_finished_warn)
         self._thread.start(QThread.HighestPriority)
         self._open_ids: set[int] = set()
+
+    def _on_pc_menus_finished_warn(self, ok: bool, message: str) -> None:
+        if ok or not message:
+            return
+        parent = self.parent()
+        if isinstance(parent, QWidget):
+            QMessageBox.warning(parent, "Audio / CAT", message)
 
     def _on_apply_finished_warn(self, ok: bool, message: str) -> None:
         if ok or not message:
@@ -69,23 +78,31 @@ class AudioRadioSessionHost(QObject):
         self._open_ids.add(id(window))
         if not self._cat.is_connected():
             return
-        if not self.setup.is_applied:
-            QMetaObject.invokeMethod(
-                self.worker,
-                "run_apply",
-                Qt.ConnectionType.QueuedConnection,
-            )
+        self.setup.set_data_mode(data_mode_from_string(self._settings.audio_player.data_mode))
+        QMetaObject.invokeMethod(
+            self.worker,
+            "run_apply_pc_menus",
+            Qt.ConnectionType.QueuedConnection,
+        )
 
-    def on_window_closed_hidden(self, window: QWidget) -> None:
-        """Aufruf aus ``closeEvent``, wenn das Fenster nur versteckt wird."""
-        key = id(window)
-        self._open_ids.discard(key)
+    def on_window_hidden(self, window: QWidget) -> None:
+        """Fenster aus der offenen Liste nehmen (ohne CAT-Restore)."""
+        self._open_ids.discard(id(window))
+
+    def request_restore_if_no_windows(self) -> None:
+        """CAT-Zustand wiederherstellen, wenn kein Audio-Fenster mehr offen ist."""
         if len(self._open_ids) == 0:
             self._invoke_restore_if_applied()
 
+    def on_window_closed_hidden(self, window: QWidget) -> None:
+        """Aufruf aus ``closeEvent``, wenn das Fenster nur versteckt wird."""
+        self.on_window_hidden(window)
+        self.request_restore_if_no_windows()
+
     def detach_for_force_close(self, window: QWidget) -> None:
-        """Wie ``on_window_closed_hidden`` — für ``force_close`` / App-Exit."""
-        self.on_window_closed_hidden(window)
+        """Fenster abmelden und ggf. CAT wiederherstellen (App-Exit)."""
+        self.on_window_hidden(window)
+        self.request_restore_if_no_windows()
 
     def _invoke_restore_if_applied(self) -> None:
         if not self.setup.is_applied:
@@ -99,5 +116,8 @@ class AudioRadioSessionHost(QObject):
     def shutdown(self) -> None:
         """App-Ende: Thread beenden (nachdem Fenster ``detach`` + Restore ausgelöst haben)."""
         self._open_ids.clear()
+        self.worker.blockSignals(True)
         self._thread.quit()
-        self._thread.wait(4000)
+        if not self._thread.wait(4000):
+            self._thread.terminate()
+            self._thread.wait(1000)

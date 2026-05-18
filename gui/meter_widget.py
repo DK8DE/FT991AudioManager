@@ -74,14 +74,16 @@ from cat.cat_errors import (
     is_cat_protocol_error_message,
 )
 from cat.ft991_cat import FT991CAT
+from mapping.amateur_bands import amateur_band_for_hz
 from mapping.meter_mapping import (
     METER_INFO,
     MeterInfo,
     MeterKind,
     SMETER_RAW_MAX,
-    SMETER_TICKS,
     format_smeter_label,
     smeter_bar_fraction,
+    smeter_scale_ticks,
+    smeter_set_calibration_frequency_hz,
     format_meter_value,
     format_po_watts,
     meter_choices,
@@ -89,7 +91,6 @@ from mapping.meter_mapping import (
     po_calib_table_for_freq,
     po_max_watts_for_freq,
     po_power_ticks_for_freq,
-    po_use_50w_scale,
 )
 from mapping.rx_mapping import (
     AGC_LABELS,
@@ -1414,6 +1415,11 @@ class ScaledMeterBar(QWidget):
         self.setToolTip(reason)
         self._canvas.update()
 
+    def set_ticks(self, ticks: List[tuple]) -> None:
+        """Skalen-Markierungen ersetzen (z. B. S-Meter nach Kalibrierungswechsel)."""
+        self._ticks = list(ticks)
+        self._canvas.update()
+
     def clear_unavailable(self) -> None:
         """Hebt :meth:`set_unavailable` wieder auf."""
         if self._unavailable_reason is None:
@@ -1560,13 +1566,13 @@ def make_smeter_bar(*, flex_horizontal: bool = False) -> ScaledMeterBar:
     bar = ScaledMeterBar(
         label_text="",
         raw_max=SMETER_RAW_MAX,
-        ticks=SMETER_TICKS,
+        ticks=smeter_scale_ticks(),
         warn=0.50,             # ~S9
         danger=0.55,           # S9+ -> rot
         value_formatter=lambda raw: format_smeter_label(raw),
         show_squelch=True,
         bar_width=22,
-        scale_width=38,
+        scale_width=48,
         bar_min_height=170,
         value_font_scale=0.9,
         tick_font_scale=0.78,
@@ -1958,9 +1964,8 @@ class MeterWidget(QWidget):
         self._last_tx: Optional[bool] = None
         self._last_tx_state: Optional[int] = None
         #: Letzte vom Radio gemeldete VFO-A-Frequenz (Hz). Wird aus dem
-        #: RX-Status-Sample übernommen und beim TX-Sample geprüft, um
-        #: die SWR-Anzeige auf VHF/UHF zu unterdrücken (siehe
-        #: :meth:`_apply_swr_value`).
+        #: RX-Status-Sample übernommen; u. a. für Ausblendung des SWR-TX-Meters
+        #: auf 2 m / 70 cm (siehe :meth:`_sync_tx_swr_bar_visibility`).
         self._last_vfo_a_hz: Optional[int] = None
         #: POWER-Meter: Kalibrierkurve (10-m-KW, für alle Bänder).
         self._po_calib_scale_max_w: Optional[int] = None
@@ -2174,6 +2179,7 @@ class MeterWidget(QWidget):
         po_bar._value_formatter = self._format_po_meter_value
         po_bar._fill_fraction_fn = self._po_meter_bar_fraction
         self._sync_po_meter_scale()
+        self._sync_tx_swr_bar_visibility()
         bars_outer.addLayout(bars_layout, stretch=1)
 
         if self._integrated_main_layout:
@@ -2401,6 +2407,10 @@ class MeterWidget(QWidget):
             bar.set_value(last)
         bar._canvas.update()
 
+    def refresh_smeter_scale_ticks(self) -> None:
+        """S-Meter-Skala neu aus der aktuellen Kalibrierkurve ableiten."""
+        self.smeter_bar.set_ticks(smeter_scale_ticks())
+
     def refresh_po_calibration(self) -> None:
         """Lädt ``po_calibration.json`` neu und aktualisiert die POWER-Skala."""
         from mapping.meter_mapping import load_po_calibration_from_disk
@@ -2414,7 +2424,10 @@ class MeterWidget(QWidget):
             return
         if sample.frequency_hz is not None:
             self._last_vfo_a_hz = sample.frequency_hz
+            smeter_set_calibration_frequency_hz(sample.frequency_hz)
+            self.refresh_smeter_scale_ticks()
             self._apply_power_slider_scale()
+        self._sync_tx_swr_bar_visibility()
         self._sync_po_meter_scale()
         if sample.pc_power_watts is not None:
             self.power_slider.set_value(sample.pc_power_watts)
@@ -2436,7 +2449,10 @@ class MeterWidget(QWidget):
         # ``set_value`` nur fuer die tatsaechlich vorhandenen Werte --
         # so bleiben fehlende Bars optisch korrekt eingefaerbt und
         # behalten ihren letzten Wert, bis der naechste Read klappt.
+        swr_hidden = self._tx_swr_bar_hidden_for_vfo()
         for kind, bar in self._bars.items():
+            if kind == MeterKind.SWR and swr_hidden:
+                continue
             bar.set_enabled_visual(transmitting)
             if kind not in sample.values:
                 continue
@@ -2461,11 +2477,13 @@ class MeterWidget(QWidget):
     def _on_rx_sample(self, sample: object) -> None:
         if not isinstance(sample, RxStatusSample):
             return
-        # VFO-A merken — wir brauchen die Frequenz im TX-Pfad, um auf
-        # VHF/UHF die SWR-Anzeige zu unterdrücken.
+        # VFO-A merken — u. a. für SWR-Sichtbarkeit (2 m / 70 cm aus).
         if sample.frequency_hz is not None:
             self._last_vfo_a_hz = sample.frequency_hz
+            smeter_set_calibration_frequency_hz(sample.frequency_hz)
+            self.refresh_smeter_scale_ticks()
             self._apply_power_slider_scale()
+        self._sync_tx_swr_bar_visibility()
         self._sync_po_meter_scale()
         if sample.tx_power_watts is not None:
             self.power_slider.set_value(sample.tx_power_watts)
@@ -2595,28 +2613,29 @@ class MeterWidget(QWidget):
         self.status_label.show()
 
     # ------------------------------------------------------------------
-    # SWR-Sonderbehandlung VHF/UHF
+    # SWR auf 2 m / 70 cm
     # ------------------------------------------------------------------
 
-    #: Frequenzgrenze, oberhalb der das ``RM6;``-Roh des FT-991A
-    #: empirisch unbrauchbar wird (Roh-Wert geht sofort auf 255, obwohl
-    #: das Front-Panel z. B. 1:1.2 anzeigt). Auf 6 m (50 MHz) verhält
-    #: sich das Radio nach den uns vorliegenden Logs noch wie KW, daher
-    #: wählen wir die Grenze bei 50 MHz und nicht schon bei 30 MHz.
-    VHF_UHF_SWR_THRESHOLD_HZ = 50_000_000
+    _SWR_HIDDEN_BAND_NAMES = frozenset({"2 m", "70 cm"})
+
+    def _tx_swr_bar_hidden_for_vfo(self) -> bool:
+        """True, wenn das SWR-TX-Meter ausgeblendet werden soll (2 m, 70 cm)."""
+        hz = self._last_vfo_a_hz
+        if hz is None or hz <= 0:
+            return False
+        band = amateur_band_for_hz(int(hz))
+        return band in self._SWR_HIDDEN_BAND_NAMES
+
+    def _sync_tx_swr_bar_visibility(self) -> None:
+        bar = self._bars[MeterKind.SWR]
+        if self._tx_swr_bar_hidden_for_vfo():
+            bar.clear_unavailable()
+            bar.hide()
+        else:
+            bar.show()
 
     def _apply_swr_value(self, bar: "ScaledMeterBar", raw: int) -> None:
-        """Setzt den SWR-Wert auf der Bar — auf VHF/UHF mit Hinweis statt Zahl."""
-        if (
-            self._last_vfo_a_hz is not None
-            and self._last_vfo_a_hz >= self.VHF_UHF_SWR_THRESHOLD_HZ
-        ):
-            bar.set_unavailable(
-                "SWR via CAT auf VHF/UHF nicht zuverlässig.\n"
-                "Bitte das SWR am Front-Panel des Radios ablesen.\n"
-                f"(Roh-Wert vom Radio: {max(0, int(raw))} / 255)"
-            )
-            return
+        """Setzt den CAT-SWR-Rohwert auf der Bar (nur sichtbar ausserhalb 2 m / 70 cm)."""
         bar.clear_unavailable()
         bar.set_value(raw)
 
@@ -2723,6 +2742,9 @@ class MeterWidget(QWidget):
         for bar in self._bars.values():
             bar.reset()
             bar.set_enabled_visual(True)
+        swr = self._bars[MeterKind.SWR]
+        swr.clear_unavailable()
+        swr.show()
         self.smeter_bar.reset()
         self.af_gain_bar.set_value(None)
         self.rf_gain_bar.set_value(None)

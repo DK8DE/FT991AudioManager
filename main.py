@@ -5,12 +5,27 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from PySide6.QtCore import QCoreApplication
 
 # Stellt sicher, dass das Projektverzeichnis im PYTHONPATH liegt, auch wenn
 # main.py per Doppelklick gestartet wird.
 _PROJECT_ROOT = Path(__file__).resolve().parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+
+
+def _install_german_qt_translations(app: QCoreApplication) -> None:
+    """Lädt die mitgelieferten Qt-Übersetzungen (u. a. Ja/Nein/Abbrechen, OK)."""
+    from PySide6.QtCore import QLibraryInfo, QTranslator
+
+    path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    for prefix in ("qtbase", "qt"):
+        translator = QTranslator()
+        if translator.load(f"{prefix}_de", path):
+            app.installTranslator(translator)
 
 
 def main() -> int:
@@ -26,6 +41,7 @@ def main() -> int:
     from model import AppSettings
 
     app = QApplication(sys.argv)
+    _install_german_qt_translations(app)
     # GUI erst nach QApplication importieren (QtMultimedia braucht das).
     from gui import MainWindow
     app.setApplicationName("FT-991/A Audiomanager")

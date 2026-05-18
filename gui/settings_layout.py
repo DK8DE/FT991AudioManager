@@ -1,4 +1,4 @@
-"""Gemeinsames Layout für den Einstellungsdialog (schmale Inhaltsspalte)."""
+"""Gemeinsames Layout für den Einstellungsdialog (rechter Tab-Inhalt)."""
 
 from __future__ import annotations
 
@@ -13,14 +13,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# Max. Breite des rechten Inhalts (Nav-Leiste + Rand abziehen)
-SETTINGS_PANEL_MAX_WIDTH = 460
-
-
 def hint_label(text: str, *, parent: QWidget | None = None) -> QLabel:
     lb = QLabel(text, parent)
     lb.setWordWrap(True)
-    lb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+    lb.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
     return lb
 
 
@@ -70,15 +66,16 @@ def wrap_checkbox(text: str, *, parent: QWidget | None = None) -> WrappingCheckB
 
 
 def narrow_panel(inner: QWidget) -> QWidget:
-    """Inhalt linksbündig auf feste Maximalbreite begrenzen."""
+    """Rechten Tab-Inhalt über die volle verfügbare Breite führen (keine künstliche Maximalbreite)."""
     panel = QWidget()
     lay = QHBoxLayout(panel)
     lay.setContentsMargins(0, 0, 0, 0)
     lay.setSpacing(0)
-    inner.setMaximumWidth(SETTINGS_PANEL_MAX_WIDTH)
-    inner.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
-    lay.addWidget(inner, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-    lay.addStretch(1)
+    inner.setSizePolicy(
+        QSizePolicy.Policy.Expanding,
+        QSizePolicy.Policy.Minimum,
+    )
+    lay.addWidget(inner, 1)
     return panel
 
 
