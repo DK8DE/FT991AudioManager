@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
-    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -67,6 +66,7 @@ from model.audio_recorder_settings import (
 )
 
 from .app_icon import app_icon
+from .folder_dialog import pick_audio_recorder_folder
 from .window_lifecycle import application_exit_close_requested
 
 if TYPE_CHECKING:
@@ -265,16 +265,8 @@ class AudioRecorderWindow(QMainWindow):
         self.list_files.itemDoubleClicked.connect(self._on_item_double_clicked)
         list_l.addWidget(self.list_files)
 
-        # Buttons direkt unter der Liste: Löschen + lokale PC-Vorhöre (kein TX).
+        # Buttons direkt unter der Liste: PC-Vorhör, dann Löschen (kein TX).
         list_btn_row = QHBoxLayout()
-        self.btn_delete = QPushButton("Datei löschen")
-        self.btn_delete.setToolTip(
-            "Markierte Datei nach Bestätigung dauerhaft löschen. "
-            "Während Aufnahme oder laufender Wiedergabe gesperrt."
-        )
-        self.btn_delete.clicked.connect(self._on_delete_clicked)
-        list_btn_row.addWidget(self.btn_delete)
-
         self.btn_play_pc = QPushButton("Play PC")
         self.btn_play_pc.setToolTip(
             "Markierte Datei lokal über das PC-Ausgabegerät abspielen — "
@@ -287,6 +279,14 @@ class AudioRecorderWindow(QMainWindow):
         self.btn_stop_pc.setToolTip("Lokale PC-Wiedergabe stoppen.")
         self.btn_stop_pc.clicked.connect(self._on_stop_pc_clicked)
         list_btn_row.addWidget(self.btn_stop_pc)
+
+        self.btn_delete = QPushButton("Datei löschen")
+        self.btn_delete.setToolTip(
+            "Markierte Datei nach Bestätigung dauerhaft löschen. "
+            "Während Aufnahme oder laufender Wiedergabe gesperrt."
+        )
+        self.btn_delete.clicked.connect(self._on_delete_clicked)
+        list_btn_row.addWidget(self.btn_delete)
 
         list_btn_row.addStretch(1)
         list_l.addLayout(list_btn_row)
@@ -601,7 +601,7 @@ class AudioRecorderWindow(QMainWindow):
 
     def _on_pick_folder(self) -> None:
         start = str(self._folder) if self._folder.is_dir() else str(Path.home())
-        path = QFileDialog.getExistingDirectory(self, "Aufnahme-Ordner", start)
+        path = pick_audio_recorder_folder(self, start)
         if not path:
             return
         self._folder = Path(path)

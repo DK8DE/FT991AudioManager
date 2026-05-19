@@ -102,7 +102,7 @@ geschrieben.
 
 ### PO-Kalibrierung (Sendeleistung)
 
-- **Bearbeiten → Kalibrierung…**: geführte Messung auf **10 m** (FM),
+- **Datei → Einstellungen → Kalibrierung** (PO-Meter): geführte Messung auf **10 m** (FM),
   Stützpunkte **Watt ↔ CAT-Rohwert** für die **POWER**-Anzeige und den
   POWER-Slider
 - Ergebnis in `po_calibration.json` im User-Datenordner (siehe unten)

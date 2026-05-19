@@ -34,6 +34,7 @@ def main() -> int:
 
         ensure_qt_media_backend()
 
+    from PySide6.QtCore import QLocale
     from PySide6.QtWidgets import QApplication
 
     from gui.app_icon import app_icon
@@ -41,6 +42,7 @@ def main() -> int:
     from model import AppSettings
 
     app = QApplication(sys.argv)
+    QLocale.setDefault(QLocale(QLocale.Language.German, QLocale.Country.Germany))
     _install_german_qt_translations(app)
     # GUI erst nach QApplication importieren (QtMultimedia braucht das).
     from gui import MainWindow

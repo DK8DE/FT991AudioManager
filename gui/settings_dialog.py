@@ -5,7 +5,7 @@ Layout wie in RotorTcpBridge: linke Tab-Liste, rechter Inhalt (QStackedWidget).
 - **CAT-Verbindung**: Port, Baudrate, Timeout, Auto-Connect, Live-Meter-Polling,
   EQ-Profil-Anzeige.
 - **Rig-Bridge**: FLRig.
-- **Kalibrierung**: S-Meter (SM0-Rohwerte vs. Anzeige).
+- **Kalibrierung**: S-Meter (SM0-Rohwerte vs. Anzeige) und PO-Meter (Sendeleistung / 10 m).
 
 Beim ``OK`` werden die Werte auf die übergebene :class:`AppSettings`
 geschrieben und ``settings_changed`` emittiert.
@@ -59,7 +59,9 @@ from model import AppSettings
 from model.app_settings import POLL_MAX_MS, POLL_MIN_MS
 from rig_bridge.manager import RigBridgeManager
 
+from .po_calibration_widget import PoCalibrationWidget
 from .rig_bridge_settings_widget import RigBridgeSettingsWidget
+from .settings_wheel_filter import install_settings_no_wheel_filter
 from .smeter_calibration_widget import SmeterCalibrationSettingsWidget
 
 
@@ -92,9 +94,11 @@ def _scroll_page(inner: QWidget) -> QScrollArea:
 
 
 class ConnectionSettingsDialog(QDialog):
-    """Modaler Einstellungsdialog (CAT + Rig-Bridge)."""
+    """Modaler Einstellungsdialog (CAT + Rig-Bridge + Kalibrierung)."""
 
     settings_changed = Signal()
+    po_calibration_applied = Signal()
+    po_calibration_busy = Signal(bool)
 
     def __init__(
         self,
@@ -187,6 +191,23 @@ class ConnectionSettingsDialog(QDialog):
             self._settings.smeter_calibration,
             parent=self,
         )
+        smeter_box = QGroupBox("S-Meter-Kalibrierung")
+        smeter_box_layout = QVBoxLayout(smeter_box)
+        smeter_box_layout.setContentsMargins(10, 14, 10, 10)
+        smeter_box_layout.addWidget(self._smeter_cal_widget)
+
+        self._po_cal_widget = PoCalibrationWidget(self._cat, parent=self)
+        self._po_cal_widget.calibration_applied.connect(
+            self.po_calibration_applied.emit
+        )
+        self._po_cal_widget.busy_changed.connect(self.po_calibration_busy.emit)
+
+        po_box = QGroupBox("PO-Meter-Kalibrierung (Sendeleistung)")
+        po_box.setMaximumWidth(370)
+        po_box_layout = QVBoxLayout(po_box)
+        po_box_layout.setContentsMargins(10, 14, 10, 10)
+        po_box_layout.addWidget(self._po_cal_widget, 0, Qt.AlignmentFlag.AlignLeft)
+
         page_cal = QWidget()
         page_cal.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -194,7 +215,9 @@ class ConnectionSettingsDialog(QDialog):
         )
         cal_layout = QVBoxLayout(page_cal)
         cal_layout.setContentsMargins(0, 0, 0, 0)
-        cal_layout.addWidget(self._smeter_cal_widget)
+        cal_layout.setSpacing(12)
+        cal_layout.addWidget(smeter_box)
+        cal_layout.addWidget(po_box)
         cal_layout.addStretch(1)
 
         self._settings_stack.addWidget(_scroll_page(page_cat))
@@ -235,6 +258,7 @@ class ConnectionSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
 
+        self._wheel_filter = install_settings_no_wheel_filter(self)
         QTimer.singleShot(0, self._apply_settings_nav_style)
 
     def _on_settings_nav_changed(self, row: int) -> None:
@@ -565,7 +589,20 @@ class ConnectionSettingsDialog(QDialog):
     # OK / Abbrechen
     # ------------------------------------------------------------------
 
+    def reject(self) -> None:  # type: ignore[override]
+        if not self._po_cal_widget.confirm_abort_if_busy():
+            return
+        super().reject()
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        if not self._po_cal_widget.confirm_abort_if_busy():
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def accept(self) -> None:  # type: ignore[override]
+        if not self._po_cal_widget.confirm_abort_if_busy():
+            return
         port = self._current_port_device()
         baud = self.baud_combo.currentData()
         if not isinstance(baud, int):

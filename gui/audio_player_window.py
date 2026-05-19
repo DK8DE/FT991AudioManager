@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
     QCheckBox,
-    QFileDialog,
     QGroupBox,
     QComboBox,
     QHBoxLayout,
@@ -55,6 +54,7 @@ from model.audio_player_settings import (
 )
 
 from .app_icon import app_icon
+from .folder_dialog import pick_audio_player_folder
 from .window_lifecycle import application_exit_close_requested
 
 if TYPE_CHECKING:
@@ -529,7 +529,7 @@ class AudioPlayerWindow(QMainWindow):
 
     def _on_pick_folder(self) -> None:
         start = str(self._folder) if self._folder.is_dir() else ""
-        path = QFileDialog.getExistingDirectory(self, "Audio-Ordner", start)
+        path = pick_audio_player_folder(self, start)
         if not path:
             return
         self._folder = Path(path)

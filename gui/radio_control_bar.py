@@ -29,9 +29,9 @@ class RadioControlBar(QFrame):
         self._flrig_blink_active = False
         self._flrig_blink_phase = 0
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(8)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(8, 6, 8, 6)
+        root.setSpacing(12)
 
         self._tune_btn = QPushButton("Tune")
         self._tune_btn.setMinimumWidth(72)
@@ -70,12 +70,17 @@ class RadioControlBar(QFrame):
         )
         self._recorder_btn.clicked.connect(self.audio_recorder_clicked.emit)
 
-        layout.addWidget(self._tune_btn)
-        layout.addWidget(self._rev_btn)
-        layout.addWidget(self._audio_btn)
-        layout.addWidget(self._recorder_btn)
+        left = QWidget(self)
+        left_layout = QHBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+        left_layout.addWidget(self._tune_btn)
+        left_layout.addWidget(self._rev_btn)
+        left_layout.addWidget(self._audio_btn)
+        left_layout.addWidget(self._recorder_btn)
+        left_layout.addStretch(1)
 
-        # --- Rig-Bridge: FLRig (nach Audiorecorder) ----------------
+        # --- Rig-Bridge: FLRig (rechter Bereich, rechtsbündig) ------
         bridge_tip = (
             "FLRig-Rig-Bridge über die App-CAT-Leitung.\n"
             "Grün: Server läuft. Rot: in Einstellungen aus oder gestoppt / kein CAT.\n"
@@ -93,14 +98,20 @@ class RadioControlBar(QFrame):
         self._lbl_flrig_clients.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        self._lbl_flrig_clients.setToolTip("Anzahl verbundener Clients (logische Gegenstellen)")
+        self._lbl_flrig_clients.setToolTip(
+            "Anzahl verbundener Clients (logische Gegenstellen)"
+        )
 
-        layout.addSpacing(10)
-        layout.addWidget(self._lbl_flrig_title)
-        layout.addWidget(self._led_flrig)
-        layout.addWidget(self._lbl_flrig_clients)
+        right = QWidget(self)
+        right_layout = QHBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(8)
+        right_layout.addWidget(self._lbl_flrig_title)
+        right_layout.addWidget(self._led_flrig)
+        right_layout.addWidget(self._lbl_flrig_clients)
 
-        layout.addStretch(1)
+        root.addWidget(left, 1)
+        root.addWidget(right, 0, Qt.AlignmentFlag.AlignRight)
         self.set_controls_enabled(False)
 
     def refresh_rig_bridge_indicators(

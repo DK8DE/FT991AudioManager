@@ -63,7 +63,6 @@ from .audio_player_window import AudioPlayerWindow
 from .audio_recorder_window import AudioRecorderWindow
 from .equalizer_window import EqualizerWindow
 from .log_widget import LogWindow
-from .calibration_dialog import open_calibration_dialog
 from .memory_editor_dialog import open_memory_editor
 from .memory_loader import MemoryChannelLoader
 from .meter_widget import MeterWidget
@@ -88,6 +87,15 @@ _VFO_CAPTION_STYLE_IN_BAND = "color: #5ddc7a; font-weight: bold;"
 _VFO_CAPTION_STYLE_OUT_OF_BAND = "color: #ff6b6b; font-weight: bold;"
 _VFO_CAPTION_TO_FREQ_GAP_PX = 10
 _VFO_FREQ_COLOR = "#FFFFFF"
+
+
+def _status_bar_mode_text(mode_value: str) -> str:
+    """Abstand vor dem Statusleisten-Trennstrich (|) nach dem Mode-Text."""
+    return f"Mode: {mode_value} "
+
+
+def _status_bar_tx_text(transmitting: bool) -> str:
+    return "TX: AN " if transmitting else "TX: aus "
 
 
 class MainWindow(QMainWindow):
@@ -128,7 +136,6 @@ class MainWindow(QMainWindow):
         self._audio_player_window: Optional[AudioPlayerWindow] = None
         self._audio_recorder_window: Optional[AudioRecorderWindow] = None
         self._memory_editor: Optional[QWidget] = None
-        self._calibration_dialog: Optional[QWidget] = None
         self._application_shutting_down = False
         self._last_identity_info: str = ""
         self._vfo_a_pending_hz: Optional[int] = None
@@ -164,8 +171,8 @@ class MainWindow(QMainWindow):
         )
         sb = QStatusBar()
         sb.addWidget(self._connection_footer_label, 1)
-        self._tx_label = QLabel("TX: aus")
-        self._mode_label = QLabel("Mode: —")
+        self._tx_label = QLabel(_status_bar_tx_text(False))
+        self._mode_label = QLabel(_status_bar_mode_text("—"))
         sb.addPermanentWidget(self._mode_label)
         sb.addPermanentWidget(self._tx_label)
         self.setStatusBar(sb)
@@ -557,12 +564,6 @@ class MainWindow(QMainWindow):
         audio_recorder_action.setShortcut("Ctrl+Shift+R")
         audio_recorder_action.triggered.connect(self._on_audio_recorder_action)
         edit_menu.addAction(audio_recorder_action)
-
-        edit_menu.addSeparator()
-
-        calibration_action = QAction("&Kalibrierung…", self)
-        calibration_action.triggered.connect(self._on_calibration_action)
-        edit_menu.addAction(calibration_action)
 
         # === Ansicht ==================================================
         view_menu = menu.addMenu("&Ansicht")
@@ -978,7 +979,7 @@ class MainWindow(QMainWindow):
             self._rig_bridge.on_app_disconnected()
         if not connected:
             self._reset_relay_rev_state()
-            self._mode_label.setText("Mode: —")
+            self._mode_label.setText(_status_bar_mode_text("—"))
             self._vfo_a_display_hz = 0
             self._vfo_b_display_hz = 0
             self._update_vfo_caption_band_color(self._vfo_a_caption, 0)
@@ -988,7 +989,7 @@ class MainWindow(QMainWindow):
             self._vfo_a_triplet.set_interactive(False)
             self._vfo_b_triplet.set_interactive(False)
             self._vfo_ab_button.setEnabled(False)
-            self._tx_label.setText("TX: aus")
+            self._tx_label.setText(_status_bar_tx_text(False))
             # Bei Verbindungsverlust laufenden Loader stoppen und die
             # Combo zurücksetzen — sonst zeigt sie veraltete Kanäle.
             self._memory_loader.stop()
@@ -1002,7 +1003,7 @@ class MainWindow(QMainWindow):
         self._persist_settings()
 
     def _on_tx_status_changed(self, transmitting: bool) -> None:
-        self._tx_label.setText("TX: AN" if transmitting else "TX: aus")
+        self._tx_label.setText(_status_bar_tx_text(transmitting))
         self._rig_bridge.update_from_radio(ptt=transmitting)
         if transmitting:
             self._tx_label.setStyleSheet("color: #ff6060; font-weight: bold;")
@@ -1036,8 +1037,8 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Vom MeterWidget bei jedem Slow-Path-RX-Sample gerufen."""
         if isinstance(mode, RxMode):
-            self._mode_label.setText(f"Mode: {mode.value}")
-            self._rig_bridge.update_from_radio(mode=mode.value)
+            self._mode_label.setText(_status_bar_mode_text(mode.value))
+        self._rig_bridge.update_from_radio(mode=mode.value)
         if frequency_hz > 0:
             if not self._relay_rev_active:
                 self._relay_output_hz = frequency_hz
@@ -1215,7 +1216,7 @@ class MainWindow(QMainWindow):
                     self._apply_vfo_a_display_hz(hz)
                 try:
                     mode = ft.read_rx_mode()
-                    self._mode_label.setText(f"Mode: {mode.value}")
+                    self._mode_label.setText(_status_bar_mode_text(mode.value))
                 except CatError:
                     pass
             self._sync_memory_combo_from_radio()
@@ -1500,40 +1501,13 @@ class MainWindow(QMainWindow):
         self.profile_widget.set_cat_blocked(False)
         self.meter_widget.ensure_polling()
 
-    def _on_calibration_action(self) -> None:
-        if not self._cat.is_connected():
-            QMessageBox.information(
-                self,
-                "Nicht verbunden",
-                (
-                    "Die Kalibrierung benötigt eine aktive CAT-Verbindung.\n\n"
-                    "Bitte zuerst verbinden."
-                ),
-            )
-            return
-        dlg = self._calibration_dialog
-        if dlg is not None and dlg.isVisible():
-            dlg.raise_()
-            dlg.activateWindow()
-            return
-        self.meter_widget.pause_polling()
-        self.profile_widget.set_cat_blocked(True)
-        self._calibration_dialog = open_calibration_dialog(
-            self._cat,
-            parent=self,
-            on_closed=self._on_calibration_closed,
-        )
-        self._calibration_dialog.calibration_applied.connect(
-            self._on_calibration_applied
-        )
-
-    def _on_calibration_applied(self) -> None:
-        self.meter_widget.refresh_po_calibration()
-
-    def _on_calibration_closed(self, *_args: object) -> None:
-        self._calibration_dialog = None
-        self.profile_widget.set_cat_blocked(False)
-        self.meter_widget.ensure_polling()
+    def _on_po_calibration_busy(self, busy: bool) -> None:
+        if busy:
+            self.meter_widget.pause_polling()
+            self.profile_widget.set_cat_blocked(True)
+        else:
+            self.profile_widget.set_cat_blocked(False)
+            self.meter_widget.ensure_polling()
 
     def _on_settings_action(self) -> None:
         dialog = ConnectionSettingsDialog(
@@ -1543,7 +1517,13 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         dialog.settings_changed.connect(self._persist_settings)
+        dialog.po_calibration_applied.connect(
+            self.meter_widget.refresh_po_calibration
+        )
+        dialog.po_calibration_busy.connect(self._on_po_calibration_busy)
         dialog.exec()
+        self.profile_widget.set_cat_blocked(False)
+        self.meter_widget.ensure_polling()
         # Nach dem Schließen die Anzeige in der Statusleiste aktualisieren
         # (Port/Baud können sich geändert haben). ID-Info bleibt, falls noch
         # verbunden.
@@ -1661,9 +1641,6 @@ class MainWindow(QMainWindow):
         if self._memory_editor is not None:
             self._memory_editor.close()
             self._memory_editor = None
-        if self._calibration_dialog is not None:
-            self._calibration_dialog.close()
-            self._calibration_dialog = None
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._application_shutting_down = True
