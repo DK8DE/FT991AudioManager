@@ -69,6 +69,11 @@ class AudioRadioSessionHost(QObject):
     def thread(self) -> QThread:
         return self._thread
 
+    @property
+    def has_open_audio_windows(self) -> bool:
+        """True, wenn Audio-Player oder -Recorder die Session nutzen."""
+        return bool(self._open_ids)
+
     def reload_data_mode_from_settings(self) -> None:
         """Nach Settings-Laden die gewünschte DATA-Art syncen (ohne CAT)."""
         target = data_mode_from_string(self._settings.audio_player.data_mode)

@@ -18,6 +18,8 @@ class RadioControlBar(QFrame):
 
     tune_clicked = Signal()
     rev_toggled = Signal(bool)
+    t_call_pressed = Signal()
+    t_call_released = Signal()
     audio_player_clicked = Signal()
     audio_recorder_clicked = Signal()
 
@@ -55,6 +57,23 @@ class RadioControlBar(QFrame):
         )
         self._rev_btn.toggled.connect(self.rev_toggled.emit)
 
+        self._tcall_btn = QPushButton("T.CALL")
+        self._tcall_btn.setMinimumWidth(58)
+        self._tcall_btn.setToolTip(
+            "1750-Hz-Rufton: Taste gedrückt halten (nicht nur anklicken) — "
+            "CAT-Senden, Ton auf Sende- und PC-Ausgabe; loslassen = Stopp"
+        )
+        self._tcall_btn.setStyleSheet(
+            "QPushButton:pressed {"
+            "  background-color: #5ddc7a;"
+            "  color: #101010;"
+            "  font-weight: bold;"
+            "  border: 1px solid #2f8a47;"
+            "}"
+        )
+        self._tcall_btn.pressed.connect(self.t_call_pressed.emit)
+        self._tcall_btn.released.connect(self.t_call_released.emit)
+
         self._audio_btn = QPushButton("Audioplayer")
         self._audio_btn.setMinimumWidth(96)
         self._audio_btn.setToolTip(
@@ -76,6 +95,7 @@ class RadioControlBar(QFrame):
         left_layout.setSpacing(8)
         left_layout.addWidget(self._tune_btn)
         left_layout.addWidget(self._rev_btn)
+        left_layout.addWidget(self._tcall_btn)
         left_layout.addWidget(self._audio_btn)
         left_layout.addWidget(self._recorder_btn)
         left_layout.addStretch(1)
@@ -151,10 +171,18 @@ class RadioControlBar(QFrame):
         self._rev_btn.setChecked(checked)
         self._rev_btn.blockSignals(False)
 
+    def is_t_call_pressed(self) -> bool:
+        return self._tcall_btn.isDown()
+
+    def set_t_call_active(self, active: bool) -> None:
+        self._tcall_btn.setDown(bool(active))
+
     def set_controls_enabled(self, enabled: bool) -> None:
         self._tune_btn.setEnabled(enabled)
         self._rev_btn.setEnabled(enabled)
+        self._tcall_btn.setEnabled(enabled)
         if not enabled:
             self.set_rev_checked(False)
+            self.set_t_call_active(False)
         self._audio_btn.setEnabled(True)
         self._recorder_btn.setEnabled(True)

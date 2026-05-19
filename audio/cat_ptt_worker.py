@@ -13,9 +13,15 @@ class CatPttWorker(QObject):
     succeeded = Signal(bool)
     failed = Signal(str)
 
-    def __init__(self, serial_cat: SerialCAT) -> None:
+    def __init__(
+        self,
+        serial_cat: SerialCAT,
+        *,
+        wait_for_tx_confirm: bool = True,
+    ) -> None:
         super().__init__()
         self._cat = serial_cat
+        self._wait_for_tx_confirm = bool(wait_for_tx_confirm)
 
     @Slot(bool)
     def set_transmit(self, on: bool) -> None:
@@ -23,7 +29,9 @@ class CatPttWorker(QObject):
             if not self._cat.is_connected():
                 self.failed.emit("CAT nicht verbunden")
                 return
-            FT991CAT(self._cat).set_cat_transmit(on)
+            FT991CAT(self._cat).set_cat_transmit(
+                on, wait=self._wait_for_tx_confirm
+            )
             self.succeeded.emit(on)
         except CatError as exc:
             self.failed.emit(str(exc))

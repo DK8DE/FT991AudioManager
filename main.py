@@ -30,9 +30,17 @@ def _install_german_qt_translations(app: QCoreApplication) -> None:
 
 def main() -> int:
     if sys.platform == "win32":
+        import warnings
+
         from audio.qt_media_env import ensure_qt_media_backend
 
         ensure_qt_media_backend()
+        # pycaw: harmlose COM-Warnungen bei offline-Geräten (HDMI/NVIDIA …).
+        warnings.filterwarnings(
+            "ignore",
+            category=UserWarning,
+            message=r"COMError attempting to get property",
+        )
 
     from PySide6.QtCore import QLocale
     from PySide6.QtWidgets import QApplication
@@ -56,6 +64,7 @@ def main() -> int:
     apply_theme(app, dark=settings.ui.force_dark_mode)
 
     window = MainWindow(settings)
+    app.aboutToQuit.connect(window.shutdown_background_services)
     window.show()
 
     return app.exec()

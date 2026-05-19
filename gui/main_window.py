@@ -21,9 +21,10 @@ from typing import Optional, cast
 
 import serial
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QSize
+from PySide6.QtCore import QEvent, QMetaObject, QObject, Qt, QTimer, QSize
 from PySide6.QtGui import QAction, QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (
+    QStyle,
     QApplication,
     QComboBox,
     QFrame,
@@ -51,6 +52,8 @@ from cat import (
 )
 from mapping.memory_mapping import MemoryChannel
 from mapping.rx_mapping import RxMode, coarse_mode_group_for, rx_mode_from_selection
+from audio.audio_settings_hub import AudioSettingsHub
+from audio.t_call_controller import TCallController
 from model import AppSettings, PresetStore
 from rig_bridge import RigBridgeManager
 
@@ -58,10 +61,12 @@ from version import APP_NAME, APP_VERSION
 
 from .about_window import AboutWindow
 from .app_icon import app_icon
+from .menu_icons import menu_action_icon
 from .audio_radio_session import AudioRadioSessionHost
 from .audio_player_window import AudioPlayerWindow
 from .audio_recorder_window import AudioRecorderWindow
 from .equalizer_window import EqualizerWindow
+from .sound_settings_dialog import SoundSettingsWindow
 from .log_widget import LogWindow
 from .memory_editor_dialog import open_memory_editor
 from .memory_loader import MemoryChannelLoader
@@ -132,7 +137,11 @@ class MainWindow(QMainWindow):
         apply_smeter_calibration_from_settings(settings.smeter_calibration)
 
         self._log_window: Optional[LogWindow] = None
+        self._audio_hub = AudioSettingsHub(self._settings, parent=self)
+        self._audio_hub.sync_from_windows()
+
         self._equalizer_window: Optional[EqualizerWindow] = None
+        self._sound_settings_window: Optional[SoundSettingsWindow] = None
         self._audio_player_window: Optional[AudioPlayerWindow] = None
         self._audio_recorder_window: Optional[AudioRecorderWindow] = None
         self._memory_editor: Optional[QWidget] = None
@@ -160,8 +169,23 @@ class MainWindow(QMainWindow):
         self._connect_restore_memory_channel: Optional[int] = None
         #: Zähler offener Connect-Init-Schritte (Profil-Write + Memory-Load).
         self._connect_init_pending: int = 0
+        #: T.CALL wartet auf DATA-FM per CAT (Apply/Engage).
+        self._tcall_cat_pending: bool = False
+        #: Nach T.CALL: volles Restore (Snapshot) oder nur Sprach-Mode.
+        self._tcall_release_restore_full: bool = False
+        self._tcall_release_engage_plain: bool = False
+        #: Vorübergehend von DATA-USB/… auf DATA-FM — danach zurückschalten.
+        self._tcall_restore_data_mode: Optional[RxMode] = None
 
         self._build_ui()
+        self._t_call = TCallController(self._audio_hub, parent=self)
+        self._t_call.error.connect(self._on_t_call_error)
+        self._t_call.active_changed.connect(self._on_t_call_active_changed)
+        _tcall_worker = self._audio_radio_session.worker
+        _tcall_worker.apply_finished.connect(self._on_tcall_radio_apply_finished)
+        _tcall_worker.engage_data_finished.connect(
+            self._on_tcall_radio_engage_data_finished
+        )
         self._build_menu()
 
         # Statusleiste: links Verbindung + Speicherkanal-Laden, rechts Mode/TX.
@@ -445,6 +469,8 @@ class MainWindow(QMainWindow):
         self._radio_control_bar = RadioControlBar()
         self._radio_control_bar.tune_clicked.connect(self._on_tune_clicked)
         self._radio_control_bar.rev_toggled.connect(self._on_rev_toggled)
+        self._radio_control_bar.t_call_pressed.connect(self._on_t_call_pressed)
+        self._radio_control_bar.t_call_released.connect(self._on_t_call_released)
         self._radio_control_bar.audio_player_clicked.connect(
             self._on_audio_player_action
         )
@@ -519,16 +545,34 @@ class MainWindow(QMainWindow):
         file_menu = menu.addMenu("&Datei")
 
         settings_action = QAction("&Einstellungen…", self)
+        settings_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_FileDialogDetailedView,
+                theme_name="preferences-system",
+            )
+        )
         settings_action.setShortcut("Ctrl+E")
         settings_action.triggered.connect(self._on_settings_action)
         file_menu.addAction(settings_action)
 
         self._connect_action = QAction("&Verbinden", self)
+        self._connect_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_DriveNetIcon,
+                theme_name="network-connect",
+            )
+        )
         self._connect_action.setShortcut("Ctrl+V")
         self._connect_action.triggered.connect(self._on_connect_menu)
         file_menu.addAction(self._connect_action)
 
         self._disconnect_action = QAction("&Trennen", self)
+        self._disconnect_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_BrowserStop,
+                theme_name="network-disconnect",
+            )
+        )
         self._disconnect_action.setShortcut("Ctrl+T")
         self._disconnect_action.triggered.connect(self._on_disconnect_menu)
         file_menu.addAction(self._disconnect_action)
@@ -536,6 +580,12 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
 
         quit_action = QAction("&Beenden", self)
+        quit_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_TitleBarCloseButton,
+                theme_name="application-exit",
+            )
+        )
         quit_action.setShortcut("Ctrl+Q")
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
@@ -544,6 +594,12 @@ class MainWindow(QMainWindow):
         edit_menu = menu.addMenu("&Bearbeiten")
 
         memory_action = QAction("&Speicherkanäle…", self)
+        memory_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_DirOpenIcon,
+                theme_name="folder-open",
+            )
+        )
         memory_action.setShortcut("Ctrl+K")
         memory_action.triggered.connect(self._on_memory_editor_action)
         edit_menu.addAction(memory_action)
@@ -551,16 +607,45 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
 
         equalizer_action = QAction("&Equalizer…", self)
+        equalizer_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_MediaVolume,
+                theme_name="audio-volume-high",
+            )
+        )
         equalizer_action.setShortcut("Ctrl+Shift+E")
         equalizer_action.triggered.connect(self._on_equalizer_action)
         edit_menu.addAction(equalizer_action)
 
+        sound_settings_action = QAction("&Soundeinstellung…", self)
+        sound_settings_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_MediaVolume,
+                theme_name="preferences-desktop-sound",
+            )
+        )
+        sound_settings_action.setShortcut("Ctrl+Shift+S")
+        sound_settings_action.triggered.connect(self._on_sound_settings_action)
+        edit_menu.addAction(sound_settings_action)
+
         audio_player_action = QAction("&Audio-Player…", self)
+        audio_player_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_MediaPlay,
+                theme_name="media-playback-start",
+            )
+        )
         audio_player_action.setShortcut("Ctrl+Shift+A")
         audio_player_action.triggered.connect(self._on_audio_player_action)
         edit_menu.addAction(audio_player_action)
 
         audio_recorder_action = QAction("Audio-&Recorder…", self)
+        audio_recorder_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_FileIcon,
+                theme_name="media-record",
+            )
+        )
         audio_recorder_action.setShortcut("Ctrl+Shift+R")
         audio_recorder_action.triggered.connect(self._on_audio_recorder_action)
         edit_menu.addAction(audio_recorder_action)
@@ -569,6 +654,12 @@ class MainWindow(QMainWindow):
         view_menu = menu.addMenu("&Ansicht")
 
         self.log_toggle_action = QAction("CAT-&Log anzeigen", self)
+        self.log_toggle_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_FileDialogInfoView,
+                theme_name="utilities-log-viewer",
+            )
+        )
         self.log_toggle_action.setCheckable(True)
         self.log_toggle_action.setChecked(self._settings.ui.show_cat_log)
         self.log_toggle_action.setShortcut("Ctrl+L")
@@ -578,6 +669,12 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
 
         self.dark_mode_action = QAction("&Dark Mode", self)
+        self.dark_mode_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_DesktopIcon,
+                theme_name="weather-night",
+            )
+        )
         self.dark_mode_action.setCheckable(True)
         self.dark_mode_action.setChecked(self._settings.ui.force_dark_mode)
         self.dark_mode_action.setShortcut("Ctrl+D")
@@ -587,6 +684,12 @@ class MainWindow(QMainWindow):
         # === Hilfe ====================================================
         help_menu = menu.addMenu("&Hilfe")
         version_action = QAction("&Version", self)
+        version_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_MessageBoxInformation,
+                theme_name="help-about",
+            )
+        )
         version_action.triggered.connect(self._show_about)
         help_menu.addAction(version_action)
 
@@ -835,6 +938,205 @@ class MainWindow(QMainWindow):
         self._relay_pre_rev_memory_channel = None
         self._radio_control_bar.set_rev_checked(False)
 
+    def _audio_tx_busy(self) -> bool:
+        """CAT-Sendung über Audio-Player oder -Recorder läuft."""
+        if self._audio_player_window is not None:
+            try:
+                if self._audio_player_window._controller.is_busy():
+                    return True
+            except Exception:
+                pass
+        if self._audio_recorder_window is not None:
+            try:
+                if (
+                    self._audio_recorder_window._player.is_busy()
+                    or self._audio_recorder_window._recorder.is_busy()
+                ):
+                    return True
+            except Exception:
+                pass
+        return False
+
+    def _on_t_call_active_changed(self, active: bool) -> None:
+        self._radio_control_bar.set_t_call_active(active)
+
+    def _on_t_call_pressed(self) -> None:
+        if not self._cat.is_connected():
+            self._on_t_call_error("CAT nicht verbunden")
+            return
+        if self._audio_tx_busy():
+            QMessageBox.information(
+                self,
+                "T.CALL",
+                "Audio-Player oder -Recorder sendet bereits — "
+                "bitte zuerst stoppen.",
+            )
+            return
+        if self._tcall_cat_pending:
+            return
+
+        self.meter_widget.pause_polling()
+        self._tcall_release_restore_full = False
+        self._tcall_release_engage_plain = False
+        self._tcall_restore_data_mode = None
+
+        setup = self._audio_radio_session.setup
+        setup.set_data_mode(RxMode.DATA_FM)
+        worker = self._audio_radio_session.worker
+
+        if setup.in_data_mode:
+            prev_data = setup.data_mode
+            if prev_data != RxMode.DATA_FM:
+                self._tcall_restore_data_mode = prev_data
+                ok, msg = setup.set_data_mode(RxMode.DATA_FM)
+                if not ok:
+                    self._on_t_call_error(msg or "DATA-FM nicht gesetzt")
+                    self.meter_widget.ensure_polling()
+                    return
+                if msg:
+                    self.statusBar().showMessage(f"T.CALL: {msg}", 4000)
+            QTimer.singleShot(150, self._t_call_arm_tx_and_audio)
+            return
+
+        self.statusBar().showMessage("T.CALL: Schalte auf DATA-FM …", 0)
+        self._tcall_cat_pending = True
+
+        if setup.is_applied:
+            self._tcall_release_engage_plain = True
+            QMetaObject.invokeMethod(
+                worker,
+                "run_engage_data",
+                Qt.ConnectionType.QueuedConnection,
+            )
+            return
+
+        has_audio_win = self._audio_radio_session.has_open_audio_windows
+        self._tcall_release_restore_full = not has_audio_win
+        self._tcall_release_engage_plain = has_audio_win
+        QMetaObject.invokeMethod(
+            worker,
+            "run_apply",
+            Qt.ConnectionType.QueuedConnection,
+        )
+
+    def _on_tcall_radio_apply_finished(self, ok: bool, message: str) -> None:
+        if not self._tcall_cat_pending:
+            return
+        self._on_tcall_radio_cat_finished(ok, message)
+
+    def _on_tcall_radio_engage_data_finished(self, ok: bool, message: str) -> None:
+        if not self._tcall_cat_pending:
+            return
+        self._on_tcall_radio_cat_finished(ok, message)
+
+    def _on_tcall_radio_cat_finished(self, ok: bool, message: str) -> None:
+        self._tcall_cat_pending = False
+        if not self._radio_control_bar.is_t_call_pressed():
+            self._tcall_abort_radio_switch()
+            return
+        if not ok:
+            self._on_t_call_error(message or "DATA-FM konnte nicht gesetzt werden")
+            self.meter_widget.ensure_polling()
+            return
+        if message:
+            self.statusBar().showMessage(f"T.CALL: {message}", 4000)
+        QTimer.singleShot(150, self._t_call_arm_tx_and_audio)
+
+    def _tcall_abort_radio_switch(self) -> None:
+        """Taste losgelassen, bevor DATA-FM fertig — Funkzustand zurück."""
+        if self._tcall_restore_data_mode is not None:
+            mode = self._tcall_restore_data_mode
+            self._tcall_restore_data_mode = None
+            if self._cat.is_connected():
+                self._audio_radio_session.setup.set_data_mode(mode)
+            self._tcall_release_restore_full = False
+            self._tcall_release_engage_plain = False
+            self._tcall_cat_pending = False
+            return
+        if self._tcall_release_restore_full:
+            QMetaObject.invokeMethod(
+                self._audio_radio_session.worker,
+                "run_restore",
+                Qt.ConnectionType.QueuedConnection,
+            )
+        elif self._tcall_release_engage_plain:
+            QMetaObject.invokeMethod(
+                self._audio_radio_session.worker,
+                "run_engage_plain",
+                Qt.ConnectionType.QueuedConnection,
+            )
+        self._tcall_release_restore_full = False
+        self._tcall_release_engage_plain = False
+        self._tcall_restore_data_mode = None
+        self._tcall_cat_pending = False
+
+    def _t_call_arm_tx_and_audio(self) -> None:
+        if not self._radio_control_bar.is_t_call_pressed():
+            self._tcall_abort_radio_switch()
+            self.meter_widget.ensure_polling()
+            return
+        if not self._cat.is_connected():
+            self.meter_widget.ensure_polling()
+            return
+        try:
+            FT991CAT(self._cat).set_cat_transmit(True, wait=False)
+        except CatError as exc:
+            self._on_t_call_error(str(exc))
+            self._tcall_abort_radio_switch()
+            self.meter_widget.ensure_polling()
+            return
+        self._t_call.start()
+
+    def _on_t_call_released(self) -> None:
+        self._t_call.stop()
+        if self._tcall_cat_pending:
+            self._tcall_abort_radio_switch()
+        elif self._cat.is_connected():
+            try:
+                FT991CAT(self._cat).set_cat_transmit(False, wait=False)
+            except CatError as exc:
+                self._on_t_call_error(str(exc))
+            self._tcall_restore_radio_after_call()
+        self.meter_widget.ensure_polling()
+
+    def _tcall_restore_radio_after_call(self) -> None:
+        """Nach T.CALL: vorherigen Funk-Mode/Menüs wiederherstellen."""
+        if self._tcall_restore_data_mode is not None:
+            mode = self._tcall_restore_data_mode
+            self._tcall_restore_data_mode = None
+            if self._cat.is_connected():
+                ok, msg = self._audio_radio_session.setup.set_data_mode(mode)
+                if not ok:
+                    self._on_t_call_error(msg or f"{mode.value} nicht wiederhergestellt")
+                elif msg:
+                    self.statusBar().showMessage(f"T.CALL: {msg}", 4000)
+            self._tcall_release_restore_full = False
+            self._tcall_release_engage_plain = False
+            return
+        if not self._cat.is_connected():
+            self._tcall_release_restore_full = False
+            self._tcall_release_engage_plain = False
+            return
+        worker = self._audio_radio_session.worker
+        if self._tcall_release_restore_full:
+            self.statusBar().showMessage("T.CALL: Stelle Funkgerät wieder her …", 3000)
+            QMetaObject.invokeMethod(
+                worker,
+                "run_restore",
+                Qt.ConnectionType.QueuedConnection,
+            )
+        elif self._tcall_release_engage_plain:
+            QMetaObject.invokeMethod(
+                worker,
+                "run_engage_plain",
+                Qt.ConnectionType.QueuedConnection,
+            )
+        self._tcall_release_restore_full = False
+        self._tcall_release_engage_plain = False
+
+    def _on_t_call_error(self, message: str) -> None:
+        self.statusBar().showMessage(f"T.CALL: {message}", 5000)
+
     def _on_rev_toggled(self, active: bool) -> None:
         if not self._cat.is_connected():
             self._radio_control_bar.set_rev_checked(False)
@@ -978,6 +1280,7 @@ class MainWindow(QMainWindow):
         else:
             self._rig_bridge.on_app_disconnected()
         if not connected:
+            self._t_call.stop()
             self._reset_relay_rev_state()
             self._mode_label.setText(_status_bar_mode_text("—"))
             self._vfo_a_display_hz = 0
@@ -1412,6 +1715,27 @@ class MainWindow(QMainWindow):
     def _on_equalizer_window_closed(self) -> None:
         pass
 
+    def _ensure_sound_settings_window(self) -> SoundSettingsWindow:
+        if self._sound_settings_window is None:
+            self._sound_settings_window = SoundSettingsWindow(
+                self._settings,
+                self._audio_hub,
+                parent=self,
+            )
+            self._sound_settings_window.closed.connect(
+                self._on_sound_settings_window_closed
+            )
+        return self._sound_settings_window
+
+    def _on_sound_settings_action(self) -> None:
+        win = self._ensure_sound_settings_window()
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def _on_sound_settings_window_closed(self) -> None:
+        self._persist_settings()
+
     def _ensure_audio_player_window(self) -> AudioPlayerWindow:
         if self._audio_player_window is None:
             self._audio_player_window = AudioPlayerWindow(
@@ -1419,6 +1743,7 @@ class MainWindow(QMainWindow):
                 self._cat,
                 audio_radio_session=self._audio_radio_session,
                 operating_mode_provider=self._main_operating_mode,
+                audio_hub=self._audio_hub,
                 parent=self,
             )
             self._audio_player_window.closed.connect(
@@ -1448,6 +1773,7 @@ class MainWindow(QMainWindow):
                 self._cat,
                 audio_radio_session=self._audio_radio_session,
                 operating_mode_provider=self._main_operating_mode,
+                audio_hub=self._audio_hub,
                 parent=self,
             )
             self._audio_recorder_window.closed.connect(
@@ -1621,6 +1947,17 @@ class MainWindow(QMainWindow):
         except OSError:
             pass
 
+    def shutdown_background_services(self) -> None:
+        """Hintergrund-Threads/Timer vor App-Ende sauber stoppen."""
+        try:
+            self._audio_hub.stop_polling()
+        except Exception:
+            pass
+        try:
+            self._t_call.shutdown()
+        except Exception:
+            pass
+
     def _shutdown_auxiliary_windows(self) -> None:
         """Alle Hilfsfenster endgültig schließen (nicht nur verstecken)."""
         if self._log_window is not None:
@@ -1656,6 +1993,10 @@ class MainWindow(QMainWindow):
         try:
             self.meter_widget.stop_polling()
         finally:
+            try:
+                self.shutdown_background_services()
+            except Exception:
+                pass
             try:
                 self._cat.disconnect()
             finally:

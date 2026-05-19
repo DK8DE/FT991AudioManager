@@ -8,3 +8,6 @@ pyserial>=3.5
 # encoden dann nach MP3. So vermeiden wir Pegelverluste durch das schwache
 # QMediaRecorder-MP3-Encoding und brauchen kein externes ffmpeg.
 lameenc>=1.7
+# Windows: System-Lautstärke/Stumm pro Soundgerät (Soundeinstellungen)
+pycaw>=20240210; sys_platform == "win32"
+comtypes>=1.4; sys_platform == "win32"

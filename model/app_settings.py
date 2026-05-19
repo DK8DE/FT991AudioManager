@@ -26,6 +26,7 @@ from typing import Optional
 from ._app_paths import app_data_dir
 from .audio_player_settings import AudioPlayerSettings
 from .audio_recorder_settings import AudioRecorderSettings
+from .global_audio_settings import GlobalAudioSettings, sync_global_to_legacy
 from .rig_bridge_settings import RigBridgeSettings
 from .smeter_calibration_settings import SmeterCalibrationSettings
 
@@ -95,6 +96,7 @@ class AppSettings:
     rig_bridge: RigBridgeSettings = field(default_factory=RigBridgeSettings)
     audio_player: AudioPlayerSettings = field(default_factory=AudioPlayerSettings)
     audio_recorder: AudioRecorderSettings = field(default_factory=AudioRecorderSettings)
+    global_audio: GlobalAudioSettings = field(default_factory=GlobalAudioSettings)
     smeter_calibration: SmeterCalibrationSettings = field(
         default_factory=SmeterCalibrationSettings
     )
@@ -129,6 +131,7 @@ class AppSettings:
         rig_bridge_raw = data.get("rig_bridge", {}) or {}
         audio_player_raw = data.get("audio_player", {}) or {}
         audio_recorder_raw = data.get("audio_recorder", {}) or {}
+        global_audio_raw = data.get("global_audio")
         smeter_cal_raw = data.get("smeter_calibration", {}) or {}
 
         cat = CatSettings(
@@ -162,6 +165,13 @@ class AppSettings:
         rig_bridge = RigBridgeSettings.from_dict(rig_bridge_raw)
         audio_player = AudioPlayerSettings.from_dict(audio_player_raw)
         audio_recorder = AudioRecorderSettings.from_dict(audio_recorder_raw)
+        if global_audio_raw:
+            global_audio = GlobalAudioSettings.from_dict(global_audio_raw)
+        else:
+            global_audio = GlobalAudioSettings.migrate_from_legacy(
+                audio_player, audio_recorder
+            )
+        sync_global_to_legacy(global_audio, audio_player, audio_recorder)
         smeter_calibration = SmeterCalibrationSettings.from_dict(smeter_cal_raw)
         return cls(
             cat=cat,
@@ -170,6 +180,7 @@ class AppSettings:
             rig_bridge=rig_bridge,
             audio_player=audio_player,
             audio_recorder=audio_recorder,
+            global_audio=global_audio,
             smeter_calibration=smeter_calibration,
         )
 
@@ -183,6 +194,7 @@ class AppSettings:
             "rig_bridge": self.rig_bridge.to_dict(),
             "audio_player": self.audio_player.to_dict(),
             "audio_recorder": self.audio_recorder.to_dict(),
+            "global_audio": self.global_audio.to_dict(),
             "smeter_calibration": self.smeter_calibration.to_dict(),
         }
         with path.open("w", encoding="utf-8") as f:

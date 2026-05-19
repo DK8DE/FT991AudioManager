@@ -39,6 +39,32 @@ def multimedia_available() -> bool:
     return bool(_MULTIMEDIA_IMPORT and _MULTIMEDIA_AVAILABLE)
 
 
+def ensure_playback_backend(parent: Optional[QObject] = None) -> bool:
+    """Multimedia-Backend prüfen/initialisieren (auch ohne Audio-Player-Fenster)."""
+    global _MULTIMEDIA_IMPORT, _MULTIMEDIA_AVAILABLE
+
+    if multimedia_available():
+        return True
+
+    mm = qt_multimedia_types()
+    if mm is None:
+        _MULTIMEDIA_IMPORT = False
+        _MULTIMEDIA_AVAILABLE = False
+        return False
+
+    _QAudioOutput, _QMediaDevices, QMediaPlayer = mm
+    probe_parent = parent if parent is not None else QObject()
+    probe = QMediaPlayer(probe_parent)
+    ok = _player_backend_ok(probe, QMediaPlayer)
+    try:
+        probe.deleteLater()
+    except Exception:
+        pass
+    _MULTIMEDIA_IMPORT = True
+    _MULTIMEDIA_AVAILABLE = ok
+    return ok
+
+
 def _player_backend_ok(player: object, qmedia_player_cls: type) -> bool:
     if player is None:
         return False

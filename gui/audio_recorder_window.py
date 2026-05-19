@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -40,6 +39,7 @@ from audio.audio_recorder import (
     RecorderState,
     list_audio_input_devices,
 )
+from audio.audio_settings_hub import AudioSettingsHub
 from audio.player_controller import (
     PlayerController,
     PlayerState,
@@ -58,6 +58,7 @@ from cat.ft991_cat import FT991CAT
 from mapping import TX_STATE_MIC_PTT, TX_STATE_RX
 from mapping.rx_mapping import RxMode
 from model import AppSettings
+from model.global_audio_settings import ROLE_INPUT, ROLE_PC, ROLE_SEND
 from model.audio_recorder_settings import (
     ALLOWED_BITRATES_KBPS,
     DEFAULT_BITRATE_KBPS,
@@ -66,7 +67,9 @@ from model.audio_recorder_settings import (
 )
 
 from .app_icon import app_icon
+from .audio_hub_binding import connect_recorder_hub, load_global_audio_into_combos
 from .folder_dialog import pick_audio_recorder_folder
+from .volume_control_row import VolumeControlRow
 from .window_lifecycle import application_exit_close_requested
 
 if TYPE_CHECKING:
@@ -117,10 +120,12 @@ class AudioRecorderWindow(QMainWindow):
         *,
         audio_radio_session: Optional[AudioRadioSessionHost] = None,
         operating_mode_provider: Optional[Callable[[], RxMode]] = None,
+        audio_hub: Optional[AudioSettingsHub] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._settings = settings
+        self._audio_hub = audio_hub
         self._cat = serial_cat
         self._audio_radio_session = audio_radio_session
         self._operating_mode_provider = operating_mode_provider
@@ -218,6 +223,27 @@ class AudioRecorderWindow(QMainWindow):
         self._force_close_after_radio_restore = False
 
         self._build_ui()
+        if self._audio_hub is not None:
+            connect_recorder_hub(
+                hub=self._audio_hub,
+                combo_input=self.combo_input,
+                combo_send=self.combo_output,
+                combo_pc=self.combo_pc_output,
+                vol_input=self._vol_input,
+                vol_send=self._vol_send,
+                vol_pc=self._vol_pc,
+                check_tx_monitor=self.check_tx_monitor_pc,
+                on_input_device=self._apply_input_device,
+                on_send_device=self._apply_send_device,
+                on_pc_device=self._apply_pc_output_device,
+                on_input_volume=self._apply_input_volume,
+                on_send_volume=self._apply_send_volume,
+                on_pc_volume=self._apply_pc_volume,
+                on_input_mute=self._apply_input_mute,
+                on_send_mute=self._apply_send_mute,
+                on_pc_mute=self._apply_pc_mute,
+                on_tx_monitor=self._apply_tx_monitor,
+            )
         self._load_settings_to_ui()
         self._refresh_file_list()
         self._restore_geometry()
@@ -375,20 +401,12 @@ class AudioRecorderWindow(QMainWindow):
 
         in_vol_row = QHBoxLayout()
         in_vol_row.addWidget(_form_label("Aufnahme-Lautstärke:"))
-        self.slider_input_volume = QSlider(Qt.Orientation.Horizontal)
-        self.slider_input_volume.setRange(0, 100)
-        self.slider_input_volume.setValue(100)
-        self.slider_input_volume.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.slider_input_volume.setTickInterval(10)
-        self.slider_input_volume.setPageStep(10)
-        self.slider_input_volume.setToolTip(
-            "Aufnahme-Lautstärke des gewählten Aufnahme-Geräts"
+        self._vol_input = VolumeControlRow(
+            tooltip="Windows-Lautstärke des Aufnahme-Geräts"
         )
-        self.slider_input_volume.valueChanged.connect(self._on_input_volume_changed)
-        in_vol_row.addWidget(self.slider_input_volume, 1)
-        self.lbl_input_volume = QLabel("100 %")
-        self.lbl_input_volume.setMinimumWidth(40)
-        in_vol_row.addWidget(self.lbl_input_volume)
+        self._vol_input.value_changed.connect(self._on_input_volume_changed)
+        self._vol_input.mute_toggled.connect(self._on_input_mute_toggled)
+        in_vol_row.addWidget(self._vol_input, 1)
         dev_l.addLayout(in_vol_row)
 
         out_row = QHBoxLayout()
@@ -401,20 +419,12 @@ class AudioRecorderWindow(QMainWindow):
 
         out_vol_row = QHBoxLayout()
         out_vol_row.addWidget(_form_label("Wiedergabe-Lautstärke:"))
-        self.slider_output_volume = QSlider(Qt.Orientation.Horizontal)
-        self.slider_output_volume.setRange(0, 100)
-        self.slider_output_volume.setValue(100)
-        self.slider_output_volume.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.slider_output_volume.setTickInterval(10)
-        self.slider_output_volume.setPageStep(10)
-        self.slider_output_volume.setToolTip(
-            "Replay-Lautstärke des gewählten Wiedergabegeräts"
+        self._vol_send = VolumeControlRow(
+            tooltip="Windows-Lautstärke der Sende-Soundkarte (CAT-Replay)"
         )
-        self.slider_output_volume.valueChanged.connect(self._on_output_volume_changed)
-        out_vol_row.addWidget(self.slider_output_volume, 1)
-        self.lbl_output_volume = QLabel("100 %")
-        self.lbl_output_volume.setMinimumWidth(40)
-        out_vol_row.addWidget(self.lbl_output_volume)
+        self._vol_send.value_changed.connect(self._on_output_volume_changed)
+        self._vol_send.mute_toggled.connect(self._on_send_mute_toggled)
+        out_vol_row.addWidget(self._vol_send, 1)
         dev_l.addLayout(out_vol_row)
 
         pc_row = QHBoxLayout()
@@ -430,20 +440,12 @@ class AudioRecorderWindow(QMainWindow):
 
         pc_vol_row = QHBoxLayout()
         pc_vol_row.addWidget(_form_label("PC-Lautstärke:"))
-        self.slider_pc_volume = QSlider(Qt.Orientation.Horizontal)
-        self.slider_pc_volume.setRange(0, 100)
-        self.slider_pc_volume.setValue(100)
-        self.slider_pc_volume.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.slider_pc_volume.setTickInterval(10)
-        self.slider_pc_volume.setPageStep(10)
-        self.slider_pc_volume.setToolTip(
-            "Lautstärke der lokalen PC-Vorhöre (Play PC)"
+        self._vol_pc = VolumeControlRow(
+            tooltip="Windows-Lautstärke der PC-Ausgabe (Play PC)"
         )
-        self.slider_pc_volume.valueChanged.connect(self._on_pc_volume_changed)
-        pc_vol_row.addWidget(self.slider_pc_volume, 1)
-        self.lbl_pc_volume = QLabel("100 %")
-        self.lbl_pc_volume.setMinimumWidth(40)
-        pc_vol_row.addWidget(self.lbl_pc_volume)
+        self._vol_pc.value_changed.connect(self._on_pc_volume_changed)
+        self._vol_pc.mute_toggled.connect(self._on_pc_mute_toggled)
+        pc_vol_row.addWidget(self._vol_pc, 1)
         dev_l.addLayout(pc_vol_row)
 
         self.check_tx_monitor_pc = QCheckBox("Ausgabe Mithören")
@@ -482,7 +484,11 @@ class AudioRecorderWindow(QMainWindow):
         self.combo_input.blockSignals(True)
         try:
             self.combo_input.clear()
-            saved = self._settings.audio_recorder.input_device_id
+            saved = (
+                self._audio_hub.device_id(ROLE_INPUT)
+                if self._audio_hub
+                else self._settings.audio_recorder.input_device_id
+            )
             select_idx = 0
             for i, (dev_id, label) in enumerate(list_audio_input_devices()):
                 self.combo_input.addItem(label, dev_id)
@@ -496,7 +502,11 @@ class AudioRecorderWindow(QMainWindow):
         self.combo_output.blockSignals(True)
         try:
             self.combo_output.clear()
-            saved = self._settings.audio_recorder.output_device_id
+            saved = (
+                self._audio_hub.device_id(ROLE_SEND)
+                if self._audio_hub
+                else self._settings.audio_recorder.output_device_id
+            )
             select_idx = 0
             for i, (dev_id, label) in enumerate(list_audio_output_devices()):
                 self.combo_output.addItem(label, dev_id)
@@ -510,7 +520,11 @@ class AudioRecorderWindow(QMainWindow):
         self.combo_pc_output.blockSignals(True)
         try:
             self.combo_pc_output.clear()
-            saved = self._settings.audio_recorder.pc_output_device_id
+            saved = (
+                self._audio_hub.device_id(ROLE_PC)
+                if self._audio_hub
+                else self._settings.audio_recorder.pc_output_device_id
+            )
             select_idx = 0
             for i, (dev_id, label) in enumerate(list_audio_output_devices()):
                 self.combo_pc_output.addItem(label, dev_id)
@@ -534,48 +548,47 @@ class AudioRecorderWindow(QMainWindow):
         # Pre-Roll für Replay wird mit dem Audio-Player geteilt
         # (settings.audio_player.pre_roll_ms — eigene UI gibt es bewusst nicht).
         self._player.set_timing(self._settings.audio_player.pre_roll_ms, 0)
-        # Wiedergabe-Gerät am Controller anwenden (gegen "spielt auf Default-Karte"-Bug)
-        saved_out = self.combo_output.currentData()
-        if not isinstance(saved_out, str):
-            saved_out = ""
-        self._player.set_output_device_id(saved_out)
-        # Lautstärken: erst UI synchron (ohne Signal-Echo), dann an Backend.
-        self.slider_input_volume.blockSignals(True)
-        try:
-            self.slider_input_volume.setValue(ar.input_volume_percent)
-            self.lbl_input_volume.setText(f"{ar.input_volume_percent} %")
-        finally:
-            self.slider_input_volume.blockSignals(False)
-        self._recorder.set_input_volume_percent(ar.input_volume_percent)
-        self.slider_output_volume.blockSignals(True)
-        try:
-            self.slider_output_volume.setValue(ar.output_volume_percent)
-            self.lbl_output_volume.setText(f"{ar.output_volume_percent} %")
-        finally:
-            self.slider_output_volume.blockSignals(False)
-        self._player.set_volume_percent(ar.output_volume_percent)
-        # PC-Ausgabegerät vormerken — die Anwendung passiert beim
-        # ersten Play-PC-Klick (lazy init des PC-Players).
-        saved_pc = self.combo_pc_output.currentData()
-        if not isinstance(saved_pc, str):
-            saved_pc = ""
-        self._pc_pending_device_id = saved_pc
-        # PC-Volume vormerken (wird beim Lazy-Init des PC-Players angewendet).
-        self.slider_pc_volume.blockSignals(True)
-        try:
-            self.slider_pc_volume.setValue(ar.pc_output_volume_percent)
-            self.lbl_pc_volume.setText(f"{ar.pc_output_volume_percent} %")
-        finally:
-            self.slider_pc_volume.blockSignals(False)
-        self._pc_pending_volume_percent = int(ar.pc_output_volume_percent)
-        self.check_tx_monitor_pc.blockSignals(True)
-        try:
-            self.check_tx_monitor_pc.setChecked(
-                bool(ar.tx_monitor_to_pc_enabled)
+        if self._audio_hub is not None:
+            load_global_audio_into_combos(
+                self._audio_hub,
+                combo_input=self.combo_input,
+                combo_send=self.combo_output,
+                combo_pc=self.combo_pc_output,
+                vol_input=self._vol_input,
+                vol_send=self._vol_send,
+                vol_pc=self._vol_pc,
+                check_tx_monitor=self.check_tx_monitor_pc,
             )
-        finally:
-            self.check_tx_monitor_pc.blockSignals(False)
-        self._apply_tx_monitor_pc_to_player()
+            self._apply_input_device(self._audio_hub.device_id(ROLE_INPUT))
+            self._apply_input_volume(self._audio_hub.volume_percent(ROLE_INPUT))
+            self._apply_send_device(self._audio_hub.device_id(ROLE_SEND))
+            self._apply_send_volume(self._audio_hub.volume_percent(ROLE_SEND))
+            self._apply_pc_output_device(self._audio_hub.device_id(ROLE_PC))
+            self._apply_pc_volume(self._audio_hub.volume_percent(ROLE_PC))
+            self._apply_tx_monitor(self._audio_hub.tx_monitor_to_pc_enabled())
+        else:
+            saved_out = self.combo_output.currentData()
+            if not isinstance(saved_out, str):
+                saved_out = ""
+            self._apply_send_device(saved_out)
+            self._vol_input.set_value(ar.input_volume_percent)
+            self._apply_input_volume(ar.input_volume_percent)
+            self._vol_send.set_value(ar.output_volume_percent)
+            self._apply_send_volume(ar.output_volume_percent)
+            saved_pc = self.combo_pc_output.currentData()
+            if not isinstance(saved_pc, str):
+                saved_pc = ""
+            self._pc_pending_device_id = saved_pc
+            self._vol_pc.set_value(ar.pc_output_volume_percent)
+            self._apply_pc_volume(ar.pc_output_volume_percent)
+            self.check_tx_monitor_pc.blockSignals(True)
+            try:
+                self.check_tx_monitor_pc.setChecked(
+                    bool(ar.tx_monitor_to_pc_enabled)
+                )
+            finally:
+                self.check_tx_monitor_pc.blockSignals(False)
+            self._apply_tx_monitor_pc_to_player()
         # Soft-Kompressor nach Aufnahme: fest eingeschaltet (keine UI-Option).
         self._settings.audio_recorder.normalize_enabled = True
         self._recorder.set_normalize_enabled(True)
@@ -899,59 +912,114 @@ class AudioRecorderWindow(QMainWindow):
         dev_id = self.combo_input.currentData()
         if not isinstance(dev_id, str):
             dev_id = ""
-        self._settings.audio_recorder.input_device_id = dev_id
+        if self._audio_hub is not None:
+            self._audio_hub.set_device_id(ROLE_INPUT, dev_id)
+        else:
+            self._settings.audio_recorder.input_device_id = dev_id
 
     def _on_output_changed(self) -> None:
         dev_id = self.combo_output.currentData()
         if not isinstance(dev_id, str):
             dev_id = ""
-        self._settings.audio_recorder.output_device_id = dev_id
-        self._player.set_output_device_id(dev_id)
+        if self._audio_hub is not None:
+            self._audio_hub.set_device_id(ROLE_SEND, dev_id)
+        else:
+            self._apply_send_device(dev_id)
 
     def _on_input_volume_changed(self, value: int) -> None:
-        value = max(0, min(100, int(value)))
-        self.lbl_input_volume.setText(f"{value} %")
-        self._settings.audio_recorder.input_volume_percent = value
-        self._recorder.set_input_volume_percent(value)
+        if self._audio_hub is not None:
+            self._audio_hub.set_volume_percent(ROLE_INPUT, int(value))
+        else:
+            self._apply_input_volume(int(value))
 
     def _on_output_volume_changed(self, value: int) -> None:
-        value = max(0, min(100, int(value)))
-        self.lbl_output_volume.setText(f"{value} %")
-        self._settings.audio_recorder.output_volume_percent = value
-        self._player.set_volume_percent(value)
+        if self._audio_hub is not None:
+            self._audio_hub.set_volume_percent(ROLE_SEND, int(value))
+        else:
+            self._apply_send_volume(int(value))
 
     def _on_pc_output_changed(self) -> None:
         dev_id = self.combo_pc_output.currentData()
         if not isinstance(dev_id, str):
             dev_id = ""
-        self._settings.audio_recorder.pc_output_device_id = dev_id
-        self._pc_pending_device_id = dev_id
-        if self._pc_player_ready:
+        if self._audio_hub is not None:
+            self._audio_hub.set_device_id(ROLE_PC, dev_id)
+        else:
             self._apply_pc_output_device(dev_id)
-        self._player.set_tx_monitor_pc_device_id(dev_id)
 
     def _on_pc_volume_changed(self, value: int) -> None:
-        value = max(0, min(100, int(value)))
-        self.lbl_pc_volume.setText(f"{value} %")
-        self._settings.audio_recorder.pc_output_volume_percent = value
-        self._apply_pc_volume(value)
-        self._player.set_tx_monitor_pc_volume_percent(value)
+        if self._audio_hub is not None:
+            self._audio_hub.set_volume_percent(ROLE_PC, int(value))
+        else:
+            self._apply_pc_volume(int(value))
 
     def _on_tx_monitor_pc_toggled(self, checked: bool) -> None:
-        self._settings.audio_recorder.tx_monitor_to_pc_enabled = bool(checked)
-        self._player.set_tx_monitor_to_pc_enabled(bool(checked))
+        if self._audio_hub is not None:
+            self._audio_hub.set_tx_monitor_to_pc_enabled(bool(checked))
+        else:
+            self._apply_tx_monitor(bool(checked))
+
+    def _on_input_mute_toggled(self, muted: bool) -> None:
+        if self._audio_hub is not None:
+            self._audio_hub.set_muted(ROLE_INPUT, bool(muted))
+
+    def _on_send_mute_toggled(self, muted: bool) -> None:
+        if self._audio_hub is not None:
+            self._audio_hub.set_muted(ROLE_SEND, bool(muted))
+
+    def _on_pc_mute_toggled(self, muted: bool) -> None:
+        if self._audio_hub is not None:
+            self._audio_hub.set_muted(ROLE_PC, bool(muted))
+
+    def _apply_input_device(self, dev_id: str) -> None:
+        pass
+
+    def _apply_input_volume(self, percent: int) -> None:
+        if self._audio_hub is not None:
+            percent = self._audio_hub.qt_volume_percent(ROLE_INPUT)
+        self._recorder.set_input_volume_percent(int(percent))
+
+    def _apply_send_device(self, dev_id: str) -> None:
+        self._player.set_output_device_id(str(dev_id or ""))
+
+    def _apply_send_volume(self, percent: int) -> None:
+        if self._audio_hub is not None:
+            percent = self._audio_hub.qt_volume_percent(ROLE_SEND)
+        self._player.set_volume_percent(int(percent))
+
+    def _apply_input_mute(self, _muted: bool) -> None:
+        pass
+
+    def _apply_send_mute(self, _muted: bool) -> None:
+        pass
+
+    def _apply_pc_mute(self, _muted: bool) -> None:
+        pass
+
+    def _apply_pc_output_device(self, dev_id: str) -> None:
+        dev_id = str(dev_id or "")
+        self._pc_pending_device_id = dev_id
+        self._player.set_tx_monitor_pc_device_id(dev_id)
+        self._apply_pc_output_device_qt(dev_id)
+
+    def _apply_pc_volume(self, percent: int) -> None:
+        if self._audio_hub is not None:
+            percent = self._audio_hub.qt_volume_percent(ROLE_PC)
+        percent = max(0, min(100, int(percent)))
+        self._pc_pending_volume_percent = percent
+        self._player.set_tx_monitor_pc_volume_percent(percent)
+        self._apply_pc_volume_qt(percent)
+
+    def _apply_tx_monitor(self, enabled: bool) -> None:
+        self._player.set_tx_monitor_to_pc_enabled(bool(enabled))
 
     def _apply_tx_monitor_pc_to_player(self) -> None:
         pc_id = self.combo_pc_output.currentData()
         if not isinstance(pc_id, str):
             pc_id = ""
-        self._player.set_tx_monitor_pc_device_id(pc_id)
-        self._player.set_tx_monitor_pc_volume_percent(
-            int(self.slider_pc_volume.value())
-        )
-        self._player.set_tx_monitor_to_pc_enabled(
-            self.check_tx_monitor_pc.isChecked()
-        )
+        self._apply_pc_output_device(pc_id)
+        self._apply_pc_volume(self._vol_pc.value())
+        self._apply_tx_monitor(self.check_tx_monitor_pc.isChecked())
 
     # ------------------------------------------------------------------
     # Lokale PC-Vorhöre (zweiter Player, kein CAT, keine PTT)
@@ -988,17 +1056,20 @@ class AudioRecorderWindow(QMainWindow):
         )
         return True
 
-    def _apply_pc_volume(self, percent: int) -> None:
+    def _apply_pc_volume_qt(self, percent: int) -> None:
         percent = max(0, min(100, int(percent)))
         if not self._pc_player_ready or self._pc_audio_out is None:
             self._pc_pending_volume_percent = percent
             return
         try:
-            self._pc_audio_out.setVolume(percent / 100.0)
+            vol = percent / 100.0
+            if self._audio_hub is not None and self._audio_hub.uses_windows_volume():
+                vol = 1.0
+            self._pc_audio_out.setVolume(vol)
         except (AttributeError, TypeError):
             pass
 
-    def _apply_pc_output_device(self, device_id: str) -> None:
+    def _apply_pc_output_device_qt(self, device_id: str) -> None:
         if not self._pc_player_ready or self._pc_audio_out is None:
             self._pc_pending_device_id = device_id
             return
