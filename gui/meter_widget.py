@@ -1935,6 +1935,8 @@ class MeterWidget(QWidget):
     #: Aktiver Speicherkanal hat sich am Funkgerät geändert (User dreht den
     #: MEM/CH-Knopf). ``0`` = VFO-Modus, ``> 0`` = Memory-Kanal-Nummer.
     memory_channel_changed = Signal(int)
+    #: Kurzzeit-Meldung für die Hauptfenster-Statusleiste (Text, Timeout ms).
+    status_message_requested = Signal(str, int)
 
     SIDEBAR_MIN_WIDTH = 290
     SIDEBAR_MAX_WIDTH = 380
@@ -1998,7 +2000,11 @@ class MeterWidget(QWidget):
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 8, 8, 8)
+        # Im Hauptfenster übernimmt das zentrale Layout die Außenabstände (8 px).
+        if self._integrated_main_layout:
+            outer.setContentsMargins(0, 0, 0, 0)
+        else:
+            outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(8)
 
         # --- Kopf: TX-LED + Klartext (Seitenleiste) bzw. nur die Widgets
@@ -2196,6 +2202,7 @@ class MeterWidget(QWidget):
 
         if self._integrated_main_layout:
             mid_row = QHBoxLayout()
+            mid_row.setContentsMargins(0, 0, 0, 0)
             mid_row.setSpacing(8)
             mid_row.addWidget(smeter_frame, stretch=1)
             meter_right = QWidget()
@@ -2215,14 +2222,6 @@ class MeterWidget(QWidget):
             outer.addWidget(gain_frame)
             outer.addWidget(self._tx_bw_frame)
             outer.addWidget(bars_frame, stretch=1)
-
-        self.status_label = QLabel("")
-        self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("color: gray; font-size: 10px;")
-        outer.addWidget(self.status_label)
-        # Leeres Label würde sonst eine Leerzeile reservieren → zu großer Abstand
-        # zur unteren Hauptfenster-Leiste.
-        self.status_label.hide()
 
     def apply_dsp_mode_relevance(
         self, mode_group: str, *, operating_mode: Optional[RxMode] = None
@@ -2465,7 +2464,6 @@ class MeterWidget(QWidget):
         # S-Meter im TX gedimmt darstellen
         self.smeter_bar.set_enabled_visual(not transmitting)
 
-        self.status_label.setStyleSheet("color: gray;")
         if self._last_tx is None or self._last_tx != transmitting:
             self._last_tx = transmitting
             self.tx_status_changed.emit(transmitting)
@@ -2604,13 +2602,15 @@ class MeterWidget(QWidget):
         if log is not None:
             log.log_warn(text)
 
+    def _show_status_message(self, text: str, *, timeout_ms: int = 8000) -> None:
+        self.status_message_requested.emit(text, int(timeout_ms))
+
     def _on_poller_error(self, message: str) -> None:
         if is_cat_protocol_error_message(message):
             self._log_cat_warn(f"Meter-Poller: {message}")
+            self._show_status_message(f"CAT: {message}", timeout_ms=6000)
             return
-        self.status_label.setStyleSheet("color: #c62828;")
-        self.status_label.setText(f"Meter-Fehler: {message}")
-        self.status_label.show()
+        self._show_status_message(f"Meter: {message}", timeout_ms=8000)
 
     # ------------------------------------------------------------------
     # SWR auf 2 m / 70 cm
@@ -2665,18 +2665,13 @@ class MeterWidget(QWidget):
         except CatError as exc:
             if is_cat_protocol_error(exc):
                 self._log_cat_warn(f"{where}: {exc}")
+                self._show_status_message(f"CAT ({where}): {exc}", timeout_ms=6000)
                 return
-            self.status_label.setStyleSheet("color: #c62828;")
-            self.status_label.setText(f"{where}: {exc}")
-            self.status_label.show()
+            self._show_status_message(f"{where}: {exc}", timeout_ms=8000)
         except OSError as exc:
-            self.status_label.setStyleSheet("color: #c62828;")
-            self.status_label.setText(f"{where}: {exc}")
-            self.status_label.show()
+            self._show_status_message(f"{where}: {exc}", timeout_ms=8000)
         except Exception:  # noqa: BLE001
-            self.status_label.setStyleSheet("color: #c62828;")
-            self.status_label.setText(f"{where}: unerwarteter Fehler")
-            self.status_label.show()
+            self._show_status_message(f"{where}: unerwarteter Fehler", timeout_ms=8000)
             traceback.print_exc()
 
     def _on_nb_toggled(self, on: bool) -> None:
@@ -2755,5 +2750,3 @@ class MeterWidget(QWidget):
         self.nb_slider.set_state(None)
         self.nr_slider.set_state(None)
         self.an_slider.set_state(None)
-        self.status_label.clear()
-        self.status_label.hide()

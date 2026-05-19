@@ -88,3 +88,100 @@ def combo_entries_high_to_low() -> List[Tuple[str, int]]:
     for band in AMATEUR_BANDS_HIGH_TO_LOW:
         out.append((band.combo_label(), band.center_hz))
     return out
+
+
+# „Schöne“ Raster für Band-Streifen-Ticks (Hz, aufsteigend).
+_NICE_TICK_STEPS_HZ: Tuple[int, ...] = (
+    5_000,
+    10_000,
+    25_000,
+    50_000,
+    100_000,
+    200_000,
+    500_000,
+    1_000_000,
+    2_000_000,
+    5_000_000,
+    10_000_000,
+)
+
+
+def _choose_tick_step_hz(span_hz: int, max_ticks: int) -> int:
+    """Feinste „schöne“ Schrittweite; ggf. in :func:`_subsample_ticks` reduzieren."""
+    if span_hz <= 0:
+        return 1_000
+    finest: Optional[int] = None
+    for step in _NICE_TICK_STEPS_HZ:
+        if step > span_hz:
+            continue
+        if span_hz // step + 1 >= 2:
+            finest = step
+    if finest is not None:
+        return finest
+    return max(span_hz // max(1, max_ticks - 1), 1_000)
+
+
+def _subsample_ticks(ticks: List[int], max_ticks: int) -> List[int]:
+    if len(ticks) <= max_ticks:
+        return ticks
+    if max_ticks < 2:
+        return [ticks[0]]
+    out: List[int] = []
+    last_idx = len(ticks) - 1
+    for i in range(max_ticks):
+        idx = round(i * last_idx / (max_ticks - 1))
+        out.append(ticks[idx])
+    deduped: List[int] = []
+    for hz in out:
+        if not deduped or hz != deduped[-1]:
+            deduped.append(hz)
+    return deduped
+
+
+def band_tick_frequencies(band: AmateurBand, *, max_ticks: int = 7) -> List[int]:
+    """Frequenzen für Band-Streifen-Markierungen (inkl. min/max)."""
+    cap = max(2, int(max_ticks))
+    span = band.max_hz - band.min_hz
+    step = _choose_tick_step_hz(span, cap)
+    ticks: List[int] = []
+    hz = band.min_hz
+    while hz < band.max_hz:
+        ticks.append(hz)
+        hz += step
+    if not ticks or ticks[-1] != band.max_hz:
+        ticks.append(band.max_hz)
+    return _subsample_ticks(ticks, cap)
+
+
+def frequency_label_for_tick(hz: int, band: AmateurBand) -> str:
+    """Kurzes Label unter einer Tick-Marke (MHz mit passender Genauigkeit)."""
+    span = band.max_hz - band.min_hz
+    mhz = hz / 1_000_000.0
+    if span <= 200_000:
+        return f"{mhz:.3f}"
+    if span <= 2_000_000:
+        return f"{mhz:.2f}"
+    return f"{mhz:.1f}"
+
+
+BAND_TICK_STEP_100KHZ_HZ = 100_000
+
+
+def band_100khz_tick_frequencies(band: AmateurBand) -> List[int]:
+    """Alle 100-kHz-Rasterpunkte innerhalb des Bandes (inklusive)."""
+    step = BAND_TICK_STEP_100KHZ_HZ
+    hz = ((band.min_hz + step - 1) // step) * step
+    ticks: List[int] = []
+    while hz <= band.max_hz:
+        ticks.append(hz)
+        hz += step
+    return ticks
+
+
+def frequency_label_100khz(hz: int) -> str:
+    """MHz-Label für 100-kHz-Markierungen (z. B. ``14.0``, ``14.1``)."""
+    mhz = hz // 1_000_000
+    frac = (hz % 1_000_000) // 100_000
+    if frac == 0:
+        return f"{mhz}.0"
+    return f"{mhz}.{frac}"

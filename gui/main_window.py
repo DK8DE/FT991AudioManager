@@ -76,6 +76,7 @@ from .radio_control_bar import RadioControlBar
 from .settings_dialog import ConnectionSettingsDialog
 from .theme import apply_theme
 from mapping.amateur_bands import (
+    amateur_band_at_hz,
     amateur_band_for_hz,
     combo_entries_high_to_low,
     VFO_BAND_CHOICE,
@@ -85,6 +86,7 @@ from mapping.meter_mapping import (
     smeter_set_calibration_frequency_hz,
 )
 
+from .amateur_band_strip import AmateurBandStripWidget
 from .vfo_triplet_widget import VfoTripletWidget
 
 _VFO_CAPTION_STYLE_IDLE = "color: #888888; font-weight: bold;"
@@ -205,6 +207,9 @@ class MainWindow(QMainWindow):
         self.meter_widget.tx_status_changed.connect(self._on_tx_status_changed)
         self.meter_widget.connection_lost.connect(self._on_connection_lost)
         self.meter_widget.rx_info_changed.connect(self._on_rx_info_changed)
+        self.meter_widget.status_message_requested.connect(
+            self._on_meter_status_message
+        )
         # User dreht am Gerät den MEM/CH-Knopf → Combo nachziehen.
         self.meter_widget.memory_channel_changed.connect(
             self._on_memory_channel_from_radio
@@ -464,6 +469,29 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(top_bar)
 
+        band_panel = QFrame()
+        band_panel.setObjectName("panelFrame")
+        band_panel.setFrameShape(QFrame.StyledPanel)
+        band_row = QHBoxLayout(band_panel)
+        band_row.setContentsMargins(10, 4, 10, 4)
+        band_row.setSpacing(10)
+        self._band_strip_caption = QLabel("Band:")
+        band_caption_font = self.font()
+        band_caption_font.setBold(True)
+        self._band_strip_caption.setFont(band_caption_font)
+        self._band_strip_caption.setStyleSheet(_VFO_CAPTION_STYLE_IDLE)
+        self._band_strip_caption.setFixedWidth(52)
+        self._band_strip_name = QLabel("—")
+        self._band_strip_name.setFont(band_caption_font)
+        self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IDLE)
+        self._band_strip_name.setMinimumWidth(48)
+        self._band_strip = AmateurBandStripWidget()
+        self._band_strip.frequency_changed.connect(self._on_band_strip_frequency)
+        band_row.addWidget(self._band_strip_caption, 0, Qt.AlignmentFlag.AlignVCenter)
+        band_row.addWidget(self._band_strip_name, 0, Qt.AlignmentFlag.AlignVCenter)
+        band_row.addWidget(self._band_strip, stretch=1)
+        layout.addWidget(band_panel)
+
         layout.addWidget(self.meter_widget, stretch=1)
 
         self._radio_control_bar = RadioControlBar()
@@ -540,6 +568,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(bottom_bar)
 
         self.setCentralWidget(central)
+        self._refresh_band_strip()
 
     def _build_menu(self) -> None:
         menu = self.menuBar()
@@ -1301,7 +1330,13 @@ class MainWindow(QMainWindow):
             self._vfo_a_triplet.set_interactive(True)
             self._vfo_b_triplet.set_interactive(True)
             self._vfo_ab_button.setEnabled(True)
+        self._refresh_band_strip()
         self._persist_settings()
+
+    def _on_meter_status_message(self, message: str, timeout_ms: int) -> None:
+        sb = self.statusBar()
+        if sb is not None:
+            sb.showMessage(message, max(2000, int(timeout_ms)))
 
     def _on_tx_status_changed(self, transmitting: bool) -> None:
         self._tx_label.setText(_status_bar_tx_text(transmitting))
@@ -1324,14 +1359,44 @@ class MainWindow(QMainWindow):
             caption.setStyleSheet(_VFO_CAPTION_STYLE_OUT_OF_BAND)
             caption.setToolTip("Außerhalb der Amateurfunkbänder")
 
+    def _refresh_band_strip(self) -> None:
+        connected = self._cat.is_connected()
+        hz = self._vfo_a_display_hz if connected else 0
+        band = amateur_band_at_hz(hz) if hz > 0 else None
+        if band is not None:
+            self._band_strip_name.setText(band.name)
+            self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
+        elif connected and hz > 0:
+            self._band_strip_name.setText("—")
+            self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_OUT_OF_BAND)
+        else:
+            self._band_strip_name.setText("—")
+            self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IDLE)
+        self._band_strip.set_active(connected)
+        self._band_strip.set_band(band)
+        self._band_strip.set_frequency_hz(hz)
+
+    def _on_band_strip_frequency(self, hz: int) -> None:
+        if not self._cat.is_connected():
+            return
+        self._vfo_a_triplet.set_frequency_hz(hz)
+        self._on_user_vfo_a_frequency(hz)
+        band = amateur_band_at_hz(hz)
+        if band is not None:
+            self._band_strip_name.setText(band.name)
+            self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
+
     def _apply_vfo_a_display_hz(self, hz: int) -> None:
         """VFO-A-Anzeige sofort setzen (z. B. nach REV oder CAT-Schreiben)."""
         if hz <= 0:
+            return
+        if self._band_strip.is_dragging():
             return
         self._vfo_a_display_hz = hz
         self._vfo_a_triplet.set_frequency_hz(hz)
         self._update_vfo_caption_band_color(self._vfo_a_caption, hz)
         self._rig_bridge.update_from_radio(frequency_hz=hz)
+        self._refresh_band_strip()
 
     def _on_rx_info_changed(
         self, mode: object, frequency_hz: int, frequency_b_hz: int
