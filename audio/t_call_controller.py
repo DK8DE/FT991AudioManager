@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -9,6 +10,7 @@ from PySide6.QtCore import QObject, QUrl, Signal
 
 from .player_controller import _player_backend_ok, ensure_playback_backend
 from .qt_multimedia_lazy import qt_multimedia_types
+from model._app_paths import resource_dir
 
 if TYPE_CHECKING:
     from .audio_settings_hub import AudioSettingsHub
@@ -19,12 +21,23 @@ _T_CALL_FILENAMES = ("1750.wav", "1750.waf")
 
 
 def resolve_t_call_wav_path() -> Optional[Path]:
-    """Pfad zur Rufton-Datei im ``audio/``-Paketordner."""
-    base = Path(__file__).resolve().parent
-    for name in _T_CALL_FILENAMES:
-        path = base / name
-        if path.is_file():
-            return path
+    """Pfad zur Rufton-Datei (Entwicklung: ``audio/``; EXE: PyInstaller ``audio/``)."""
+    pkg_audio = Path(__file__).resolve().parent
+    bundled_audio = resource_dir() / "audio"
+    if getattr(sys, "frozen", False):
+        bases = (bundled_audio, pkg_audio)
+    else:
+        bases = (pkg_audio, bundled_audio)
+    seen: set[Path] = set()
+    for base in bases:
+        base = base.resolve()
+        if base in seen:
+            continue
+        seen.add(base)
+        for name in _T_CALL_FILENAMES:
+            path = base / name
+            if path.is_file():
+                return path
     return None
 
 
@@ -82,6 +95,8 @@ class TCallController(QObject):
         """Ton starten (nach CAT-TX im Hauptfenster)."""
         if self._want_active:
             return
+        if self._wav_path is None or not self._wav_path.is_file():
+            self._wav_path = resolve_t_call_wav_path()
         if self._wav_path is None:
             self.error.emit(
                 "Rufton-Datei fehlt (1750.wav im Ordner audio/)."

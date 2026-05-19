@@ -107,6 +107,9 @@ excludes = [
 
 _main_py = os.path.join(_spec_dir, "main.py")
 _icon_ico = os.path.join(_spec_dir, "logo.ico")
+_tcall_wav = os.path.join(_spec_dir, "audio", "1750.wav")
+if not os.path.isfile(_tcall_wav):
+    raise SystemExit(f"Fehlt fuer den Build: {_tcall_wav}")
 
 a = Analysis(
     [_main_py],
@@ -114,6 +117,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (_icon_ico, "."),
+        (_tcall_wav, "audio"),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],
