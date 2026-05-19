@@ -56,8 +56,20 @@ from model.audio_player_settings import (
 )
 
 from .app_icon import app_icon
-from .audio_hub_binding import connect_player_hub, load_global_audio_into_combos
+from .audio_hub_binding import (
+    connect_level_meters,
+    connect_player_hub,
+    load_global_audio_into_combos,
+)
 from .folder_dialog import pick_audio_player_folder
+from .menu_icons import (
+    set_transport_button_icon,
+    transport_pause_icon,
+    transport_play_icon,
+    transport_stop_icon,
+    volume_role_pc_icon,
+    volume_role_send_icon,
+)
 from .volume_control_row import VolumeControlRow
 from .window_lifecycle import application_exit_close_requested
 
@@ -199,6 +211,10 @@ class AudioPlayerWindow(QMainWindow):
                 on_pc_mute=self._apply_pc_mute,
                 on_tx_monitor=self._apply_tx_monitor,
             )
+            connect_level_meters(
+                self._audio_hub,
+                {ROLE_SEND: self._vol_send, ROLE_PC: self._vol_pc},
+            )
         self._load_settings_to_ui()
         self._refresh_file_list()
         self._restore_geometry()
@@ -243,14 +259,17 @@ class AudioPlayerWindow(QMainWindow):
             "kein CAT, keine Sendung."
         )
         self.btn_play_pc.clicked.connect(self._on_play_pc_clicked)
+        set_transport_button_icon(self.btn_play_pc, transport_play_icon())
         list_btn_row.addWidget(self.btn_play_pc)
         self.btn_pause_pc = QPushButton("Pause PC")
         self.btn_pause_pc.setToolTip("PC-Vorhör pausieren oder fortsetzen.")
         self.btn_pause_pc.clicked.connect(self._on_pause_pc_clicked)
+        set_transport_button_icon(self.btn_pause_pc, transport_pause_icon())
         list_btn_row.addWidget(self.btn_pause_pc)
         self.btn_stop_pc = QPushButton("Stopp PC")
         self.btn_stop_pc.setToolTip("PC-Vorhör anhalten (stoppen).")
         self.btn_stop_pc.clicked.connect(self._on_stop_pc_clicked)
+        set_transport_button_icon(self.btn_stop_pc, transport_stop_icon())
         list_btn_row.addWidget(self.btn_stop_pc)
         list_btn_row.addStretch(1)
         list_l.addLayout(list_btn_row)
@@ -266,6 +285,9 @@ class AudioPlayerWindow(QMainWindow):
         self.btn_play.clicked.connect(self._on_play)
         self.btn_pause.clicked.connect(self._on_pause_clicked)
         self.btn_stop.clicked.connect(self._on_stop_clicked)
+        set_transport_button_icon(self.btn_play, transport_play_icon())
+        set_transport_button_icon(self.btn_pause, transport_pause_icon())
+        set_transport_button_icon(self.btn_stop, transport_stop_icon())
         transport.addWidget(self.btn_play)
         transport.addWidget(self.btn_pause)
         transport.addWidget(self.btn_stop)
@@ -378,7 +400,8 @@ class AudioPlayerWindow(QMainWindow):
         vol_row = QHBoxLayout()
         vol_row.addWidget(_form_label("Sende-Lautstärke:"))
         self._vol_send = VolumeControlRow(
-            tooltip="Windows-Lautstärke der Sende-Soundkarte (CAT-TX)"
+            tooltip="Windows-Lautstärke der Sende-Soundkarte (CAT-TX)",
+            leading_icon=volume_role_send_icon(),
         )
         self._vol_send.value_changed.connect(self._on_volume_changed)
         self._vol_send.mute_toggled.connect(self._on_send_mute_toggled)
@@ -399,7 +422,8 @@ class AudioPlayerWindow(QMainWindow):
         pc_vol_row = QHBoxLayout()
         pc_vol_row.addWidget(_form_label("PC-Lautstärke:"))
         self._vol_pc = VolumeControlRow(
-            tooltip="Windows-Lautstärke der PC-Ausgabe (Play PC)"
+            tooltip="Windows-Lautstärke der PC-Ausgabe (Play PC)",
+            leading_icon=volume_role_pc_icon(),
         )
         self._vol_pc.value_changed.connect(self._on_pc_volume_changed)
         self._vol_pc.mute_toggled.connect(self._on_pc_mute_toggled)
@@ -1016,7 +1040,16 @@ class AudioPlayerWindow(QMainWindow):
             )
             self._refresh_file_list()
             return False
-        self._controller.load_track(row)
+        # Kein load_track auf dem Sende-Player: nach CAT-Stopp hält der
+        # Haupt-Player die Datei oft noch offen — gleichzeitig setSource auf
+        # dem PC-Player dieselbe Datei führt unter Windows zu Abstürzen.
+        self._controller.set_index(row)
+        if self._controller.state in (
+            PlayerState.IDLE,
+            PlayerState.PAUSED_RX,
+        ):
+            self._controller.release_source()
+        self._release_pc_source()
         if not self._ensure_pc_player():
             return False
         assert self._pc_player is not None
@@ -1252,12 +1285,20 @@ class AudioPlayerWindow(QMainWindow):
             multimedia_available() and pc_active and self._pc_has_loaded_source()
         )
         self.btn_pause_pc.setText("Fortsetzen PC" if pc_paused else "Pause PC")
+        set_transport_button_icon(
+            self.btn_pause_pc,
+            transport_play_icon() if pc_paused else transport_pause_icon(),
+        )
         self.btn_stop_pc.setEnabled(pc_active)
         self.btn_pause.setEnabled(
             st in (PlayerState.PLAYING, PlayerState.PAUSED_RX) and not pc_busy
         )
         self.btn_pause.setText(
             "Fortsetzen" if st == PlayerState.PAUSED_RX else "Pause"
+        )
+        set_transport_button_icon(
+            self.btn_pause,
+            transport_play_icon() if st == PlayerState.PAUSED_RX else transport_pause_icon(),
         )
         self.btn_stop.setEnabled(
             st
@@ -1333,7 +1374,7 @@ class AudioPlayerWindow(QMainWindow):
         pos_ms = int(self._duration_ms * value / 1000)
         if self._use_pc_progress_for_slider():
             self._seek_pc_player(pos_ms)
-        if not self._controller.is_busy():
+        else:
             self._controller.seek_position_ms(pos_ms)
         self.lbl_elapsed.setText(_format_ms(pos_ms))
         rem = max(0, self._duration_ms - pos_ms)
@@ -1346,7 +1387,7 @@ class AudioPlayerWindow(QMainWindow):
         pos_ms = self._slider_position_ms()
         if self._use_pc_progress_for_slider():
             self._seek_pc_player(pos_ms)
-        if not self._controller.is_busy():
+        else:
             self._controller.seek_position_ms(pos_ms)
 
     def _on_current_file(self, name: str) -> None:

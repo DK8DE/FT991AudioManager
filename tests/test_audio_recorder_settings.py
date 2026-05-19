@@ -27,7 +27,7 @@ class AudioRecorderSettingsTest(unittest.TestCase):
         self.assertEqual(s.selected_filename, "")
         self.assertEqual(s.input_volume_percent, DEFAULT_VOLUME_PERCENT)
         self.assertEqual(s.output_volume_percent, DEFAULT_VOLUME_PERCENT)
-        self.assertFalse(s.tx_monitor_to_pc_enabled)
+        self.assertTrue(s.tx_monitor_to_pc_enabled)
 
     def test_from_dict_volume_defaults_when_missing(self) -> None:
         s = AudioRecorderSettings.from_dict({})

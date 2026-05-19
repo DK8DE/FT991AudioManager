@@ -486,7 +486,7 @@ class PlayerController(QObject):
 
     def seek_position_ms(self, pos_ms: int) -> None:
         """Wiedergabeposition setzen (IDLE-Vorschau, PLAYING oder PAUSED_RX)."""
-        if self._player is None or not self._media_ok or self.is_busy():
+        if self._player is None or not self._media_ok:
             return
         if self._state not in (
             PlayerState.IDLE,
@@ -530,9 +530,12 @@ class PlayerController(QObject):
         die Datei zeigt. ``setSource(QUrl())`` zwingt das Backend, das
         Handle wirklich zu schliessen, sodass ``unlink()`` durchgeht.
 
-        Darf nur aufgerufen werden, wenn der Controller IDLE ist — sonst
-        wuerde mitten in einer laufenden Wiedergabe der Player blockiert.
+        Nur in Ruhezustand (IDLE/PAUSED_RX) — nicht während CAT-Sendung.
         """
+        if self.is_busy() and self._state != PlayerState.PAUSED_RX:
+            return
+        self._preview_loading = False
+        self._pending_media_play = False
         if self._player is None:
             return
         try:

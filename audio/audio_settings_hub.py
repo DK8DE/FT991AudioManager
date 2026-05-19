@@ -15,6 +15,7 @@ from model.global_audio_settings import (
     sync_global_to_legacy,
 )
 
+from .audio_level_monitor import AudioLevelMonitor
 from .windows_endpoint_volume import (
     WindowsEndpointVolume,
     windows_endpoint_volume_available,
@@ -44,6 +45,12 @@ class AudioSettingsHub(QObject):
         self._poll_timer.timeout.connect(self._poll_windows)
         if windows_endpoint_volume_available():
             self._poll_timer.start()
+
+        self._level_monitor = AudioLevelMonitor(self, parent=self)
+
+    @property
+    def level_monitor(self) -> AudioLevelMonitor:
+        return self._level_monitor
 
     @property
     def settings(self) -> AppSettings:
@@ -111,6 +118,7 @@ class AudioSettingsHub(QObject):
 
     def stop_polling(self) -> None:
         self._poll_timer.stop()
+        self._level_monitor.stop()
 
     def sync_from_windows(self) -> None:
         """Windows-Mixer → App (beim Start; danach über Poll)."""

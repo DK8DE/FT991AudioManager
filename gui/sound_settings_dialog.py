@@ -25,6 +25,12 @@ from audio.windows_endpoint_volume import windows_endpoint_volume_available
 from model.global_audio_settings import ROLE_INPUT, ROLE_PC, ROLE_SEND
 
 from .app_icon import app_icon
+from .audio_hub_binding import connect_level_meters
+from .menu_icons import (
+    volume_role_pc_icon,
+    volume_role_record_icon,
+    volume_role_send_icon,
+)
 from .volume_control_row import VolumeControlRow
 from .window_lifecycle import application_exit_close_requested
 
@@ -50,7 +56,7 @@ class SoundSettingsWindow(QMainWindow):
         self.setWindowTitle("Soundeinstellungen")
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
-        self.resize(520, 380)
+        self.resize(520, 420)
 
         self._hub.device_changed.connect(self._on_hub_device_changed)
         self._hub.volume_changed.connect(self._on_hub_volume_changed)
@@ -58,6 +64,14 @@ class SoundSettingsWindow(QMainWindow):
         self._hub.tx_monitor_changed.connect(self._on_hub_tx_monitor_changed)
 
         self._build_ui()
+        connect_level_meters(
+            self._hub,
+            {
+                ROLE_INPUT: self._vol_input,
+                ROLE_SEND: self._vol_send,
+                ROLE_PC: self._vol_pc,
+            },
+        )
         self._load_from_hub()
         self._restore_geometry()
 
@@ -98,7 +112,8 @@ class SoundSettingsWindow(QMainWindow):
         lay.addLayout(in_row)
 
         self._vol_input = VolumeControlRow(
-            tooltip="Windows-Lautstärke des Aufnahme-Geräts"
+            tooltip="Windows-Lautstärke des Aufnahme-Geräts",
+            leading_icon=volume_role_record_icon(),
         )
         self._vol_input.value_changed.connect(
             lambda v: self._hub.set_volume_percent(ROLE_INPUT, v)
@@ -121,7 +136,8 @@ class SoundSettingsWindow(QMainWindow):
         lay.addLayout(send_row)
 
         self._vol_send = VolumeControlRow(
-            tooltip="Windows-Lautstärke der Sende-Soundkarte"
+            tooltip="Windows-Lautstärke der Sende-Soundkarte",
+            leading_icon=volume_role_send_icon(),
         )
         self._vol_send.value_changed.connect(
             lambda v: self._hub.set_volume_percent(ROLE_SEND, v)
@@ -144,7 +160,8 @@ class SoundSettingsWindow(QMainWindow):
         lay.addLayout(pc_row)
 
         self._vol_pc = VolumeControlRow(
-            tooltip="Windows-Lautstärke der PC-Ausgabe"
+            tooltip="Windows-Lautstärke der PC-Ausgabe",
+            leading_icon=volume_role_pc_icon(),
         )
         self._vol_pc.value_changed.connect(
             lambda v: self._hub.set_volume_percent(ROLE_PC, v)

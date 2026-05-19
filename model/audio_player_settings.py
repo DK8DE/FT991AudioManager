@@ -36,7 +36,7 @@ class AudioPlayerSettings:
     #: Lautstärke der lokalen PC-Vorhöre (Play PC).
     pc_output_volume_percent: int = DEFAULT_VOLUME_PERCENT
     #: Mithören: CAT-Sendesignal zusätzlich auf dem PC-Wiedergabegerät.
-    tx_monitor_to_pc_enabled: bool = False
+    tx_monitor_to_pc_enabled: bool = True
     playlist_order: list[str] = field(default_factory=list)
     window_geometry: str = ""
     data_mode: DataMode = DEFAULT_DATA_MODE
@@ -88,7 +88,7 @@ class AudioPlayerSettings:
             pc_output_volume_percent=_clamp_volume(
                 r.get("pc_output_volume_percent", DEFAULT_VOLUME_PERCENT)
             ),
-            tx_monitor_to_pc_enabled=bool(r.get("tx_monitor_to_pc_enabled", False)),
+            tx_monitor_to_pc_enabled=bool(r.get("tx_monitor_to_pc_enabled", True)),
             playlist_order=order,
             window_geometry=str(r.get("window_geometry", "") or ""),
             data_mode=data_mode,  # type: ignore[arg-type]

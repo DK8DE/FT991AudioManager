@@ -61,7 +61,7 @@ from version import APP_NAME, APP_VERSION
 
 from .about_window import AboutWindow
 from .app_icon import app_icon
-from .menu_icons import menu_action_icon
+from .menu_icons import menu_action_icon, menu_speaker_white_icon
 from .audio_radio_session import AudioRadioSessionHost
 from .audio_player_window import AudioPlayerWindow
 from .audio_recorder_window import AudioRecorderWindow
@@ -477,6 +477,9 @@ class MainWindow(QMainWindow):
         self._radio_control_bar.audio_recorder_clicked.connect(
             self._on_audio_recorder_action
         )
+        self._radio_control_bar.sound_settings_clicked.connect(
+            self._on_sound_settings_action
+        )
         self.meter_widget.af_gain_set_requested.connect(self._on_af_gain_slider_changed)
         self.meter_widget.rf_gain_set_requested.connect(self._on_rf_gain_slider_changed)
         layout.addWidget(self._radio_control_bar)
@@ -618,12 +621,7 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(equalizer_action)
 
         sound_settings_action = QAction("&Soundeinstellung…", self)
-        sound_settings_action.setIcon(
-            menu_action_icon(
-                QStyle.StandardPixmap.SP_MediaVolume,
-                theme_name="preferences-desktop-sound",
-            )
-        )
+        sound_settings_action.setIcon(menu_speaker_white_icon())
         sound_settings_action.setShortcut("Ctrl+Shift+S")
         sound_settings_action.triggered.connect(self._on_sound_settings_action)
         edit_menu.addAction(sound_settings_action)
@@ -1341,7 +1339,9 @@ class MainWindow(QMainWindow):
         """Vom MeterWidget bei jedem Slow-Path-RX-Sample gerufen."""
         if isinstance(mode, RxMode):
             self._mode_label.setText(_status_bar_mode_text(mode.value))
-        self._rig_bridge.update_from_radio(mode=mode.value)
+            self._rig_bridge.update_from_radio(mode=mode.value)
+        else:
+            self._rig_bridge.update_from_radio()
         if frequency_hz > 0:
             if not self._relay_rev_active:
                 self._relay_output_hz = frequency_hz

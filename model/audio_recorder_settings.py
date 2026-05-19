@@ -45,7 +45,7 @@ class AudioRecorderSettings:
     #: Soft-Kompressor nach Aufnahme — fest eingeschaltet (kein Abschalten in der UI).
     normalize_enabled: bool = True
     #: Replay (CAT-TX) zusätzlich auf PC-Ausgabegerät mithören.
-    tx_monitor_to_pc_enabled: bool = False
+    tx_monitor_to_pc_enabled: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,7 +80,7 @@ class AudioRecorderSettings:
                 r.get("pc_output_volume_percent")
             ),
             normalize_enabled=True,
-            tx_monitor_to_pc_enabled=bool(r.get("tx_monitor_to_pc_enabled", False)),
+            tx_monitor_to_pc_enabled=bool(r.get("tx_monitor_to_pc_enabled", True)),
         )
 
 

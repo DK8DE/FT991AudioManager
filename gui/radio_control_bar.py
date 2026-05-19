@@ -8,6 +8,12 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from .led_widget import Led
+from .menu_icons import (
+    control_bar_icon_size,
+    control_bar_play_green_icon,
+    control_bar_record_red_icon,
+    control_bar_speaker_white_icon,
+)
 
 # Kurze rot/grün-Sequenz bei TCP-Daten (FLRig) — wie RotorTcpBridge.
 _RIG_IO_BLINK_SEQ = (True, False, True, False, True, False, True, False)
@@ -22,6 +28,7 @@ class RadioControlBar(QFrame):
     t_call_released = Signal()
     audio_player_clicked = Signal()
     audio_recorder_clicked = Signal()
+    sound_settings_clicked = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -74,8 +81,12 @@ class RadioControlBar(QFrame):
         self._tcall_btn.pressed.connect(self.t_call_pressed.emit)
         self._tcall_btn.released.connect(self.t_call_released.emit)
 
+        icon_size = control_bar_icon_size()
+
         self._audio_btn = QPushButton("Audioplayer")
         self._audio_btn.setMinimumWidth(96)
+        self._audio_btn.setIcon(control_bar_play_green_icon())
+        self._audio_btn.setIconSize(icon_size)
         self._audio_btn.setToolTip(
             "Audio-Player (MP3/WAV) mit CAT-PTT für Sendebetrieb"
         )
@@ -83,11 +94,22 @@ class RadioControlBar(QFrame):
 
         self._recorder_btn = QPushButton("Audiorecoder")
         self._recorder_btn.setMinimumWidth(110)
+        self._recorder_btn.setIcon(control_bar_record_red_icon())
+        self._recorder_btn.setIconSize(icon_size)
         self._recorder_btn.setToolTip(
             "MP3-Aufnahme mit CAT-DATA-Mode-Umschaltung "
             "(USB-CODEC → MP3, Replay über CAT-TX)"
         )
         self._recorder_btn.clicked.connect(self.audio_recorder_clicked.emit)
+
+        self._sound_btn = QPushButton("Sound")
+        self._sound_btn.setMinimumWidth(72)
+        self._sound_btn.setIcon(control_bar_speaker_white_icon())
+        self._sound_btn.setIconSize(icon_size)
+        self._sound_btn.setToolTip(
+            "Globale Soundeinstellungen (Sende/PC, Windows-Mixer)"
+        )
+        self._sound_btn.clicked.connect(self.sound_settings_clicked.emit)
 
         left = QWidget(self)
         left_layout = QHBoxLayout(left)
@@ -98,6 +120,7 @@ class RadioControlBar(QFrame):
         left_layout.addWidget(self._tcall_btn)
         left_layout.addWidget(self._audio_btn)
         left_layout.addWidget(self._recorder_btn)
+        left_layout.addWidget(self._sound_btn)
         left_layout.addStretch(1)
 
         # --- Rig-Bridge: FLRig (rechter Bereich, rechtsbündig) ------

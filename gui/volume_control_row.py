@@ -5,20 +5,25 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSlider,
     QStyle,
+    QVBoxLayout,
     QWidget,
 )
 
-from .menu_icons import menu_action_icon
+from audio.windows_endpoint_volume import windows_endpoint_peak_available
+
+from .audio_level_bar import AudioLevelBar
+from .menu_icons import menu_action_icon, volume_role_icon_size
 
 
 class VolumeControlRow(QWidget):
-    """Horizontale Zeile: Lautstärke-Slider, Prozent, Stumm-Button."""
+    """Pegelanzeige + Lautstärke-Slider, Prozent, Stumm-Button."""
 
     value_changed = Signal(int)
     mute_toggled = Signal(bool)
@@ -27,13 +32,40 @@ class VolumeControlRow(QWidget):
         self,
         *,
         tooltip: str = "",
+        show_level_meter: bool = True,
+        leading_icon: Optional[QIcon] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
 
-        layout = QHBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(4)
+
+        self._level_bar: Optional[AudioLevelBar] = None
+        if show_level_meter:
+            self._level_bar = AudioLevelBar(self)
+            self._level_bar.set_active(windows_endpoint_peak_available())
+            root.addWidget(self._level_bar)
+
+        row = QWidget(self)
+        layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
+        root.addWidget(row)
+
+        if leading_icon is not None and not leading_icon.isNull():
+            role_lbl = QLabel()
+            role_lbl.setFixedSize(volume_role_icon_size())
+            role_lbl.setPixmap(
+                leading_icon.pixmap(
+                    volume_role_icon_size(),
+                    QIcon.Mode.Normal,
+                    QIcon.State.Off,
+                )
+            )
+            role_lbl.setToolTip(tooltip)
+            layout.addWidget(role_lbl)
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(0, 100)
@@ -59,6 +91,10 @@ class VolumeControlRow(QWidget):
         self._btn_mute.toggled.connect(self._on_mute_toggled)
         self._update_mute_icon(False)
         layout.addWidget(self._btn_mute)
+
+    def set_peak_level(self, level: float) -> None:
+        if self._level_bar is not None:
+            self._level_bar.set_peak_level(level)
 
     def value(self) -> int:
         return int(self._slider.value())

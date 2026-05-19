@@ -17,17 +17,28 @@ if sys.platform == "win32":
     try:
         from comtypes import CLSCTX_ALL
         from pycaw.constants import AudioDeviceState, DEVICE_STATE
-        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+        from pycaw.pycaw import (
+            AudioUtilities,
+            IAudioEndpointVolume,
+            IAudioMeterInformation,
+        )
 
         _PYCAW_OK = True
+        _IAudioMeterInformation = IAudioMeterInformation
         _AudioDeviceState = AudioDeviceState
         _DEVICE_STATE_ACTIVE = DEVICE_STATE.ACTIVE
     except ImportError:
-        pass
+        _IAudioMeterInformation = None  # type: ignore[misc, assignment]
+else:
+    _IAudioMeterInformation = None  # type: ignore[misc, assignment]
 
 
 def windows_endpoint_volume_available() -> bool:
     return _PYCAW_OK
+
+
+def windows_endpoint_peak_available() -> bool:
+    return _PYCAW_OK and _IAudioMeterInformation is not None
 
 
 @contextmanager
@@ -129,6 +140,18 @@ def _device_is_capture_id(device_id: str) -> bool:
     return _normalize_device_id(device_id).startswith("{0.0.1.")
 
 
+def _activate_meter(dev: Any) -> Any | None:
+    """``IMMDevice`` / ``AudioDevice`` → ``IAudioMeterInformation``."""
+    if not _PYCAW_OK or dev is None or _IAudioMeterInformation is None:
+        return None
+    try:
+        inner = getattr(dev, "_dev", dev)
+        iface = inner.Activate(_IAudioMeterInformation._iid_, CLSCTX_ALL, None)
+        return iface.QueryInterface(_IAudioMeterInformation)
+    except Exception:
+        return None
+
+
 def _activate_endpoint(dev: Any) -> Any | None:
     """``AudioDevice`` (pycaw) oder rohes ``IMMDevice`` → ``IAudioEndpointVolume``."""
     if not _PYCAW_OK or dev is None:
@@ -207,6 +230,43 @@ class WindowsEndpointVolume:
             return True
         except Exception:
             return False
+
+
+class WindowsEndpointPeak:
+    """Liest den Peak-Pegel eines MMDevice-Endpunkts (WASAPI)."""
+
+    def __init__(self) -> None:
+        self._last_device_id: Optional[str] = None
+        self._last_capture: Optional[bool] = None
+        self._meter = None
+
+    def reset_bind(self) -> None:
+        self._meter = None
+        self._last_device_id = None
+        self._last_capture = None
+
+    def bind(self, qt_device_id: str, *, capture: bool) -> bool:
+        if not windows_endpoint_peak_available():
+            return False
+        dev_id = qt_device_id or ""
+        if dev_id == self._last_device_id and capture == self._last_capture:
+            return self._meter is not None
+
+        self._meter = None
+        self._last_device_id = dev_id
+        self._last_capture = capture
+
+        matched = _find_pycaw_device(dev_id, capture=capture)
+        self._meter = _activate_meter(matched)
+        return self._meter is not None
+
+    def peak_scalar(self) -> Optional[float]:
+        if self._meter is None:
+            return None
+        try:
+            return max(0.0, min(1.0, float(self._meter.GetPeakValue())))
+        except Exception:
+            return None
 
 
 def _match_device_by_description(qt_device_id: str, *, capture: bool):

@@ -13,6 +13,20 @@ if TYPE_CHECKING:
     from gui.volume_control_row import VolumeControlRow
 
 
+def connect_level_meters(
+    hub: "AudioSettingsHub",
+    rows_by_role: dict[str, "VolumeControlRow"],
+) -> None:
+    """Pegelanzeigen an den Hub-Monitor koppeln."""
+
+    def on_level(role: str, level: float) -> None:
+        row = rows_by_role.get(role)
+        if row is not None:
+            row.set_peak_level(level)
+
+    hub.level_monitor.level_changed.connect(on_level)
+
+
 def _select_combo_device(combo: QComboBox, device_id: str) -> None:
     combo.blockSignals(True)
     try:

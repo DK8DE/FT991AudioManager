@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -67,8 +68,24 @@ from model.audio_recorder_settings import (
 )
 
 from .app_icon import app_icon
-from .audio_hub_binding import connect_recorder_hub, load_global_audio_into_combos
+from .audio_hub_binding import (
+    connect_level_meters,
+    connect_recorder_hub,
+    load_global_audio_into_combos,
+)
 from .folder_dialog import pick_audio_recorder_folder
+from .menu_icons import (
+    control_bar_record_red_icon,
+    set_transport_button_icon,
+    transport_play_icon,
+    transport_replay_icon,
+    transport_stop_icon,
+    transport_trash_icon,
+    transport_button_icon_size,
+    volume_role_pc_icon,
+    volume_role_record_icon,
+    volume_role_send_icon,
+)
 from .volume_control_row import VolumeControlRow
 from .window_lifecycle import application_exit_close_requested
 
@@ -88,6 +105,17 @@ def _big_font(base: QFont) -> QFont:
     f.setPointSizeF(f.pointSizeF() * 1.8)
     f.setBold(True)
     return f
+
+
+def _double_font(base: QFont) -> QFont:
+    f = QFont(base)
+    f.setPointSizeF(f.pointSizeF() * 2)
+    return f
+
+
+_REMAINING_WARN_MS = 10_000
+_REMAINING_STYLE_NORMAL = ""
+_REMAINING_STYLE_WARN = "color: #ff4444; font-weight: bold;"
 
 
 _LED_OFF_STYLE = (
@@ -140,7 +168,7 @@ class AudioRecorderWindow(QMainWindow):
         self.setWindowTitle("FT-991/A Audio-Recorder")
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
-        self.resize(560, 600)
+        self.resize(560, 640)
 
         # Aufnahme-Komponente
         self._recorder = AudioRecorder(self)
@@ -218,6 +246,9 @@ class AudioRecorderWindow(QMainWindow):
 
         self._files: list[str] = []
         self._duration_ms = 0
+        self._seek_dragging = False
+        self._remaining_warn_active = False
+        self._remaining_blink_on = True
         self._last_player_state: Optional[PlayerState] = None
         self._pending_radio_restore_on_close = False
         self._force_close_after_radio_restore = False
@@ -243,6 +274,14 @@ class AudioRecorderWindow(QMainWindow):
                 on_send_mute=self._apply_send_mute,
                 on_pc_mute=self._apply_pc_mute,
                 on_tx_monitor=self._apply_tx_monitor,
+            )
+            connect_level_meters(
+                self._audio_hub,
+                {
+                    ROLE_INPUT: self._vol_input,
+                    ROLE_SEND: self._vol_send,
+                    ROLE_PC: self._vol_pc,
+                },
             )
         self._load_settings_to_ui()
         self._refresh_file_list()
@@ -299,11 +338,13 @@ class AudioRecorderWindow(QMainWindow):
             "kein CAT, keine PTT, keine Sendung."
         )
         self.btn_play_pc.clicked.connect(self._on_play_pc_clicked)
+        set_transport_button_icon(self.btn_play_pc, transport_play_icon())
         list_btn_row.addWidget(self.btn_play_pc)
 
         self.btn_stop_pc = QPushButton("Stop")
         self.btn_stop_pc.setToolTip("Lokale PC-Wiedergabe stoppen.")
         self.btn_stop_pc.clicked.connect(self._on_stop_pc_clicked)
+        set_transport_button_icon(self.btn_stop_pc, transport_stop_icon())
         list_btn_row.addWidget(self.btn_stop_pc)
 
         self.btn_delete = QPushButton("Datei löschen")
@@ -312,6 +353,7 @@ class AudioRecorderWindow(QMainWindow):
             "Während Aufnahme oder laufender Wiedergabe gesperrt."
         )
         self.btn_delete.clicked.connect(self._on_delete_clicked)
+        set_transport_button_icon(self.btn_delete, transport_trash_icon())
         list_btn_row.addWidget(self.btn_delete)
 
         list_btn_row.addStretch(1)
@@ -333,11 +375,14 @@ class AudioRecorderWindow(QMainWindow):
         self.btn_record = QPushButton("Aufnahme")
         self.btn_record.setMinimumWidth(120)
         self.btn_record.clicked.connect(self._on_record_clicked)
+        self.btn_record.setIcon(control_bar_record_red_icon())
+        self.btn_record.setIconSize(transport_button_icon_size())
         rec_row.addWidget(self.btn_record)
 
         self.btn_stop_rec = QPushButton("Stopp")
         self.btn_stop_rec.setMinimumWidth(96)
         self.btn_stop_rec.clicked.connect(self._on_stop_recording)
+        set_transport_button_icon(self.btn_stop_rec, transport_stop_icon())
         rec_row.addWidget(self.btn_stop_rec)
 
         self.lbl_rec_duration = QLabel("0:00")
@@ -358,22 +403,51 @@ class AudioRecorderWindow(QMainWindow):
 
         # ---- Replay-Box (sendet über CAT-TX im DATA-Mode) ----
         rep_box = QGroupBox("Replay (sendet über CAT-TX im DATA-Mode)")
-        rep_l = QHBoxLayout(rep_box)
+        rep_l = QVBoxLayout(rep_box)
+
+        rep_transport = QHBoxLayout()
         self.btn_replay = QPushButton("Replay")
         self.btn_replay.setToolTip(
             "Markierte Aufnahme einmal abspielen (Pre-Roll → CAT-TX → "
             "Datei → zurück auf Sprach-Mode)."
         )
         self.btn_replay.clicked.connect(self._on_replay_clicked)
-        rep_l.addWidget(self.btn_replay)
+        set_transport_button_icon(self.btn_replay, transport_replay_icon())
+        rep_transport.addWidget(self.btn_replay)
 
         self.btn_stop_replay = QPushButton("Stopp Replay")
         self.btn_stop_replay.clicked.connect(self._on_stop_replay)
-        rep_l.addWidget(self.btn_stop_replay)
+        set_transport_button_icon(self.btn_stop_replay, transport_stop_icon())
+        rep_transport.addWidget(self.btn_stop_replay)
+        rep_transport.addStretch(1)
+        rep_l.addLayout(rep_transport)
 
-        self.lbl_replay_position = QLabel("0:00 / 0:00")
-        self.lbl_replay_position.setMinimumWidth(120)
-        rep_l.addWidget(self.lbl_replay_position, stretch=1)
+        self.progress_replay = QSlider(Qt.Orientation.Horizontal)
+        self.progress_replay.setRange(0, 1000)
+        self.progress_replay.setValue(0)
+        self.progress_replay.setPageStep(50)
+        self.progress_replay.setToolTip("Replay-Position — ziehen zum Spulen")
+        self.progress_replay.setTracking(True)
+        self.progress_replay.sliderPressed.connect(self._on_replay_seek_pressed)
+        self.progress_replay.sliderReleased.connect(self._on_replay_seek_released)
+        self.progress_replay.sliderMoved.connect(self._on_replay_seek_slider_change)
+        self.progress_replay.valueChanged.connect(self._on_replay_seek_slider_change)
+        rep_l.addWidget(self.progress_replay)
+
+        self._remaining_blink_timer = QTimer(self)
+        self._remaining_blink_timer.setInterval(500)
+        self._remaining_blink_timer.timeout.connect(self._on_remaining_blink_tick)
+
+        rep_time_row = QHBoxLayout()
+        self.lbl_replay_elapsed = QLabel("0:00")
+        self.lbl_replay_remaining = QLabel("-0:00")
+        replay_time_font = _double_font(self.lbl_replay_elapsed.font())
+        self.lbl_replay_elapsed.setFont(replay_time_font)
+        self.lbl_replay_remaining.setFont(replay_time_font)
+        rep_time_row.addWidget(self.lbl_replay_elapsed)
+        rep_time_row.addStretch(1)
+        rep_time_row.addWidget(self.lbl_replay_remaining)
+        rep_l.addLayout(rep_time_row)
 
         root.addWidget(rep_box)
 
@@ -402,7 +476,8 @@ class AudioRecorderWindow(QMainWindow):
         in_vol_row = QHBoxLayout()
         in_vol_row.addWidget(_form_label("Aufnahme-Lautstärke:"))
         self._vol_input = VolumeControlRow(
-            tooltip="Windows-Lautstärke des Aufnahme-Geräts"
+            tooltip="Windows-Lautstärke des Aufnahme-Geräts",
+            leading_icon=volume_role_record_icon(),
         )
         self._vol_input.value_changed.connect(self._on_input_volume_changed)
         self._vol_input.mute_toggled.connect(self._on_input_mute_toggled)
@@ -420,7 +495,8 @@ class AudioRecorderWindow(QMainWindow):
         out_vol_row = QHBoxLayout()
         out_vol_row.addWidget(_form_label("Wiedergabe-Lautstärke:"))
         self._vol_send = VolumeControlRow(
-            tooltip="Windows-Lautstärke der Sende-Soundkarte (CAT-Replay)"
+            tooltip="Windows-Lautstärke der Sende-Soundkarte (CAT-Replay)",
+            leading_icon=volume_role_send_icon(),
         )
         self._vol_send.value_changed.connect(self._on_output_volume_changed)
         self._vol_send.mute_toggled.connect(self._on_send_mute_toggled)
@@ -441,7 +517,8 @@ class AudioRecorderWindow(QMainWindow):
         pc_vol_row = QHBoxLayout()
         pc_vol_row.addWidget(_form_label("PC-Lautstärke:"))
         self._vol_pc = VolumeControlRow(
-            tooltip="Windows-Lautstärke der PC-Ausgabe (Play PC)"
+            tooltip="Windows-Lautstärke der PC-Ausgabe (Play PC)",
+            leading_icon=volume_role_pc_icon(),
         )
         self._vol_pc.value_changed.connect(self._on_pc_volume_changed)
         self._vol_pc.mute_toggled.connect(self._on_pc_mute_toggled)
@@ -873,10 +950,97 @@ class AudioRecorderWindow(QMainWindow):
         self._try_complete_radio_restore_after_close()
 
     def _on_player_position(self, pos_ms: int, dur_ms: int) -> None:
+        if self._is_pc_playing():
+            return
+        self._update_replay_progress_ui(pos_ms, dur_ms)
+
+    def _slider_replay_position_ms(self) -> int:
+        if self._duration_ms <= 0:
+            return 0
+        return int(self._duration_ms * self.progress_replay.value() / 1000)
+
+    def _update_replay_progress_ui(self, pos_ms: int, dur_ms: int) -> None:
         self._duration_ms = max(0, dur_ms)
-        self.lbl_replay_position.setText(
-            f"{_format_ms(pos_ms)} / {_format_ms(dur_ms)}"
+        if not self._seek_dragging:
+            if dur_ms > 0:
+                self.progress_replay.blockSignals(True)
+                try:
+                    self.progress_replay.setValue(int(1000 * pos_ms / dur_ms))
+                finally:
+                    self.progress_replay.blockSignals(False)
+            else:
+                self.progress_replay.setValue(0)
+            self.lbl_replay_elapsed.setText(_format_ms(pos_ms))
+            rem = max(0, dur_ms - pos_ms)
+            self.lbl_replay_remaining.setText(f"-{_format_ms(rem)}")
+            self._update_remaining_warn(rem)
+        self._update_buttons()
+
+    def _update_remaining_warn(self, rem_ms: int) -> None:
+        playing = self._player.state == PlayerState.PLAYING
+        self._set_remaining_warn(playing and rem_ms < _REMAINING_WARN_MS)
+
+    def _set_remaining_warn(self, active: bool) -> None:
+        if active == self._remaining_warn_active:
+            if active:
+                self.lbl_replay_remaining.setStyleSheet(
+                    _REMAINING_STYLE_WARN
+                    if self._remaining_blink_on
+                    else _REMAINING_STYLE_NORMAL
+                )
+            return
+        self._remaining_warn_active = active
+        if active:
+            self._remaining_blink_on = True
+            self.lbl_replay_remaining.setStyleSheet(_REMAINING_STYLE_WARN)
+            self._remaining_blink_timer.start()
+        else:
+            self._remaining_blink_timer.stop()
+            self.lbl_replay_remaining.setStyleSheet(_REMAINING_STYLE_NORMAL)
+            self.lbl_replay_remaining.setVisible(True)
+
+    def _on_remaining_blink_tick(self) -> None:
+        if not self._remaining_warn_active:
+            return
+        self._remaining_blink_on = not self._remaining_blink_on
+        self.lbl_replay_remaining.setStyleSheet(
+            _REMAINING_STYLE_WARN if self._remaining_blink_on else _REMAINING_STYLE_NORMAL
         )
+
+    def _on_replay_seek_pressed(self) -> None:
+        self._seek_dragging = True
+
+    def _on_replay_seek_released(self) -> None:
+        self._seek_dragging = False
+        self._apply_replay_seek_from_slider()
+
+    def _on_replay_seek_slider_change(self, value: int) -> None:
+        if self.progress_replay.signalsBlocked() or self._duration_ms <= 0:
+            return
+        if self.progress_replay.isSliderDown():
+            self._seek_dragging = True
+        pos_ms = int(self._duration_ms * value / 1000)
+        if self._player.state in (
+            PlayerState.IDLE,
+            PlayerState.PLAYING,
+            PlayerState.PAUSED_RX,
+        ):
+            self._player.seek_position_ms(pos_ms)
+        self.lbl_replay_elapsed.setText(_format_ms(pos_ms))
+        rem = max(0, self._duration_ms - pos_ms)
+        self.lbl_replay_remaining.setText(f"-{_format_ms(rem)}")
+        self._update_remaining_warn(rem)
+
+    def _apply_replay_seek_from_slider(self) -> None:
+        if self._duration_ms <= 0:
+            return
+        pos_ms = self._slider_replay_position_ms()
+        if self._player.state in (
+            PlayerState.IDLE,
+            PlayerState.PLAYING,
+            PlayerState.PAUSED_RX,
+        ):
+            self._player.seek_position_ms(pos_ms)
 
     def _on_current_file(self, name: str) -> None:
         for i in range(self.list_files.count()):
@@ -1125,6 +1289,10 @@ class AudioRecorderWindow(QMainWindow):
             )
             self._refresh_file_list()
             return
+        # Replay-Player kann nach CAT-Stopp die Datei noch gehalten haben.
+        if not self._player.is_busy():
+            self._player.release_source()
+        self._release_pc_source()
         if not self._ensure_pc_player():
             return
         assert self._pc_player is not None
@@ -1502,6 +1670,16 @@ class AudioRecorderWindow(QMainWindow):
         self.btn_stop_replay.setEnabled(play_busy)
         self.btn_replay.setStyleSheet(
             _REPLAY_STYLE_ACTIVE if play_busy else _REPLAY_STYLE_IDLE
+        )
+        self.progress_replay.setEnabled(
+            multimedia_available()
+            and self._duration_ms > 0
+            and not pc_busy
+            and (
+                not play_busy
+                or self._player.state
+                in (PlayerState.PLAYING, PlayerState.PAUSED_RX)
+            )
         )
 
         # Lokale PC-Vorhöre — exklusiv zu Aufnahme/Replay.

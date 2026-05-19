@@ -74,3 +74,6 @@ def test_app_settings_default_has_global_audio() -> None:
     assert settings.global_audio.device_id_for(ROLE_INPUT) == ""
     assert settings.global_audio.device_id_for(ROLE_SEND) == ""
     assert settings.global_audio.device_id_for(ROLE_PC) == ""
+    assert settings.global_audio.tx_monitor_to_pc_enabled is True
+    assert settings.audio_player.tx_monitor_to_pc_enabled is True
+    assert settings.audio_recorder.tx_monitor_to_pc_enabled is True

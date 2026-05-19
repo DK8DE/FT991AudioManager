@@ -13,6 +13,9 @@ ROLE_SEND = "send"
 ROLE_PC = "pc"
 AUDIO_ROLES = (ROLE_INPUT, ROLE_SEND, ROLE_PC)
 
+#: Ausgabe Mithören (CAT-Sendung zusätzlich auf PC-Ausgabe) — Standard bei Erstinstallation.
+DEFAULT_TX_MONITOR_TO_PC_ENABLED = True
+
 
 @dataclass
 class GlobalAudioSettings:
@@ -25,7 +28,7 @@ class GlobalAudioSettings:
     input_muted: bool = False
     send_muted: bool = False
     pc_muted: bool = False
-    tx_monitor_to_pc_enabled: bool = False
+    tx_monitor_to_pc_enabled: bool = DEFAULT_TX_MONITOR_TO_PC_ENABLED
     window_geometry: str = ""
 
     def device_id_for(self, role: str) -> str:
@@ -116,7 +119,9 @@ class GlobalAudioSettings:
             input_muted=bool(r.get("input_muted", False)),
             send_muted=bool(r.get("send_muted", False)),
             pc_muted=bool(r.get("pc_muted", False)),
-            tx_monitor_to_pc_enabled=bool(r.get("tx_monitor_to_pc_enabled", False)),
+            tx_monitor_to_pc_enabled=bool(
+                r.get("tx_monitor_to_pc_enabled", DEFAULT_TX_MONITOR_TO_PC_ENABLED)
+            ),
             window_geometry=str(r.get("window_geometry", "") or ""),
         )
 
