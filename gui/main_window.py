@@ -52,6 +52,7 @@ from cat import (
     FT991A_RADIO_ID,
     FT991CAT,
     SerialCAT,
+    TxLockError,
 )
 from mapping.memory_mapping import MemoryChannel
 from mapping.rx_mapping import RxMode, coarse_mode_group_for, rx_mode_from_selection
@@ -94,6 +95,7 @@ from mapping.amateur_bands import (
     amateur_band_at_hz,
     amateur_band_for_hz,
     combo_entries_high_to_low,
+    preferred_voice_rx_mode_for_amateur_hz,
     VFO_BAND_CHOICE,
 )
 from mapping.repeater_offset import SHIFT_MINUS
@@ -232,6 +234,8 @@ class MainWindow(QMainWindow):
         self._tcall_restore_data_mode: Optional[RxMode] = None
         #: MT-Frequenz pro Kanal (Memory-Loader) — Abgleich bei VFO-Drehen mit aktivem MC.
         self._memory_slot_frequency_hz: dict[int, int] = {}
+        #: Zuletzt per Band/Frequenz automatisch gesetzter Phone-Mode (LSB/USB/FM).
+        self._last_applied_band_voice_mode: Optional[RxMode] = None
         self._update_check_thread: Optional[UpdateCheckThread] = None
 
         self._build_ui()
@@ -638,7 +642,9 @@ class MainWindow(QMainWindow):
         self.band_combo.setEnabled(False)
         self.band_combo.setMinimumWidth(280)
         self.band_combo.setToolTip(
-            "VFO-Modus oder Amateurband (Mittenfrequenz auf VFO-A setzen)"
+            "VFO-Modus oder Amateurband (Mittenfrequenz auf VFO-A setzen). "
+            "Bei Bandwahl: Phone-Mode passend (HF unter 10 MHz LSB, ab 10 MHz USB; "
+            "6 m / 2 m / 70 cm FM), Repeater-Minus aus."
         )
         for label, data in combo_entries_high_to_low():
             self.band_combo.addItem(label, data)
@@ -1419,12 +1425,43 @@ class MainWindow(QMainWindow):
             # Bandwahl (Dropdown): Repeater-Minus immer aus — unabhängig vom Minus-Taster.
             self._radio_control_bar.set_repeater_minus_checked(False)
             self._try_clear_fm_repeater_shift_simplex()
+            if choice == VFO_BAND_CHOICE:
+                self._maybe_apply_band_voice_mode_for_hz(self._vfo_a_display_hz)
+            else:
+                self._maybe_apply_band_voice_mode_for_hz(int(choice))
         except CatConnectionLostError:
             self._on_connection_lost()
         except CatError as exc:
             sb = self.statusBar()
             if sb is not None:
                 sb.showMessage(str(exc), 5000)
+
+    def _maybe_apply_band_voice_mode_for_hz(self, hz: int) -> None:
+        """HF: LSB unter 10 MHz, USB ab 10 MHz; UKW-Bänder: FM — bei Band- und QRG-Wahl."""
+        if not self._cat.is_connected() or self._relay_rev_active:
+            return
+        if self._audio_tx_busy():
+            return
+        band = amateur_band_at_hz(int(hz))
+        if band is None:
+            self._last_applied_band_voice_mode = None
+            return
+        mode = preferred_voice_rx_mode_for_amateur_hz(int(hz))
+        if mode is None:
+            return
+        if mode == self._last_applied_band_voice_mode:
+            return
+        try:
+            FT991CAT(self._cat).set_rx_mode(mode)
+            self._last_applied_band_voice_mode = mode
+        except TxLockError:
+            pass
+        except CatConnectionLostError:
+            self._on_connection_lost()
+        except CatError as exc:
+            sb = self.statusBar()
+            if sb is not None:
+                sb.showMessage(str(exc), 4000)
 
     def _select_memory_combo_vfo(self) -> None:
         vfo_idx = self.memory_combo.findData(self._VFO_ITEM_DATA)
@@ -1469,6 +1506,7 @@ class MainWindow(QMainWindow):
         if not connected:
             self._t_call.stop()
             self._reset_relay_rev_state()
+            self._last_applied_band_voice_mode = None
             self._mode_label.setText(_status_bar_mode_text("—"))
             self._vfo_a_display_hz = 0
             self._vfo_b_display_hz = 0
@@ -1705,6 +1743,7 @@ class MainWindow(QMainWindow):
             self._notify_meter_app_frequency_write(target, hold_ms=hold_ms)
             if force:
                 self._try_clear_fm_repeater_shift_simplex()
+            self._maybe_apply_band_voice_mode_for_hz(target)
         except CatError as exc:
             QMessageBox.warning(self, "VFO-A", str(exc))
 

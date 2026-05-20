@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from mapping.rx_mapping import RxMode
+
 #: Combo-Daten: nur VFO-Modus, keine Frequenz setzen.
 VFO_BAND_CHOICE = -1
 
@@ -80,6 +82,27 @@ def amateur_band_at_hz(hz: int) -> Optional[AmateurBand]:
 
 def is_in_amateur_band(hz: int) -> bool:
     return amateur_band_for_hz(hz) is not None
+
+
+def preferred_voice_rx_mode_for_amateur_hz(hz: int) -> Optional[RxMode]:
+    """Phone-typische Betriebsart für eine Frequenz im Amateurband (ITU Region 1 üblich).
+
+    - **6 m / 2 m / 70 cm:** FM
+    - **HF unter 10 MHz** (z. B. 160–40 m, 60 m): LSB
+    - **HF ab 10 MHz** (30–10 m): USB
+
+    Außerhalb der definierten Amateurbänder: ``None``.
+    """
+    band = amateur_band_at_hz(int(hz))
+    if band is None:
+        return None
+    if band.name in ("6 m", "2 m", "70 cm"):
+        return RxMode.FM
+    if band.max_hz < 10_000_000:
+        return RxMode.LSB
+    if band.min_hz >= 10_000_000:
+        return RxMode.USB
+    return RxMode.USB if int(hz) >= 10_000_000 else RxMode.LSB
 
 
 def combo_entries_high_to_low() -> List[Tuple[str, int]]:

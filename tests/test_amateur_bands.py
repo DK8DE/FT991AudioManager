@@ -10,7 +10,9 @@ from mapping.amateur_bands import (
     amateur_band_for_hz,
     combo_entries_high_to_low,
     is_in_amateur_band,
+    preferred_voice_rx_mode_for_amateur_hz,
 )
+from mapping.rx_mapping import RxMode
 
 
 class AmateurBandsTest(unittest.TestCase):
@@ -38,6 +40,21 @@ class AmateurBandsTest(unittest.TestCase):
         self.assertIn("430.000", label)
         self.assertIn("440.000", label)
         self.assertIn("(70 cm)", label)
+
+    def test_preferred_voice_mode_hf_lsb_usb_fm(self) -> None:
+        self.assertEqual(
+            preferred_voice_rx_mode_for_amateur_hz(3_600_000), RxMode.LSB
+        )
+        self.assertEqual(
+            preferred_voice_rx_mode_for_amateur_hz(14_200_000), RxMode.USB
+        )
+        self.assertEqual(
+            preferred_voice_rx_mode_for_amateur_hz(51_500_000), RxMode.FM
+        )
+        self.assertEqual(
+            preferred_voice_rx_mode_for_amateur_hz(145_500_000), RxMode.FM
+        )
+        self.assertIsNone(preferred_voice_rx_mode_for_amateur_hz(99_000_000))
 
 
 if __name__ == "__main__":  # pragma: no cover
