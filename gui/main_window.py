@@ -4,7 +4,7 @@ Neuer schlanker Aufbau (ab 0.5.1):
 
 - Oben **rechts**: VFO-A/B und RX/TX-Anzeige; darunter ein **großer
   Meter-Bereich** (S-Meter + DSP links, AF/RF + TX-Meter rechts);
-  darunter **Tune / REV** und Audio-Buttons; unten **Mode-Gruppe**,
+  darunter **Minus / Tune / REV** und Audio-Buttons; unten **Mode-Gruppe**,
   **EQ-Profil**, **Speicherkanal** und **Band**; darunter ein eigener Bereich
   **Favoriten** (persistente Soll-Vorgaben).
 - **EQ-Profil- und Mode-Auswahl** bleiben im Hauptfenster; der Equalizer-Editor
@@ -96,6 +96,7 @@ from mapping.amateur_bands import (
     combo_entries_high_to_low,
     VFO_BAND_CHOICE,
 )
+from mapping.repeater_offset import SHIFT_MINUS
 from mapping.meter_mapping import (
     apply_smeter_calibration_from_settings,
     smeter_set_calibration_frequency_hz,
@@ -261,6 +262,9 @@ class MainWindow(QMainWindow):
         self.meter_widget.tx_status_changed.connect(self._on_tx_status_changed)
         self.meter_widget.connection_lost.connect(self._on_connection_lost)
         self.meter_widget.rx_info_changed.connect(self._on_rx_info_changed)
+        self.meter_widget.repeater_shift_polled.connect(
+            self._on_repeater_shift_polled
+        )
         self.meter_widget.status_message_requested.connect(
             self._on_meter_status_message
         )
@@ -570,6 +574,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.meter_widget, stretch=1)
 
         self._radio_control_bar = RadioControlBar()
+        self._radio_control_bar.repeater_minus_toggled.connect(
+            self._on_repeater_minus_toggled
+        )
         self._radio_control_bar.tune_clicked.connect(self._on_tune_clicked)
         self._radio_control_bar.rev_toggled.connect(self._on_rev_toggled)
         self._radio_control_bar.t_call_pressed.connect(self._on_t_call_pressed)
@@ -1032,6 +1039,20 @@ class MainWindow(QMainWindow):
             if sb is not None:
                 sb.showMessage(str(exc), 5000)
 
+    def _on_repeater_minus_toggled(self, checked: bool) -> None:
+        """Repeater-Minus per CAT (``OS02;`` / ``OS00;``) — nur FM/C4FM wirksam."""
+        if not self._cat.is_connected():
+            self._radio_control_bar.set_repeater_minus_checked(False)
+            return
+        try:
+            ft = FT991CAT(self._cat)
+            if checked:
+                ft.try_set_repeater_shift_minus()
+            else:
+                ft.try_set_repeater_shift_simplex()
+        except CatConnectionLostError:
+            self._on_connection_lost()
+
     def _on_af_gain_slider_changed(self, level: int) -> None:
         """User hat den AF-Slider bewegt — CAT AG0 schreiben."""
         if not self._cat.is_connected():
@@ -1063,6 +1084,22 @@ class MainWindow(QMainWindow):
         self._relay_output_hz = None
         self._relay_pre_rev_memory_channel = None
         self._radio_control_bar.set_rev_checked(False)
+
+    def _try_clear_fm_repeater_shift_simplex(self) -> None:
+        """FM/C4FM: Repeater-Shift per ``OS00;`` auf Simplex (wenn nicht Minus-Taste aktiv).
+
+        Ist **Minus** in der Kontrollleiste eingeschaltet, wird nichts gesendet —
+        sonst würde jede QRG-Änderung den Shift überschreiben.
+        """
+        if not self._cat.is_connected() or self._relay_rev_active:
+            return
+        if self._radio_control_bar.is_repeater_minus_checked():
+            return
+        try:
+            FT991CAT(self._cat).try_set_repeater_shift_simplex()
+        except CatConnectionLostError:
+            self._on_connection_lost()
+        self._radio_control_bar.set_repeater_minus_checked(False)
 
     def _audio_tx_busy(self) -> bool:
         """CAT-Sendung über Audio-Player oder -Recorder läuft."""
@@ -1379,6 +1416,9 @@ class MainWindow(QMainWindow):
                 self._apply_vfo_a_display_hz(hz)
             self._select_memory_combo_vfo()
             self._sync_band_combo_to_frequency(self._vfo_a_display_hz)
+            # Bandwahl (Dropdown): Repeater-Minus immer aus — unabhängig vom Minus-Taster.
+            self._radio_control_bar.set_repeater_minus_checked(False)
+            self._try_clear_fm_repeater_shift_simplex()
         except CatConnectionLostError:
             self._on_connection_lost()
         except CatError as exc:
@@ -1552,6 +1592,15 @@ class MainWindow(QMainWindow):
             pass
         self._select_memory_combo_vfo()
         self._sync_band_combo_to_frequency(int(frequency_hz))
+        self._try_clear_fm_repeater_shift_simplex()
+
+    def _on_repeater_shift_polled(self, direction: int) -> None:
+        """IF; P10 vom Poller — Minus-Button an den tatsächlichen TRX-Stand anpassen."""
+        if self._relay_rev_active:
+            return
+        self._radio_control_bar.set_repeater_minus_checked(
+            int(direction) == SHIFT_MINUS
+        )
 
     def _on_rx_info_changed(
         self,
@@ -1654,6 +1703,8 @@ class MainWindow(QMainWindow):
             if not self._relay_rev_active:
                 self._relay_output_hz = target
             self._notify_meter_app_frequency_write(target, hold_ms=hold_ms)
+            if force:
+                self._try_clear_fm_repeater_shift_simplex()
         except CatError as exc:
             QMessageBox.warning(self, "VFO-A", str(exc))
 
@@ -2090,6 +2141,7 @@ class MainWindow(QMainWindow):
             if data == self._VFO_ITEM_DATA:
                 ft.switch_to_vfo_mode()
                 self._sync_band_combo_to_frequency(self._vfo_a_display_hz)
+                self._try_clear_fm_repeater_shift_simplex()
             elif isinstance(data, int):
                 ft.select_memory_channel(int(data))
         except CatConnectionLostError:
@@ -2318,6 +2370,7 @@ class MainWindow(QMainWindow):
         except CatError as exc:
             QMessageBox.warning(self, "Favorit", str(exc))
             return
+        self._try_clear_fm_repeater_shift_simplex()
         self._apply_vfo_a_display_hz(fav.frequency_hz)
         self._sync_band_combo_to_frequency(fav.frequency_hz)
         self._mode_label.setText(_status_bar_mode_text(mode.value))

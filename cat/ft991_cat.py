@@ -130,6 +130,7 @@ from model.eq_band import EQBand, EQSettings
 
 from .cat_errors import (
     CatCommandUnsupportedError,
+    CatConnectionLostError,
     CatError,
     CatNotConnectedError,
     CatProtocolError,
@@ -1095,6 +1096,33 @@ class FT991CAT:
             return parse_if_shift_direction(response)
         except ValueError as exc:
             raise CatProtocolError(str(exc)) from exc
+
+    def try_set_repeater_shift_simplex(self) -> None:
+        """Repeater-Shift auf Simplex (``OS00;`` — P1=Fixed, P2=Simplex).
+
+        Laut FT-991/A-CAT nur in FM/C4FM wirksam; in anderen Modi wird der
+        Befehl oft still verworfen — dann ohne Fehler.
+        """
+        try:
+            self.ensure_rx()
+            self._cat.send_command("OS00;", read_response=False)
+        except CatConnectionLostError:
+            raise
+        except CatError:
+            pass
+
+    def try_set_repeater_shift_minus(self) -> None:
+        """Repeater-Shift auf Minus (``OS02;`` — P1=Fixed, P2=Minus Shift).
+
+        Wie :meth:`try_set_repeater_shift_simplex` — praktisch nur FM/C4FM.
+        """
+        try:
+            self.ensure_rx()
+            self._cat.send_command("OS02;", read_response=False)
+        except CatConnectionLostError:
+            raise
+        except CatError:
+            pass
 
     # ------------------------------------------------------------------
     # Speicherkanaele (MT/MC/VM)

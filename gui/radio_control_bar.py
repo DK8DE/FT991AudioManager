@@ -1,4 +1,4 @@
-"""Kompakte CAT-Steuerung unter den Meter-Anzeigen (Tune, REV, Audio)."""
+"""Kompakte CAT-Steuerung unter den Meter-Anzeigen (Minus, Tune, REV, Audio)."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ _RIG_IO_BLINK_SEQ = (True, False, True, False, True, False, True, False)
 class RadioControlBar(QWidget):
     """Tune, REV, Audio-Buttons und FLRig-Anzeige in getrennten Panels."""
 
+    repeater_minus_toggled = Signal(bool)
     tune_clicked = Signal()
     rev_toggled = Signal(bool)
     t_call_pressed = Signal()
@@ -39,6 +40,24 @@ class RadioControlBar(QWidget):
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
+
+        self._rpt_minus_btn = QPushButton("Minus")
+        self._rpt_minus_btn.setCheckable(True)
+        self._rpt_minus_btn.setMinimumWidth(56)
+        self._rpt_minus_btn.setToolTip(
+            "Repeater-Shift Minus ein/aus (CAT OS — nur FM/C4FM). "
+            "Aus = Simplex, Ein = Minus-Shift. Solange eingeschaltet, bleibt "
+            "Minus auch bei QRG-Änderungen in der App erhalten."
+        )
+        self._rpt_minus_btn.setStyleSheet(
+            "QPushButton:checked {"
+            "  background-color: #5aa9ff;"
+            "  color: #101010;"
+            "  font-weight: bold;"
+            "  border: 1px solid #2a6aaa;"
+            "}"
+        )
+        self._rpt_minus_btn.toggled.connect(self.repeater_minus_toggled.emit)
 
         self._tune_btn = QPushButton("Tune")
         self._tune_btn.setMinimumWidth(72)
@@ -115,6 +134,7 @@ class RadioControlBar(QWidget):
         ctrl_layout = QHBoxLayout(ctrl_frame)
         ctrl_layout.setContentsMargins(8, 6, 8, 6)
         ctrl_layout.setSpacing(8)
+        ctrl_layout.addWidget(self._rpt_minus_btn)
         ctrl_layout.addWidget(self._tune_btn)
         ctrl_layout.addWidget(self._rev_btn)
         ctrl_layout.addWidget(self._tcall_btn)
@@ -197,6 +217,14 @@ class RadioControlBar(QWidget):
         self._rev_btn.setChecked(checked)
         self._rev_btn.blockSignals(False)
 
+    def set_repeater_minus_checked(self, checked: bool) -> None:
+        self._rpt_minus_btn.blockSignals(True)
+        self._rpt_minus_btn.setChecked(bool(checked))
+        self._rpt_minus_btn.blockSignals(False)
+
+    def is_repeater_minus_checked(self) -> bool:
+        return bool(self._rpt_minus_btn.isChecked())
+
     def is_t_call_pressed(self) -> bool:
         return self._tcall_btn.isDown()
 
@@ -204,11 +232,13 @@ class RadioControlBar(QWidget):
         self._tcall_btn.setDown(bool(active))
 
     def set_controls_enabled(self, enabled: bool) -> None:
+        self._rpt_minus_btn.setEnabled(enabled)
         self._tune_btn.setEnabled(enabled)
         self._rev_btn.setEnabled(enabled)
         self._tcall_btn.setEnabled(enabled)
         if not enabled:
             self.set_rev_checked(False)
             self.set_t_call_active(False)
+            self.set_repeater_minus_checked(False)
         self._audio_btn.setEnabled(True)
         self._recorder_btn.setEnabled(True)

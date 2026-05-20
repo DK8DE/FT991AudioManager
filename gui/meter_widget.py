@@ -171,6 +171,8 @@ class RxStatusSample:
     #: ``None`` = nicht gelesen / Read-Fehler, ``0`` = VFO-Modus,
     #: ``> 0`` = Memory-Kanal-Nummer.
     active_memory_channel: Optional[int] = None
+    #: Repeater-Shift aus ``IF;`` P10 — nur Slow-Path: 0 Simplex, 1 Plus, 2 Minus.
+    if_shift_direction: Optional[int] = None
 
 
 DEFAULT_INTERVAL_TX_MS = 250
@@ -644,6 +646,7 @@ class MeterPoller(QObject):
         mic_gain = _safe("mic_gain", ft.get_mic_gain)
         tx_bw = _safe("sh_width", ft.read_tx_bandwidth_sh)
         tx_power = _safe("pc_power", ft.read_pc_power_watts)
+        if_shift = _safe("if_shift", ft.read_if_shift_direction)
 
         sample = RxStatusSample(
             smeter=smeter,
@@ -661,6 +664,7 @@ class MeterPoller(QObject):
             frequency_hz=freq_a,
             frequency_b_hz=freq_b,
             active_memory_channel=active_mc,
+            if_shift_direction=if_shift,
         )
         self.rx_sample.emit(sample)
         return self._rx_interval_ms
@@ -2107,6 +2111,8 @@ class MeterWidget(QWidget):
     #: VFO/Modes vom Poller fürs Header/Profil. Letztes Flag: ``True``, wenn die
     #: Frequenz aus einem TX-Poll stammt (kein Memory→VFO-Heuristik dann).
     rx_info_changed = Signal(object, int, int, bool)
+    #: Slow-Path: Repeater-Shift aus ``IF;`` — ``0`` Simplex, ``1`` Plus, ``2`` Minus.
+    repeater_shift_polled = Signal(int)
     #: Wird ausgestellt, wenn der Slow-Path einen anderen MIC-Gain als zuletzt
     #: bekannt vom Funkgerät gelesen hat (Drehknopf am TRX).
     mic_gain_synced_from_radio = Signal(int)
@@ -2761,6 +2767,9 @@ class MeterWidget(QWidget):
             if self._last_memory_channel != mc:
                 self._last_memory_channel = mc
                 self.memory_channel_changed.emit(mc)
+
+        if sample.if_shift_direction is not None:
+            self.repeater_shift_polled.emit(int(sample.if_shift_direction))
 
     def _emit_rx_frequency_info(
         self,
