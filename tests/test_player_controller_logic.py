@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 from PySide6.QtWidgets import QApplication
 
-from audio.player_controller import PlayerController, PlayerState
+from audio.player_controller import PlayerController, PlayerState, PlaylistEntry
 
 _app = QApplication.instance() or QApplication([])
 
@@ -35,7 +35,7 @@ class PlayerControllerLogicTest(unittest.TestCase):
                 _disable_multimedia(ctrl)
                 errors: list[str] = []
                 ctrl.error.connect(errors.append)
-                ctrl.set_playlist([Path("a.mp3")])
+                ctrl.set_playlist([PlaylistEntry(Path("a.mp3"), 0)])
                 ctrl.play()
                 self.assertTrue(errors)
                 self.assertEqual(ctrl.state, PlayerState.IDLE)
@@ -63,7 +63,7 @@ class PlayerControllerLogicTest(unittest.TestCase):
             try:
                 errors: list[str] = []
                 ctrl.error.connect(errors.append)
-                ctrl.set_playlist([Path("a.mp3")])
+                ctrl.set_playlist([PlaylistEntry(Path("a.mp3"), 0)])
                 ctrl.play()
                 self.assertTrue(errors)
                 self.assertIn("nicht verbunden", errors[0].lower())
@@ -76,9 +76,13 @@ class PlayerControllerLogicTest(unittest.TestCase):
             ctrl = PlayerController(cat)  # type: ignore[arg-type]
             try:
                 a, b, c = Path("a.mp3"), Path("b.mp3"), Path("c.mp3")
-                ctrl.set_playlist([a, b, c])
+                ctrl.set_playlist(
+                    [PlaylistEntry(a, 0), PlaylistEntry(b, 0), PlaylistEntry(c, 0)]
+                )
                 ctrl.set_index(1)
-                ctrl.set_playlist([c, b, a])
+                ctrl.set_playlist(
+                    [PlaylistEntry(c, 0), PlaylistEntry(b, 0), PlaylistEntry(a, 0)]
+                )
                 self.assertEqual(ctrl.current_path, b)
             finally:
                 ctrl.shutdown()
@@ -91,7 +95,7 @@ class PlayerControllerLogicTest(unittest.TestCase):
                 _disable_multimedia(ctrl)
                 errors: list[str] = []
                 ctrl.error.connect(errors.append)
-                ctrl.set_playlist([Path("a.mp3")])
+                ctrl.set_playlist([PlaylistEntry(Path("a.mp3"), 0)])
                 ctrl.play(5)
                 self.assertTrue(errors)
                 self.assertIn("index", errors[0].lower())

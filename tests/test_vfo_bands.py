@@ -7,6 +7,7 @@ import unittest
 from mapping.vfo_bands import (
     is_valid_vfo_frequency_hz,
     step_vfo_frequency_hz,
+    tx_swr_meter_meaningful_for_ft991_vfo_hz,
 )
 
 
@@ -52,6 +53,17 @@ class VfoBandsTest(unittest.TestCase):
             step_vfo_frequency_hz(469_999_999, 1),
             469_999_999,
         )
+
+    def test_tx_swr_only_hf_segment_not_vhf_uhf(self) -> None:
+        self.assertTrue(tx_swr_meter_meaningful_for_ft991_vfo_hz(14_250_000))
+        self.assertTrue(tx_swr_meter_meaningful_for_ft991_vfo_hz(52_000_000))
+        self.assertFalse(tx_swr_meter_meaningful_for_ft991_vfo_hz(145_500_000))
+        self.assertFalse(tx_swr_meter_meaningful_for_ft991_vfo_hz(148_000_000))
+        self.assertFalse(tx_swr_meter_meaningful_for_ft991_vfo_hz(123_456_789))
+        self.assertFalse(tx_swr_meter_meaningful_for_ft991_vfo_hz(433_000_000))
+        self.assertFalse(tx_swr_meter_meaningful_for_ft991_vfo_hz(90_000_000))
+        self.assertFalse(tx_swr_meter_meaningful_for_ft991_vfo_hz(0))
+        self.assertFalse(tx_swr_meter_meaningful_for_ft991_vfo_hz(60_000_000))
 
 
 if __name__ == "__main__":  # pragma: no cover

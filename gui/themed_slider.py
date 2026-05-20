@@ -29,6 +29,15 @@ class MeterVerticalSlider(QSlider):
 
     def __init__(self, parent=None) -> None:
         super().__init__(Qt.Orientation.Vertical, parent)
+        #: Während ``paintEvent``: Style-Option ohne Ticks, damit Qt keine eigenen
+        #: Striche malt — **ohne** ``setTickPosition`` im Paint (sonst Rekursion /
+        #: Paint-Fehler unter PySide6/Windows).
+        self._meter_paint_suppress_style_ticks = False
+
+    def initStyleOption(self, option: QStyleOptionSlider) -> None:
+        super().initStyleOption(option)
+        if self._meter_paint_suppress_style_ticks:
+            option.tickPosition = QSlider.TickPosition.NoTicks
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         pos = self.tickPosition()
@@ -36,13 +45,12 @@ class MeterVerticalSlider(QSlider):
             super().paintEvent(event)
             return
 
-        # Nur unsere Ticks zeichnen — der Qt-Style (z. B. Fusion auf Windows)
-        # malt sonst zusätzlich Skalenstriche → doppelte Markierungen.
-        self.setTickPosition(QSlider.TickPosition.NoTicks)
+        # Nur unsere Ticks zeichnen — der Qt-Style malt sonst zusätzliche Striche.
+        self._meter_paint_suppress_style_ticks = True
         try:
             super().paintEvent(event)
         finally:
-            self.setTickPosition(pos)
+            self._meter_paint_suppress_style_ticks = False
 
         interval = self.tickInterval()
         if interval <= 0:

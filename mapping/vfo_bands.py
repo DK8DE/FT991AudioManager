@@ -68,6 +68,23 @@ def segment_for_hz(hz: int) -> Optional[VfoBandSegment]:
     return FT991_VFO_SEGMENTS[idx]
 
 
+def tx_swr_meter_meaningful_for_ft991_vfo_hz(hz: int) -> bool:
+    """Ob das CAT-TX-SWR-Meter (RM6) in der GUI angezeigt werden soll.
+
+    Bezieht sich auf das **untere** CAT-Segment (ca. 30 kHz–55,999999 MHz —
+    Kurzwelle/6 m). In allen anderen FT-991-Segmenten (u. a. UKW-Rundfunk,
+    2-m-Bereich, 70-cm-Bereich) bleibt der Balken aus — auch bei Frequenzen
+    außerhalb der GUI-Amateurband-Markierung.
+    """
+    h = int(hz)
+    if h <= 0:
+        return False
+    seg = segment_for_hz(h)
+    if seg is None:
+        return False
+    return seg == FT991_VFO_SEGMENTS[0]
+
+
 def snap_to_valid_vfo_hz(hz: int, *, direction: int = 0) -> int:
     """Frequenz in ein gültiges Segment bringen (Lücken überspringen).
 

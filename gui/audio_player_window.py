@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import base64
+import time
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -16,6 +18,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QComboBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -33,6 +36,7 @@ from audio.audio_settings_hub import AudioSettingsHub
 from audio.player_controller import (
     PlayerController,
     PlayerState,
+    build_playlist_entries,
     list_audio_output_devices,
     multimedia_available,
 )
@@ -51,7 +55,11 @@ from mapping.rx_mapping import RxMode
 from model import AppSettings
 from model.audio_player_settings import (
     MAX_CONTEST_LISTEN_MS,
+    encode_pause_token_seconds,
+    is_pause_token,
     merge_playlist_order,
+    parse_pause_ms_from_token,
+    pause_label_de,
     scan_audio_files,
 )
 
@@ -61,6 +69,7 @@ from .audio_hub_binding import (
     connect_player_hub,
     load_global_audio_into_combos,
 )
+from .file_list_widget_style import FILE_LIST_WIDGET_STYLESHEET
 from .folder_dialog import pick_audio_player_folder
 from .menu_icons import (
     set_transport_button_icon,
@@ -93,6 +102,35 @@ def _double_font(base: QFont) -> QFont:
 _REMAINING_WARN_MS = 10_000
 _REMAINING_STYLE_NORMAL = ""
 _REMAINING_STYLE_WARN = "color: #ff4444; font-weight: bold;"
+_PLAYLIST_TOKEN_ROLE = Qt.ItemDataRole.UserRole
+#: Nach Mode-Umschalten am TRX (DATA für CAT-Audio): kurz warten, dann Play/PTT.
+_CAT_PLAY_RADIO_SETTLE_MS = 200
+
+
+def _write_playlist_end_warnton_wav(path: Path) -> None:
+    """Kurzer Warnton (mono WAV) für PC-Lautsprecher bei Listenende."""
+    import math
+    import struct
+    import wave
+
+    sample_rate = 44_100
+    duration_s = 0.08
+    freq = 880.0
+    n = max(1, int(sample_rate * duration_s))
+    fade = max(1, n // 4)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        for i in range(n):
+            t = i / sample_rate
+            amp = 0.3
+            if i < fade:
+                amp *= i / fade
+            if i > n - 1 - fade:
+                amp *= (n - 1 - i) / max(1, fade)
+            s = int(32767 * amp * math.sin(2 * math.pi * freq * t))
+            w.writeframes(struct.pack("<h", max(-32767, min(32767, s))))
 
 
 class AudioPlayerWindow(QMainWindow):
@@ -163,10 +201,19 @@ class AudioPlayerWindow(QMainWindow):
         self._defer_play_until_engage_data = False
         self._pending_play_index_after_engage: Optional[int] = None
         self._defer_contest_pre_roll_until_engage_data = False
+        self._cat_radio_settle_timer = QTimer(self)
+        self._cat_radio_settle_timer.setSingleShot(True)
+        self._cat_radio_settle_timer.timeout.connect(self._on_cat_radio_settle_timeout)
+        #: "play" oder "pre_roll", ausstehend nach TRX-Settling (siehe Konstante oben).
+        self._cat_radio_settle_action: Optional[str] = None
+        self._cat_radio_settle_play_index: Optional[int] = None
 
         self._controller.state_changed.connect(self._on_state_changed)
+        self._controller.rx_pause_countdown_armed.connect(
+            self._sync_pause_countdown_timer
+        )
         self._controller.position_changed.connect(self._on_position_changed)
-        self._controller.current_file_changed.connect(self._on_current_file)
+        self._controller.playlist_row_changed.connect(self._on_playlist_row)
         self._controller.error.connect(self._on_error)
         self._controller.status_message.connect(self._on_status)
         self._controller.voice_mode_requested.connect(self._on_voice_mode_requested)
@@ -181,6 +228,18 @@ class AudioPlayerWindow(QMainWindow):
         self._pc_is_paused = False
         #: Zeilenindex der laufenden PC-Vorhör-Datei (None = keine / unbekannt).
         self._pc_preview_row: Optional[int] = None
+        #: Nach einer RX-Pause in der PC-Playlist: nächste Listenzeile abspielen.
+        self._pc_gap_resume_row: Optional[int] = None
+        self._pc_gap_timer = QTimer(self)
+        self._pc_gap_timer.setSingleShot(True)
+        self._pc_gap_timer.timeout.connect(self._on_pc_gap_timer_done)
+        #: Monotonie-Deadline für PC-Playlist-RX-Pause (Anzeige Countdown).
+        self._pc_gap_deadline_mono: Optional[float] = None
+        self._pause_countdown_timer = QTimer(self)
+        self._pause_countdown_timer.setInterval(100)
+        self._pause_countdown_timer.timeout.connect(self._on_pause_countdown_tick)
+        #: Kein „Ende der Datei“ verarbeiten (z. B. während ``setSource``/Quellenwechsel).
+        self._pc_ignore_end_media = False
         #: PC-Vorhör wurde per Einfachklick auf andere Zeile gestoppt — Doppelklick spielt dann PC.
         self._pc_list_click_stopped = False
         #: Startposition für nächste CAT-Sendung (nach PC-Vorhör / Slider).
@@ -191,6 +250,10 @@ class AudioPlayerWindow(QMainWindow):
         self._remaining_warn_active = False
         self._remaining_blink_on = True
         self._last_player_state: Optional[PlayerState] = None
+        #: Letzte volle Sekunde Restzeit (1..10) für PC-Warnton am Listenende.
+        self._playlist_end_warnton_last_sec: Optional[int] = None
+        self._playlist_end_warnton_effect = None  # lazy QSoundEffect
+        self._playlist_end_warnton_wav_path: Optional[Path] = None
         self._pending_radio_restore_on_close = False
         self._force_close_after_radio_restore = False
 
@@ -244,6 +307,7 @@ class AudioPlayerWindow(QMainWindow):
         list_box = QGroupBox("Sendeliste (Reihenfolge per Drag & Drop)")
         list_l = QVBoxLayout(list_box)
         self.list_files = QListWidget()
+        self.list_files.setStyleSheet(FILE_LIST_WIDGET_STYLESHEET)
         self.list_files.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.list_files.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.list_files.currentRowChanged.connect(self._on_list_row_changed)
@@ -256,7 +320,9 @@ class AudioPlayerWindow(QMainWindow):
         self.btn_play_pc = QPushButton("Play PC")
         self.btn_play_pc.setToolTip(
             "Markierte Datei lokal auf dem PC-Ausgabegerät abspielen — "
-            "kein CAT, keine Sendung."
+            "kein CAT, keine Sendung. Modus „Alle nacheinander“: wie CAT-Playlist "
+            "mit nächster Datei und eingetragenen RX-Pausen; „Nach jeder Datei stoppen“: "
+            "nur diese Datei."
         )
         self.btn_play_pc.clicked.connect(self._on_play_pc_clicked)
         set_transport_button_icon(self.btn_play_pc, transport_play_icon())
@@ -271,6 +337,29 @@ class AudioPlayerWindow(QMainWindow):
         self.btn_stop_pc.clicked.connect(self._on_stop_pc_clicked)
         set_transport_button_icon(self.btn_stop_pc, transport_stop_icon())
         list_btn_row.addWidget(self.btn_stop_pc)
+        self.lbl_pause_sec = QLabel("Pause (s):")
+        list_btn_row.addWidget(self.lbl_pause_sec)
+        self.spin_pause_seconds = QSpinBox()
+        self.spin_pause_seconds.setRange(1, 600)
+        self.spin_pause_seconds.setToolTip(
+            "Dauer einer RX-Pause in der Sendeliste (1–600 Sekunden)."
+        )
+        list_btn_row.addWidget(self.spin_pause_seconds)
+        self.btn_add_pause = QPushButton("Hinzufügen")
+        self.btn_add_pause.setToolTip(
+            "Fügt eine Pause nach der markierten Zeile ein "
+            "(ohne Markierung: ans Ende der Liste)."
+        )
+        self.btn_add_pause.clicked.connect(self._on_add_list_pause)
+        list_btn_row.addWidget(self.btn_add_pause)
+        self.btn_edit_pause = QPushButton("Pause ändern …")
+        self.btn_edit_pause.setToolTip("Nur bei einer Pausen-Zeile aktiv.")
+        self.btn_edit_pause.clicked.connect(self._on_edit_list_pause)
+        list_btn_row.addWidget(self.btn_edit_pause)
+        self.btn_delete_pause = QPushButton("Pause löschen")
+        self.btn_delete_pause.setToolTip("Entfernt die markierte Pausen-Zeile.")
+        self.btn_delete_pause.clicked.connect(self._on_delete_list_pause)
+        list_btn_row.addWidget(self.btn_delete_pause)
         list_btn_row.addStretch(1)
         list_l.addLayout(list_btn_row)
         root.addWidget(list_box, stretch=1)
@@ -316,7 +405,21 @@ class AudioPlayerWindow(QMainWindow):
         time_font = _double_font(self.lbl_elapsed.font())
         self.lbl_elapsed.setFont(time_font)
         self.lbl_remaining.setFont(time_font)
+        self.lbl_pause_countdown = QLabel("")
+        self.lbl_pause_countdown.setFont(time_font)
+        self.lbl_pause_countdown.setAlignment(
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.lbl_pause_countdown.setMinimumWidth(
+            self.lbl_pause_countdown.fontMetrics().horizontalAdvance("0:00") + 16
+        )
+        self.lbl_pause_countdown.setToolTip(
+            "Verbleibende RX-Pause (Countdown bis Fortsetzung)."
+        )
+        self.lbl_pause_countdown.setVisible(False)
         time_row.addWidget(self.lbl_elapsed)
+        time_row.addStretch(1)
+        time_row.addWidget(self.lbl_pause_countdown)
         time_row.addStretch(1)
         time_row.addWidget(self.lbl_remaining)
         playback_l.addLayout(time_row)
@@ -340,7 +443,22 @@ class AudioPlayerWindow(QMainWindow):
         self._mode_group.addButton(self.radio_playlist)
         self.radio_single.toggled.connect(self._sync_mode_to_controller)
         mode_l.addWidget(self.radio_single)
-        mode_l.addWidget(self.radio_playlist)
+        playlist_row = QHBoxLayout()
+        playlist_row.addWidget(self.radio_playlist)
+        self.check_warn_transmission_end = QCheckBox(
+            "Warnen beim Ende der Aussendung"
+        )
+        self.check_warn_transmission_end.setToolTip(
+            "In den letzten 10 Sekunden der letzten Datei ertönt ein kurzer "
+            "Hinweis auf dem PC-Ausgabegerät (Combobox „PC-Ausgabe“). "
+            "Nicht über die Sende-Soundkarte / nicht über den CAT-Audiopfad."
+        )
+        self.check_warn_transmission_end.toggled.connect(
+            self._on_warn_transmission_end_toggled
+        )
+        playlist_row.addWidget(self.check_warn_transmission_end)
+        playlist_row.addStretch(1)
+        mode_l.addLayout(playlist_row)
 
         self.check_contest = QCheckBox("Kontest-Loop")
         self.check_contest.setToolTip(
@@ -365,26 +483,6 @@ class AudioPlayerWindow(QMainWindow):
         listen_row.addWidget(self.spin_contest_listen)
         listen_row.addStretch(1)
         mode_l.addLayout(listen_row)
-
-        pre_row = QHBoxLayout()
-        pre_row.addWidget(_form_label("Vorlauf:"))
-        self.spin_pre_roll = QSpinBox()
-        self.spin_pre_roll.setRange(0, 60_000)
-        self.spin_pre_roll.setSuffix(" ms")
-        self.spin_pre_roll.valueChanged.connect(self._sync_timing)
-        pre_row.addWidget(self.spin_pre_roll)
-        pre_row.addStretch(1)
-        mode_l.addLayout(pre_row)
-
-        gap_row = QHBoxLayout()
-        gap_row.addWidget(_form_label("Pause zwischen Dateien:"))
-        self.spin_gap = QSpinBox()
-        self.spin_gap.setRange(0, 60_000)
-        self.spin_gap.setSuffix(" ms")
-        self.spin_gap.valueChanged.connect(self._sync_timing)
-        gap_row.addWidget(self.spin_gap)
-        gap_row.addStretch(1)
-        mode_l.addLayout(gap_row)
 
         dev_row = QHBoxLayout()
         dev_row.addWidget(_form_label("Sende-Ausgabe:"))
@@ -453,6 +551,10 @@ class AudioPlayerWindow(QMainWindow):
             self.btn_play_pc.setEnabled(False)
             self.btn_pause_pc.setEnabled(False)
             self.check_tx_monitor_pc.setEnabled(False)
+            self.check_warn_transmission_end.setEnabled(False)
+            self.btn_add_pause.setEnabled(False)
+            self.btn_edit_pause.setEnabled(False)
+            self.btn_delete_pause.setEnabled(False)
 
         self.setCentralWidget(central)
 
@@ -494,8 +596,6 @@ class AudioPlayerWindow(QMainWindow):
 
     def _load_settings_to_ui(self) -> None:
         ap = self._settings.audio_player
-        self.spin_pre_roll.setValue(ap.pre_roll_ms)
-        self.spin_gap.setValue(ap.gap_between_files_ms)
         if ap.playback_mode == "playlist":
             self.radio_playlist.setChecked(True)
         else:
@@ -510,8 +610,14 @@ class AudioPlayerWindow(QMainWindow):
             self.check_contest.setChecked(bool(ap.contest_mode))
         finally:
             self.check_contest.blockSignals(False)
+        self.check_warn_transmission_end.blockSignals(True)
+        try:
+            self.check_warn_transmission_end.setChecked(
+                bool(ap.warn_transmission_end_enabled)
+            )
+        finally:
+            self.check_warn_transmission_end.blockSignals(False)
         self._refresh_contest_enabled_state()
-        self._sync_timing()
         self._sync_mode_to_controller()
         self._sync_contest_to_controller()
         if self._audio_hub is not None:
@@ -564,41 +670,132 @@ class AudioPlayerWindow(QMainWindow):
         path = pick_audio_player_folder(self, start)
         if not path:
             return
-        self._folder = Path(path)
+        prev_resolved: Optional[Path] = None
+        if self._folder.is_dir():
+            try:
+                prev_resolved = self._folder.resolve()
+            except OSError:
+                prev_resolved = self._folder
+        new_folder = Path(path)
+        try:
+            new_resolved = new_folder.resolve()
+        except OSError:
+            new_resolved = new_folder
+        reset_playlist = prev_resolved is None or prev_resolved != new_resolved
+        self._folder = new_folder
         self._settings.audio_player.folder_path = path
-        self._refresh_file_list()
+        self._refresh_file_list(reset_playlist=reset_playlist)
 
-    def _refresh_file_list(self) -> None:
+    def _refresh_file_list(self, *, reset_playlist: bool = False) -> None:
         if self._folder.is_dir():
             discovered = scan_audio_files(self._folder)
-            self._playlist_names = merge_playlist_order(
-                self._playlist_names, discovered
-            )
+            if reset_playlist:
+                self._playlist_names = list(discovered)
+            else:
+                self._playlist_names = merge_playlist_order(
+                    self._playlist_names, discovered
+                )
             self.lbl_folder.setText(str(self._folder))
         else:
             self._playlist_names = []
             self.lbl_folder.setText("(kein Ordner gewählt)")
         self._rebuild_list_widget()
+        self._settings.audio_player.playlist_order = list(self._playlist_names)
         self._push_playlist_to_controller()
+
+    def _list_item_token(self, item: Optional[QListWidgetItem]) -> str:
+        if item is None:
+            return ""
+        raw = item.data(_PLAYLIST_TOKEN_ROLE)
+        if isinstance(raw, str) and raw:
+            return raw
+        return item.text()
 
     def _rebuild_list_widget(self) -> None:
         self.list_files.blockSignals(True)
         try:
             self.list_files.clear()
             for name in self._playlist_names:
-                self.list_files.addItem(QListWidgetItem(name))
+                it = QListWidgetItem(pause_label_de(name))
+                it.setData(_PLAYLIST_TOKEN_ROLE, name)
+                self.list_files.addItem(it)
         finally:
             self.list_files.blockSignals(False)
 
     def _sync_playlist_from_list(self) -> None:
         """Liste -> Namen -> Controller (immer vor play() aufrufen)."""
-        self._playlist_names = [
-            self.list_files.item(i).text()
-            for i in range(self.list_files.count())
-            if self.list_files.item(i) is not None
-        ]
+        names: list[str] = []
+        for i in range(self.list_files.count()):
+            item = self.list_files.item(i)
+            if item is None:
+                continue
+            names.append(self._list_item_token(item))
+        self._playlist_names = names
         self._settings.audio_player.playlist_order = list(self._playlist_names)
         self._push_playlist_to_controller()
+
+    def _has_audio_file_in_playlist(self) -> bool:
+        return any(not is_pause_token(n) for n in self._playlist_names)
+
+    def _on_add_list_pause(self) -> None:
+        self._sync_playlist_from_list()
+        sec = int(self.spin_pause_seconds.value())
+        token = encode_pause_token_seconds(sec)
+        row = self.list_files.currentRow()
+        insert_at = row + 1 if row >= 0 else len(self._playlist_names)
+        self._playlist_names.insert(insert_at, token)
+        it = QListWidgetItem(pause_label_de(token))
+        it.setData(_PLAYLIST_TOKEN_ROLE, token)
+        self.list_files.insertItem(insert_at, it)
+        self.list_files.setCurrentRow(insert_at)
+        self._settings.audio_player.playlist_order = list(self._playlist_names)
+        self._push_playlist_to_controller()
+        self._update_transport_buttons()
+
+    def _on_edit_list_pause(self) -> None:
+        self._sync_playlist_from_list()
+        row = self.list_files.currentRow()
+        if row < 0 or row >= len(self._playlist_names):
+            return
+        token = self._playlist_names[row]
+        if not is_pause_token(token):
+            return
+        ms = parse_pause_ms_from_token(token)
+        if ms is None:
+            return
+        cur_sec = max(1, ms // 1000)
+        new_sec, ok = QInputDialog.getInt(
+            self,
+            "Pause ändern",
+            "Dauer in Sekunden:",
+            cur_sec,
+            1,
+            600,
+            1,
+        )
+        if not ok:
+            return
+        new_token = encode_pause_token_seconds(int(new_sec))
+        self._playlist_names[row] = new_token
+        item = self.list_files.item(row)
+        if item is not None:
+            item.setText(pause_label_de(new_token))
+            item.setData(_PLAYLIST_TOKEN_ROLE, new_token)
+        self._settings.audio_player.playlist_order = list(self._playlist_names)
+        self._push_playlist_to_controller()
+        self._controller.load_track(row)
+        self._update_transport_buttons()
+
+    def _on_delete_list_pause(self) -> None:
+        self._sync_playlist_from_list()
+        row = self.list_files.currentRow()
+        if row < 0 or row >= len(self._playlist_names):
+            return
+        if not is_pause_token(self._playlist_names[row]):
+            return
+        self.list_files.takeItem(row)
+        self._sync_playlist_from_list()
+        self._update_transport_buttons()
 
     def _on_list_reordered(self, *args) -> None:
         self._sync_playlist_from_list()
@@ -618,21 +815,15 @@ class AudioPlayerWindow(QMainWindow):
         if row >= 0:
             self._sync_playlist_from_list()
             self._controller.load_track(row)
+        self._update_transport_buttons()
 
     def _push_playlist_to_controller(self) -> None:
         if not self._folder.is_dir():
             self._controller.set_playlist([])
             return
-        paths = [self._folder / n for n in self._playlist_names]
-        self._controller.set_playlist(paths)
-
-    def _sync_timing(self) -> None:
-        self._controller.set_timing(
-            self.spin_pre_roll.value(),
-            self.spin_gap.value(),
+        self._controller.set_playlist(
+            build_playlist_entries(self._folder, self._playlist_names)
         )
-        self._settings.audio_player.pre_roll_ms = self.spin_pre_roll.value()
-        self._settings.audio_player.gap_between_files_ms = self.spin_gap.value()
 
     def _sync_mode_to_controller(self) -> None:
         mode = "playlist" if self.radio_playlist.isChecked() else "single"
@@ -699,6 +890,11 @@ class AudioPlayerWindow(QMainWindow):
         else:
             self._settings.audio_player.tx_monitor_to_pc_enabled = bool(checked)
         self._apply_tx_monitor(bool(checked))
+
+    def _on_warn_transmission_end_toggled(self, checked: bool) -> None:
+        self._settings.audio_player.warn_transmission_end_enabled = bool(checked)
+        if not checked:
+            self._playlist_end_warnton_reset()
 
     def _apply_send_device(self, dev_id: str) -> None:
         self._controller.set_output_device_id(dev_id)
@@ -798,6 +994,7 @@ class AudioPlayerWindow(QMainWindow):
         self._pc_player.playbackStateChanged.connect(
             self._on_pc_playback_state_changed
         )
+        self._pc_player.mediaStatusChanged.connect(self._on_pc_media_status)
         self._pc_player.positionChanged.connect(self._on_pc_media_position)
         self._pc_player.durationChanged.connect(self._on_pc_media_duration)
         self._pc_player.errorOccurred.connect(self._on_pc_player_error)
@@ -898,6 +1095,7 @@ class AudioPlayerWindow(QMainWindow):
             rem = max(0, dur_ms - pos_ms)
             self.lbl_remaining.setText(f"-{_format_ms(rem)}")
             self._update_remaining_warn(rem)
+            self._maybe_tick_playlist_end_pc_warnton(rem)
         self._update_transport_buttons()
 
     def _seek_pc_player(self, pos_ms: int) -> None:
@@ -922,6 +1120,124 @@ class AudioPlayerWindow(QMainWindow):
             dur = self._duration_ms
         self._update_progress_ui(max(0, int(pos_ms)), dur)
 
+    def _last_audio_file_row_in_playlist(self) -> Optional[int]:
+        last: Optional[int] = None
+        for i, name in enumerate(self._playlist_names):
+            if not is_pause_token(name):
+                last = i
+        return last
+
+    def _should_playlist_end_warnton_context(self) -> bool:
+        """CAT letzte Datei oder PC-Vorhör auf letzter Datei, Kette, kein Kontest."""
+        if not self.check_warn_transmission_end.isChecked():
+            return False
+        if not self.radio_playlist.isChecked() or self.check_contest.isChecked():
+            return False
+        if not multimedia_available():
+            return False
+        last_r = self._last_audio_file_row_in_playlist()
+        if last_r is None:
+            return False
+        if (
+            self._controller.state == PlayerState.PLAYING
+            and self._controller.is_last_audio_file_in_playlist()
+        ):
+            return True
+        if self._use_pc_progress_for_slider() and self._is_pc_playing():
+            if self._pc_preview_row == last_r:
+                return True
+        return False
+
+    def _playlist_end_warnton_reset(self) -> None:
+        self._playlist_end_warnton_last_sec = None
+
+    def _warnton_pc_only_audio_device(self):  # -> Optional[QAudioDevice]
+        """Ausschließlich Gerät aus „PC-Ausgabe“ — niemals Sende-Soundkarte / CAT-Pfad.
+
+        ``QSoundEffect`` wird nicht an ``QAudioOutput`` des CAT-Players gebunden.
+        """
+        mm = qt_multimedia_types()
+        if mm is None:
+            return None
+        _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
+        dev_id = self.combo_pc_output.currentData()
+        if isinstance(dev_id, str) and dev_id:
+            for dev in QMediaDevices.audioOutputs():
+                try:
+                    uid = dev.id().data().decode("utf-8", errors="replace")
+                except Exception:
+                    uid = ""
+                if uid == dev_id:
+                    return dev
+        try:
+            return QMediaDevices.defaultAudioOutput()
+        except Exception:
+            return None
+
+    def _ensure_playlist_end_warnton_effect(self):  # -> Optional[Any]
+        if self._playlist_end_warnton_effect is not None:
+            return self._playlist_end_warnton_effect
+        try:
+            from PySide6.QtMultimedia import QSoundEffect
+        except ImportError:
+            return None
+        if qt_multimedia_types() is None:
+            return None
+        if self._playlist_end_warnton_wav_path is None:
+            self._playlist_end_warnton_wav_path = Path(
+                tempfile.gettempdir()
+            ) / "ft991_playlist_end_warn.wav"
+        p = self._playlist_end_warnton_wav_path
+        try:
+            _write_playlist_end_warnton_wav(p)
+        except OSError:
+            return None
+        eff = QSoundEffect(self)
+        eff.setSource(QUrl.fromLocalFile(str(p.resolve())))
+        self._playlist_end_warnton_effect = eff
+        return eff
+
+    def _play_pc_warnton_once(self) -> None:
+        eff = self._ensure_playlist_end_warnton_effect()
+        if eff is None:
+            return
+        try:
+            vol = max(
+                0.08,
+                min(1.0, int(self._vol_pc.value()) / 100.0 * 0.65),
+            )
+            eff.setVolume(vol)
+            dev = self._warnton_pc_only_audio_device()
+            if dev is not None and hasattr(eff, "setAudioDevice"):
+                eff.setAudioDevice(dev)
+        except Exception:
+            pass
+        try:
+            eff.play()
+        except Exception:
+            pass
+
+    def _maybe_tick_playlist_end_pc_warnton(self, rem_ms: int) -> None:
+        """Ein Kurzton pro Sekunde auf der PC-Karte in den letzten 10 s der letzten Datei."""
+        if self._seek_dragging:
+            return
+        rem_ms = max(0, int(rem_ms))
+        if (
+            not self._should_playlist_end_warnton_context()
+            or rem_ms <= 0
+            or rem_ms > _REMAINING_WARN_MS
+        ):
+            self._playlist_end_warnton_reset()
+            return
+        sec_left = (rem_ms + 999) // 1000
+        if sec_left < 1 or sec_left > 10:
+            self._playlist_end_warnton_reset()
+            return
+        if sec_left == self._playlist_end_warnton_last_sec:
+            return
+        self._playlist_end_warnton_last_sec = sec_left
+        self._play_pc_warnton_once()
+
     def _on_pc_media_duration(self, dur_ms: int) -> None:
         if not self._use_pc_progress_for_slider():
             return
@@ -930,9 +1246,14 @@ class AudioPlayerWindow(QMainWindow):
 
     def _stop_pc_playback_only(self) -> None:
         """PC-Wiedergabe anhalten, Sende-Player (Vorladung/Position) behalten."""
+        self._pc_gap_timer.stop()
+        self._pc_gap_resume_row = None
+        self._pc_gap_deadline_mono = None
+        self._sync_pause_countdown_timer()
         if not self._pc_player_ready or self._pc_player is None:
             self._pc_is_playing = False
             self._pc_is_paused = False
+            self._playlist_end_warnton_reset()
             return
         try:
             self._pc_player.stop()
@@ -940,6 +1261,7 @@ class AudioPlayerWindow(QMainWindow):
             pass
         self._pc_is_playing = False
         self._pc_is_paused = False
+        self._playlist_end_warnton_reset()
 
     def _apply_pending_seek_before_play(self, idx: Optional[int]) -> None:
         """Sende-Player auf Zeile + Slider-/PC-Position vor CAT-Start."""
@@ -949,6 +1271,75 @@ class AudioPlayerWindow(QMainWindow):
         if seek_ms is not None and seek_ms > 0:
             self._controller.seek_position_ms(seek_ms)
         self._pending_play_seek_ms = None
+
+    def _on_pc_gap_timer_done(self) -> None:
+        self._pc_gap_deadline_mono = None
+        next_row = self._pc_gap_resume_row
+        self._pc_gap_resume_row = None
+        if next_row is None or not self._pc_player_ready:
+            self._sync_pause_countdown_timer()
+            return
+        self._advance_pc_playlist_from_row(next_row)
+        self._sync_pause_countdown_timer()
+
+    def _advance_pc_playlist_from_row(self, row: int) -> None:
+        """Nächste hörbare Zeile (Pause per Timer, sonst Datei). Nur für PC-Vorhör-Playlist."""
+        self._sync_playlist_from_list()
+        n = len(self._playlist_names)
+        while row < n:
+            token = self._playlist_names[row]
+            if is_pause_token(token):
+                ms = parse_pause_ms_from_token(token)
+                if ms is not None and ms > 0:
+                    self.list_files.setCurrentRow(row)
+                    self._controller.set_index(row)
+                    self._pc_preview_row = row
+                    self.lbl_status.setText(
+                        f"PC-Vorhör (Playlist): RX-Pause — {pause_label_de(token)}"
+                    )
+                    self._pc_gap_resume_row = row + 1
+                    self._pc_gap_deadline_mono = time.monotonic() + ms / 1000.0
+                    self._pc_gap_timer.start(ms)
+                    self._update_transport_buttons()
+                    self._sync_pause_countdown_timer()
+                    return
+                row += 1
+                continue
+            path = self._folder / token
+            if not path.is_file():
+                row += 1
+                continue
+            if self._play_pc_file_row(row, start_ms=0):
+                return
+            row += 1
+        self.lbl_status.setText("PC-Vorhör (Playlist): Ende der Liste")
+        self._pc_preview_row = None
+        self._update_transport_buttons()
+        self._sync_pause_countdown_timer()
+
+    def _on_pc_track_finished_natural_end(self) -> None:
+        if self._pc_ignore_end_media:
+            return
+        if self.check_contest.isChecked():
+            return
+        if not self.radio_playlist.isChecked():
+            self.lbl_status.setText("PC-Vorhör: Ende der Datei (Einzelmodus)")
+            return
+        if self._pc_preview_row is None:
+            return
+        self._sync_playlist_from_list()
+        next_row = self._pc_preview_row + 1
+        self._advance_pc_playlist_from_row(next_row)
+
+    def _on_pc_media_status(self, status: object) -> None:
+        if self._pc_ignore_end_media:
+            return
+        mm = qt_multimedia_types()
+        if mm is None:
+            return
+        _QAudioOutput, _QMediaDevices, QMediaPlayer = mm
+        if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self._on_pc_track_finished_natural_end()
 
     def _on_play_pc_clicked(self) -> None:
         self._pc_list_click_stopped = False
@@ -981,6 +1372,7 @@ class AudioPlayerWindow(QMainWindow):
             self._playlist_names
         ):
             name = self._playlist_names[self._pc_preview_row]
+            name = pause_label_de(name)
         self.lbl_status.setText(
             f"PC-Wiedergabe fortgesetzt{': ' + name if name else ''}"
         )
@@ -1021,6 +1413,9 @@ class AudioPlayerWindow(QMainWindow):
                 "Sendung läuft — bitte zuerst „Stopp“ (CAT-Wiedergabe).",
             )
             return False
+        self._pc_gap_timer.stop()
+        self._pc_gap_resume_row = None
+        self._pc_gap_deadline_mono = None
         self._sync_playlist_from_list()
         if row < 0 or row >= len(self._playlist_names):
             QMessageBox.information(
@@ -1031,7 +1426,15 @@ class AudioPlayerWindow(QMainWindow):
             return False
         if not self._folder.is_dir():
             return False
-        target = self._folder / self._playlist_names[row]
+        token = self._playlist_names[row]
+        if is_pause_token(token):
+            QMessageBox.information(
+                self,
+                "Audio-Player",
+                "Pausen-Einträge können nicht per „Play PC“ vorgehört werden.",
+            )
+            return False
+        target = self._folder / token
         if not target.is_file():
             QMessageBox.warning(
                 self,
@@ -1040,24 +1443,46 @@ class AudioPlayerWindow(QMainWindow):
             )
             self._refresh_file_list()
             return False
-        # Kein load_track auf dem Sende-Player: nach CAT-Stopp hält der
-        # Haupt-Player die Datei oft noch offen — gleichzeitig setSource auf
-        # dem PC-Player dieselbe Datei führt unter Windows zu Abstürzen.
+        return self._play_pc_file_row(row, start_ms=None)
+
+    def _play_pc_file_row(
+        self, row: int, *, start_ms: Optional[int] = None
+    ) -> bool:
+        """PC-Player: Dateizeile laden und abspielen (auch für Playlist-Kette)."""
+        self._sync_playlist_from_list()
+        self._pc_gap_timer.stop()
+        self._pc_gap_resume_row = None
+        self._pc_gap_deadline_mono = None
+        if row < 0 or row >= len(self._playlist_names):
+            return False
+        token = self._playlist_names[row]
+        if is_pause_token(token):
+            return False
+        target = self._folder / token
+        if not target.is_file():
+            return False
         self._controller.set_index(row)
         if self._controller.state in (
             PlayerState.IDLE,
             PlayerState.PAUSED_RX,
         ):
             self._controller.release_source()
-        self._release_pc_source()
         if not self._ensure_pc_player():
             return False
         assert self._pc_player is not None
+        pos_ms: int
+        if start_ms is None:
+            pos_ms = (
+                self._slider_position_ms() if self._duration_ms > 0 else 0
+            )
+        else:
+            pos_ms = int(start_ms)
+        self._pc_ignore_end_media = True
         try:
+            self._pc_player.stop()
             url = QUrl.fromLocalFile(str(target.resolve()))
             self._pc_player.setSource(url)
-            start_ms = self._slider_position_ms() if self._duration_ms > 0 else 0
-            self._pc_player.setPosition(start_ms)
+            self._pc_player.setPosition(max(0, pos_ms))
             self._pc_player.play()
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(
@@ -1066,11 +1491,15 @@ class AudioPlayerWindow(QMainWindow):
                 f"PC-Wiedergabe konnte nicht gestartet werden:\n{exc}",
             )
             return False
+        finally:
+            self._pc_ignore_end_media = False
         self._pc_is_playing = True
         self._pc_is_paused = False
         self._pc_preview_row = row
+        self.list_files.setCurrentRow(row)
         self.lbl_status.setText(f"PC-Wiedergabe: {target.name}")
         self._update_transport_buttons()
+        self._sync_pause_countdown_timer()
         return True
 
     def _on_stop_pc_clicked(self) -> None:
@@ -1102,9 +1531,19 @@ class AudioPlayerWindow(QMainWindow):
         self._pc_is_playing = False
         self._pc_is_paused = False
         self._pc_preview_row = None
+        self._pc_gap_timer.stop()
+        self._pc_gap_resume_row = None
+        self._pc_gap_deadline_mono = None
         self._update_transport_buttons()
+        self._sync_pause_countdown_timer()
 
     def _release_pc_source(self) -> None:
+        self._pc_gap_timer.stop()
+        self._pc_gap_resume_row = None
+        self._pc_gap_deadline_mono = None
+        self._pc_is_playing = False
+        self._pc_is_paused = False
+        self._pc_preview_row = None
         if not self._pc_player_ready or self._pc_player is None:
             return
         try:
@@ -1115,9 +1554,7 @@ class AudioPlayerWindow(QMainWindow):
             self._pc_player.setSource(QUrl())
         except Exception:
             pass
-        self._pc_is_playing = False
-        self._pc_is_paused = False
-        self._pc_preview_row = None
+        self._sync_pause_countdown_timer()
 
     def _on_pause_clicked(self) -> None:
         if self._controller.state == PlayerState.PAUSED_RX:
@@ -1130,6 +1567,44 @@ class AudioPlayerWindow(QMainWindow):
         self._defer_play_until_engage_data = False
         self._pending_play_index_after_engage = None
         self._defer_contest_pre_roll_until_engage_data = False
+        self._cancel_cat_radio_settle_timer()
+
+    def _cancel_cat_radio_settle_timer(self) -> None:
+        if self._cat_radio_settle_timer.isActive():
+            self._cat_radio_settle_timer.stop()
+        self._cat_radio_settle_action = None
+        self._cat_radio_settle_play_index = None
+
+    def _on_cat_radio_settle_timeout(self) -> None:
+        action = self._cat_radio_settle_action
+        idx = self._cat_radio_settle_play_index
+        self._cat_radio_settle_action = None
+        self._cat_radio_settle_play_index = None
+        if action == "play":
+            self._mic_ptt_interrupted = False
+            if self._controller.state != PlayerState.PAUSED_RX:
+                self._apply_pending_seek_before_play(idx)
+            self._controller.play(idx)
+        elif action == "pre_roll":
+            self._controller.begin_pre_roll_now()
+
+    def _start_cat_play_when_ready(self, idx: Optional[int]) -> None:
+        """CAT-Datei starten; nach TRX-Umschalten zusätzliche Settling-Pause (PAUSED_RX sofort)."""
+        self._cancel_cat_radio_settle_timer()
+        self._mic_ptt_interrupted = False
+        if self._controller.state == PlayerState.PAUSED_RX:
+            self._controller.play(idx)
+            return
+        self._cat_radio_settle_action = "play"
+        self._cat_radio_settle_play_index = idx
+        self._cat_radio_settle_timer.start(_CAT_PLAY_RADIO_SETTLE_MS)
+
+    def _schedule_contest_pre_roll_after_radio_settled(self) -> None:
+        """Kontest: nach asynchronem ``run_engage_data`` kurz warten, dann Vorlauf/PTT."""
+        self._cancel_cat_radio_settle_timer()
+        self._cat_radio_settle_action = "pre_roll"
+        self._cat_radio_settle_play_index = None
+        self._cat_radio_settle_timer.start(_CAT_PLAY_RADIO_SETTLE_MS)
 
     def _on_stop_clicked(self) -> None:
         self._cancel_pending_cat_play_defer()
@@ -1168,6 +1643,7 @@ class AudioPlayerWindow(QMainWindow):
         # Nach Sprach-Mode (Ende letzter Sendung / Kontest-Hörpause): DATA-Mode
         # muss vor PTT fertig sein — run_engage_data läuft async.
         if self._radio_setup.is_applied and not self._radio_setup.in_data_mode:
+            self._cancel_cat_radio_settle_timer()
             self._defer_play_until_engage_data = True
             self._pending_play_index_after_engage = idx
             self.lbl_status.setText(
@@ -1179,14 +1655,12 @@ class AudioPlayerWindow(QMainWindow):
                 Qt.ConnectionType.QueuedConnection,
             )
             return
-        self._mic_ptt_interrupted = False
-        if self._controller.state != PlayerState.PAUSED_RX:
-            self._apply_pending_seek_before_play(idx)
-        self._controller.play(idx)
+        self._start_cat_play_when_ready(idx)
 
     def _on_contest_pre_roll_requested(self) -> None:
         """Kontest: nach Hörpause erst DATA-Mode, dann Vorlauf/PTT."""
         if self._radio_setup.is_applied and not self._radio_setup.in_data_mode:
+            self._cancel_cat_radio_settle_timer()
             self._defer_contest_pre_roll_until_engage_data = True
             target = self._radio_setup.data_mode.value
             self.lbl_status.setText(f"Loop-Restart — schalte auf {target} …")
@@ -1215,12 +1689,49 @@ class AudioPlayerWindow(QMainWindow):
         self._on_play()
 
     def _on_state_changed(self, state: PlayerState) -> None:
+        self._playlist_end_warnton_reset()
         if state != PlayerState.PLAYING:
-            self._set_remaining_warn(False)
+            if not (
+                self._use_pc_progress_for_slider() and self._is_pc_playing()
+            ):
+                self._set_remaining_warn(False)
         self._handle_contest_state_transition(state)
         self._last_player_state = state
         self._update_transport_buttons()
+        self._sync_pause_countdown_timer()
         self._try_complete_radio_restore_after_close()
+
+    def _current_pause_remaining_ms(self) -> int:
+        r = self._controller.rx_pause_remaining_ms()
+        if r > 0:
+            return r
+        if self._pc_gap_timer.isActive() and self._pc_gap_deadline_mono is not None:
+            return max(
+                0,
+                int((self._pc_gap_deadline_mono - time.monotonic()) * 1000),
+            )
+        return 0
+
+    def _should_show_pause_countdown(self) -> bool:
+        return self._current_pause_remaining_ms() > 0
+
+    def _update_pause_countdown_display(self) -> None:
+        self.lbl_pause_countdown.setText(_format_ms(self._current_pause_remaining_ms()))
+
+    def _sync_pause_countdown_timer(self) -> None:
+        show = self._should_show_pause_countdown()
+        self.lbl_pause_countdown.setVisible(show)
+        if show:
+            self._pause_countdown_timer.start()
+            self._update_pause_countdown_display()
+        else:
+            self._pause_countdown_timer.stop()
+            self.lbl_pause_countdown.clear()
+
+    def _on_pause_countdown_tick(self) -> None:
+        self._update_pause_countdown_display()
+        if not self._should_show_pause_countdown():
+            self._sync_pause_countdown_timer()
 
     def _on_voice_mode_requested(self) -> None:
         """Stopp oder Einzeldatei-Ende: Funkgerät auf Sprach-Mode (MIC vorne)."""
@@ -1269,16 +1780,23 @@ class AudioPlayerWindow(QMainWindow):
             self.list_files.currentRow() >= 0
             and self.list_files.currentRow() < len(self._playlist_names)
         )
+        row_idx = self.list_files.currentRow()
+        sel_is_file = (
+            has_selection
+            and row_idx < len(self._playlist_names)
+            and not is_pause_token(self._playlist_names[row_idx])
+        )
+        list_idle = not busy and not pc_busy
         self.btn_play.setEnabled(
             multimedia_available()
-            and bool(self._playlist_names)
+            and self._has_audio_file_in_playlist()
             and st in (PlayerState.IDLE, PlayerState.PAUSED_RX)
             and not pc_busy
         )
         self.btn_play_pc.setEnabled(
             multimedia_available()
             and bool(self._playlist_names)
-            and has_selection
+            and sel_is_file
             and not busy
         )
         self.btn_pause_pc.setEnabled(
@@ -1309,9 +1827,26 @@ class AudioPlayerWindow(QMainWindow):
         self.list_files.setEnabled(not busy)
         self.btn_folder.setEnabled(not busy and not pc_busy)
         self.btn_refresh.setEnabled(not busy and not pc_busy)
+        pause_row = (
+            has_selection
+            and row_idx < len(self._playlist_names)
+            and is_pause_token(self._playlist_names[row_idx])
+        )
+        self.lbl_pause_sec.setEnabled(list_idle)
+        self.spin_pause_seconds.setEnabled(multimedia_available() and list_idle)
+        self.btn_add_pause.setEnabled(multimedia_available() and list_idle)
+        self.btn_edit_pause.setEnabled(
+            multimedia_available() and list_idle and pause_row
+        )
+        self.btn_delete_pause.setEnabled(
+            multimedia_available() and list_idle and pause_row
+        )
         contest_on = self.check_contest.isChecked()
         self.radio_single.setEnabled(not busy and not contest_on and not pc_busy)
         self.radio_playlist.setEnabled(not busy and not contest_on and not pc_busy)
+        self.check_warn_transmission_end.setEnabled(
+            multimedia_available() and not contest_on
+        )
         self.check_contest.setEnabled(not busy and not pc_busy)
         self.spin_contest_listen.setEnabled(contest_on and not busy and not pc_busy)
         self._vol_send.setEnabled(multimedia_available() and not pc_busy)
@@ -1331,8 +1866,13 @@ class AudioPlayerWindow(QMainWindow):
         self._update_progress_ui(pos_ms, dur_ms)
 
     def _update_remaining_warn(self, rem_ms: int) -> None:
-        playing = self._controller.state == PlayerState.PLAYING
-        self._set_remaining_warn(playing and rem_ms < _REMAINING_WARN_MS)
+        cat_playing = self._controller.state == PlayerState.PLAYING
+        pc_playing = (
+            self._use_pc_progress_for_slider() and self._is_pc_playing()
+        )
+        self._set_remaining_warn(
+            (cat_playing or pc_playing) and rem_ms < _REMAINING_WARN_MS
+        )
 
     def _set_remaining_warn(self, active: bool) -> None:
         if active == self._remaining_warn_active:
@@ -1361,6 +1901,7 @@ class AudioPlayerWindow(QMainWindow):
 
     def _on_seek_pressed(self) -> None:
         self._seek_dragging = True
+        self._playlist_end_warnton_reset()
 
     def _on_seek_released(self) -> None:
         self._seek_dragging = False
@@ -1390,12 +1931,10 @@ class AudioPlayerWindow(QMainWindow):
         else:
             self._controller.seek_position_ms(pos_ms)
 
-    def _on_current_file(self, name: str) -> None:
-        for i in range(self.list_files.count()):
-            item = self.list_files.item(i)
-            if item and item.text() == name:
-                self.list_files.setCurrentRow(i)
-                break
+    def _on_playlist_row(self, row: int) -> None:
+        """CAT-Playlist: aktuelle Zeile (auch mehrere Pausen gleicher Dauer)."""
+        if 0 <= int(row) < self.list_files.count():
+            self.list_files.setCurrentRow(int(row))
 
     def _on_error(self, message: str) -> None:
         QMessageBox.warning(self, "Audio-Player", message)
@@ -1413,6 +1952,9 @@ class AudioPlayerWindow(QMainWindow):
         ap.pc_output_volume_percent = max(0, min(100, int(self._vol_pc.value())))
         ap.volume_percent = max(0, min(100, int(self._vol_send.value())))
         ap.tx_monitor_to_pc_enabled = bool(self.check_tx_monitor_pc.isChecked())
+        ap.warn_transmission_end_enabled = bool(
+            self.check_warn_transmission_end.isChecked()
+        )
         self._save_geometry()
 
     def showEvent(self, event) -> None:  # type: ignore[override]
@@ -1552,16 +2094,13 @@ class AudioPlayerWindow(QMainWindow):
             return
         if self._defer_contest_pre_roll_until_engage_data:
             self._defer_contest_pre_roll_until_engage_data = False
-            self._controller.begin_pre_roll_now()
+            self._schedule_contest_pre_roll_after_radio_settled()
             return
         if self._defer_play_until_engage_data:
             self._defer_play_until_engage_data = False
             idx = self._pending_play_index_after_engage
             self._pending_play_index_after_engage = None
-            self._mic_ptt_interrupted = False
-            if self._controller.state != PlayerState.PAUSED_RX:
-                self._apply_pending_seek_before_play(idx)
-            self._controller.play(idx)
+            self._start_cat_play_when_ready(idx)
 
     def handle_tx_state_changed(self, state: int) -> None:
         """MainWindow-Brücke: TX-Status (0/1/2) vom Meter-Poller.

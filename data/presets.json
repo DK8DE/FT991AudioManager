@@ -57,25 +57,25 @@
     {
       "name": "FM",
       "mic_gain": 50,
-      "mic_eq_enabled": false,
+      "mic_eq_enabled": true,
       "speech_processor_enabled": false,
       "speech_processor_level": 35,
       "ssb_tx_bpf": "100-2900",
       "normal_eq": {
         "eq1": {
           "freq": 400,
-          "level": 9,
+          "level": -3,
           "bw": 2
         },
         "eq2": {
-          "freq": 1000,
+          "freq": 900,
           "level": 10,
           "bw": 1
         },
         "eq3": {
-          "freq": 1700,
-          "level": 5,
-          "bw": 5
+          "freq": 1800,
+          "level": 7,
+          "bw": 3
         }
       },
       "processor_eq": {

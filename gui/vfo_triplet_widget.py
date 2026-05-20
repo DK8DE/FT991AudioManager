@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFontMetrics, QMouseEvent, QWheelEvent
+from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QMouseEvent, QWheelEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QWidget
 
 from mapping.vfo_bands import (
@@ -106,12 +106,18 @@ class VfoTripletWidget(QWidget):
     def __init__(
         self,
         *,
-        text_color: str = "#FFFFFF",
+        text_color: Optional[str] = None,
         font_scale: float = 2.3,
+        digit_font: Optional[QFont] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self._text_color = text_color
+        #: ``None`` = System-/Palettenfarbe (für helles Windows ohne erzwungenes Dark)
+        self._text_color: Optional[str] = text_color
+        #: Wenn gesetzt: exakt diese Schrift für MHz/kHz/Hz (z. B. gleich „VFO-A:“).
+        self._digit_font: Optional[QFont] = (
+            QFont(digit_font) if digit_font is not None else None
+        )
         self._font_scale = font_scale
         self._suppress_emit = False
         self._last_hz: int = 0
@@ -126,18 +132,18 @@ class VfoTripletWidget(QWidget):
 
         self._dot = QLabel(".")
         self._dot.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
-        df = self._dot.font()
-        df.setBold(True)
-        df.setPointSizeF(df.pointSizeF() * self._font_scale)
+        if self._digit_font is not None:
+            df = QFont(self._digit_font)
+        else:
+            base = QGuiApplication.font()
+            df = QFont(base)
+            df.setBold(True)
+            df.setPointSizeF(base.pointSizeF() * self._font_scale)
         self._dot.setFont(df)
-        self._dot.setStyleSheet(
-            f"color: {self._text_color}; background: transparent; padding: 0 1px; margin: 0;"
-        )
-        self._dot.setFixedWidth(10)
+        dmf = QFontMetrics(df)
+        self._dot.setFixedWidth(max(10, dmf.horizontalAdvance(".") + 4))
 
-        self._style_field(self._mhz, pad_left_px=2)
-        for w in (self._khz, self._hz):
-            self._style_field(w)
+        self._apply_frequency_text_styling()
         self._apply_field_widths()
         lay.addWidget(self._mhz)
         lay.addWidget(self._dot)
@@ -156,15 +162,49 @@ class VfoTripletWidget(QWidget):
         for w in (self._mhz, self._khz, self._hz):
             w.editingFinished.connect(self._on_edit_finished)
 
+    def set_text_color(self, color: Optional[str]) -> None:
+        """Frequenz-Ziffern: feste Farbe (z. B. weiß im Dark-Mode) oder ``None`` = Palette."""
+        self._text_color = color
+        self._apply_frequency_text_styling()
+
+    def _apply_frequency_text_styling(self) -> None:
+        self._style_field(self._mhz, pad_left_px=2)
+        for w in (self._khz, self._hz):
+            self._style_field(w)
+        if self._text_color:
+            dot_qss = (
+                f"color: {self._text_color}; background: transparent; "
+                "padding: 0 1px; margin: 0;"
+            )
+        else:
+            dot_qss = (
+                "color: palette(window-text); background: transparent; "
+                "padding: 0 1px; margin: 0;"
+            )
+        self._dot.setStyleSheet(dot_qss)
+
     def _style_field(self, w: QLineEdit, *, pad_left_px: int = 0) -> None:
-        f = w.font()
-        f.setBold(True)
-        f.setPointSizeF(f.pointSizeF() * self._font_scale)
+        if self._digit_font is not None:
+            f = QFont(self._digit_font)
+        else:
+            base = QGuiApplication.font()
+            f = QFont(base)
+            f.setBold(True)
+            f.setPointSizeF(base.pointSizeF() * self._font_scale)
         w.setFont(f)
+        if self._text_color:
+            color_css = f"color: {self._text_color};"
+            sel_css = ""
+        else:
+            color_css = "color: palette(window-text);"
+            sel_css = (
+                "selection-background-color: palette(highlight); "
+                "selection-color: palette(highlighted-text);"
+            )
         w.setStyleSheet(
             f"QLineEdit {{ border: none; background: transparent; "
             f"padding: 0px 3px 0px {int(pad_left_px)}px; "
-            f"color: {self._text_color}; }}"
+            f"{color_css} {sel_css}}}"
             "QLineEdit:focus { border: none; outline: none; }"
         )
 

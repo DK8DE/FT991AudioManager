@@ -24,7 +24,7 @@ from typing import Optional, cast
 import serial
 
 from PySide6.QtCore import QEvent, QMetaObject, QObject, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QMouseEvent
+from PySide6.QtGui import QAction, QDesktopServices, QFont, QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (
     QStyle,
     QApplication,
@@ -108,7 +108,8 @@ _VFO_CAPTION_STYLE_IDLE = "color: #888888; font-weight: bold;"
 _VFO_CAPTION_STYLE_IN_BAND = "color: #5ddc7a; font-weight: bold;"
 _VFO_CAPTION_STYLE_OUT_OF_BAND = "color: #ff6b6b; font-weight: bold;"
 _VFO_CAPTION_TO_FREQ_GAP_PX = 10
-_VFO_FREQ_COLOR = "#FFFFFF"
+# Feste Ziffernfarbe nur bei erzwungenem Dark-Mode; sonst palette(window-text).
+_VFO_TRIPLET_FREQ_COLOR_DARK = "#FFFFFF"
 
 #: Abgleich VFO-A vs. ``MT``-Frequenz: ``MC`` bleibt nach VFO-Drehen oft auf alter Kanalnummer.
 _MEM_FREQ_MATCH_TOLERANCE_HZ = 500
@@ -444,7 +445,15 @@ class MainWindow(QMainWindow):
         self._vfo_a_caption = QLabel("VFO-A:")
         self._vfo_a_caption.setFont(vfo_caption_font)
         self._vfo_a_caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
-        self._vfo_a_triplet = VfoTripletWidget(text_color=_VFO_FREQ_COLOR, font_scale=2.3)
+        _vfo_digits_color = (
+            _VFO_TRIPLET_FREQ_COLOR_DARK
+            if self._settings.ui.force_dark_mode
+            else None
+        )
+        self._vfo_a_triplet = VfoTripletWidget(
+            text_color=_vfo_digits_color,
+            digit_font=QFont(vfo_caption_font),
+        )
         self._vfo_a_triplet.user_frequency_changed.connect(
             self._on_user_vfo_a_frequency
         )
@@ -452,7 +461,10 @@ class MainWindow(QMainWindow):
         self._vfo_b_caption = QLabel("VFO-B:")
         self._vfo_b_caption.setFont(vfo_caption_font)
         self._vfo_b_caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
-        self._vfo_b_triplet = VfoTripletWidget(text_color=_VFO_FREQ_COLOR, font_scale=2.3)
+        self._vfo_b_triplet = VfoTripletWidget(
+            text_color=_vfo_digits_color,
+            digit_font=QFont(vfo_caption_font),
+        )
         self._vfo_b_triplet.user_frequency_changed.connect(
             self._on_user_vfo_b_frequency
         )
@@ -1515,7 +1527,12 @@ class MainWindow(QMainWindow):
         self._refresh_band_strip()
 
     def _maybe_leave_memory_for_vfo_tune(self, frequency_hz: int) -> None:
-        """MC/Combo noch Speicher, aber Frequenz ≠ Slot — Nutzer hat gedreht → VFO."""
+        """MC/Combo noch Speicher, aber Frequenz ≠ Slot — Nutzer hat gedreht → VFO.
+
+        Nicht während **TX** anwenden: ``FA`` kann sich beim Senden vom
+        gespeicherten ``MT``-Raster unterscheiden (Clarifier, Geräteverhalten),
+        ohne dass der Nutzer wirklich in den VFO-Modus gewechselt hat.
+        """
         if self._relay_rev_active:
             return
         if not self.memory_combo.isEnabled():
@@ -1537,9 +1554,13 @@ class MainWindow(QMainWindow):
         self._sync_band_combo_to_frequency(int(frequency_hz))
 
     def _on_rx_info_changed(
-        self, mode: object, frequency_hz: int, frequency_b_hz: int
+        self,
+        mode: object,
+        frequency_hz: int,
+        frequency_b_hz: int,
+        radio_transmitting: bool = False,
     ) -> None:
-        """Vom MeterWidget bei jedem Slow-Path-RX-Sample gerufen."""
+        """Vom MeterWidget bei VFO/Mode-Updates (RX-Slow-Path und ggf. FA/FB während TX)."""
         if isinstance(mode, RxMode):
             self._mode_label.setText(_status_bar_mode_text(mode.value))
             self._rig_bridge.update_from_radio(mode=mode.value)
@@ -1547,7 +1568,8 @@ class MainWindow(QMainWindow):
             self._rig_bridge.update_from_radio()
         if frequency_hz > 0:
             if not self._relay_rev_active:
-                self._maybe_leave_memory_for_vfo_tune(int(frequency_hz))
+                if not radio_transmitting:
+                    self._maybe_leave_memory_for_vfo_tune(int(frequency_hz))
                 self._relay_output_hz = frequency_hz
             self._apply_vfo_a_display_hz(frequency_hz)
         if frequency_b_hz > 0:
@@ -1685,7 +1707,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "VFO A/B", str(exc))
 
     def _on_rx_info_for_profile(
-        self, mode: object, _frequency_hz: int, _frequency_b_hz: int
+        self,
+        mode: object,
+        _frequency_hz: int,
+        _frequency_b_hz: int,
+        _radio_transmitting: bool = False,
     ) -> None:
         """Reicht den Radio-Mode an das ProfileWidget weiter.
 
@@ -1699,6 +1725,9 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             apply_theme(app, dark=checked)
+        digit_color = _VFO_TRIPLET_FREQ_COLOR_DARK if checked else None
+        self._vfo_a_triplet.set_text_color(digit_color)
+        self._vfo_b_triplet.set_text_color(digit_color)
         if self._log_window is not None:
             self._log_window.set_dark_mode(checked)
         self._settings.ui.force_dark_mode = bool(checked)
@@ -1912,13 +1941,63 @@ class MainWindow(QMainWindow):
         if self.memory_combo.count() > 0:
             self.memory_combo.setItemText(0, "VFO")
 
-    def _select_memory_combo_by_channel(self, channel: int) -> None:
-        """Wählt einen Kanal in der Combo (ohne CAT-Befehl)."""
+    def _format_memory_channel_combo_label(self, mem: MemoryChannel) -> str:
+        """Einzeiliger Combobox-Text wie beim Hintergrund-Loader."""
+        freq_mhz = mem.frequency_hz / 1_000_000.0
+        tag = mem.tag.strip() or "(ohne Name)"
+        mode_label = (
+            mem.mode.value
+            if mem.mode is not None and mem.mode.value != "?"
+            else "?"
+        )
+        return (
+            f"{mem.channel:03d} — {tag} "
+            f"({freq_mhz:.3f} MHz, {mode_label})"
+        )
+
+    def _memory_combo_index_for_channel(self, channel: int) -> int:
+        """Index der Zeile mit Nutzdaten ``channel``, sonst -1.
+
+        ``itemData`` kann je nach Qt-Binding als ``int`` oder anderer
+        numerischer Typ kommen — daher ``int(...)``-Vergleich.
+        """
+        ch = int(channel)
         for i in range(self.memory_combo.count()):
-            if self.memory_combo.itemData(i) == channel:
-                self.memory_combo.setCurrentIndex(i)
-                return
-        self.memory_combo.addItem(f"{channel:03d} — (aktuell aktiv)", channel)
+            data = self.memory_combo.itemData(i)
+            if data is None:
+                continue
+            try:
+                if int(data) == ch:
+                    return i
+            except (TypeError, ValueError):
+                continue
+        return -1
+
+    def _select_memory_combo_by_channel(self, channel: int) -> None:
+        """Wählt einen Kanal in der Combo (ohne CAT-Befehl).
+
+        Wenn die Zeile nach dem Laden fehlt (z. B. Nutzdaten-Typ oder
+        Timing), wird ``MT`` einmal gelesen und dieselbe Beschriftung wie
+        beim Loader erzeugt — nicht dauerhaft „(aktuell aktiv)".
+        """
+        ch = int(channel)
+        idx = self._memory_combo_index_for_channel(ch)
+        if idx >= 0:
+            self.memory_combo.setCurrentIndex(idx)
+            return
+        label: str
+        mem: Optional[MemoryChannel] = None
+        if self._cat.is_connected():
+            try:
+                mem = FT991CAT(self._cat).read_memory_channel_tag(ch)
+            except CatError:
+                mem = None
+        if mem is not None:
+            self._memory_slot_frequency_hz[int(mem.channel)] = int(mem.frequency_hz)
+            label = self._format_memory_channel_combo_label(mem)
+        else:
+            label = f"{ch:03d} — (aktuell aktiv)"
+        self.memory_combo.addItem(label, ch)
         self.memory_combo.setCurrentIndex(self.memory_combo.count() - 1)
 
     def _sync_memory_combo_from_radio(self) -> None:
@@ -1961,22 +2040,10 @@ class MainWindow(QMainWindow):
         self._memory_slot_frequency_hz[int(channel.channel)] = int(
             channel.frequency_hz
         )
-        freq_mhz = channel.frequency_hz / 1_000_000.0
-        # Zeichenkette wie „012 — RELAIS DB0XX (145.500 MHz, FM)"
-        # Tag-leere Slots bekommen ein „— (ohne Name)" Platzhalter.
-        tag = channel.tag.strip() or "(ohne Name)"
-        mode_label = (
-            channel.mode.value
-            if channel.mode is not None and channel.mode.value != "?"
-            else "?"
-        )
-        label = (
-            f"{channel.channel:03d} — {tag} "
-            f"({freq_mhz:.3f} MHz, {mode_label})"
-        )
+        label = self._format_memory_channel_combo_label(channel)
         self.memory_combo.blockSignals(True)
         try:
-            self.memory_combo.addItem(label, channel.channel)
+            self.memory_combo.addItem(label, int(channel.channel))
         finally:
             self.memory_combo.blockSignals(False)
 

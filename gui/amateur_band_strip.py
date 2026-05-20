@@ -5,7 +5,16 @@ from __future__ import annotations
 from typing import List, Optional
 
 from PySide6.QtCore import QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QMouseEvent, QPainter, QPen, QPolygonF
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QMouseEvent,
+    QPainter,
+    QPalette,
+    QPen,
+    QPolygonF,
+)
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from mapping.amateur_bands import (
@@ -21,9 +30,10 @@ _TICK_BELOW_BAR_PX = 4
 _LABEL_GAP_BELOW_TICK_PX = 5
 _LABEL_EXTRA_OFFSET_PX = 5
 _NEEDLE_HIT_PX = 14
-_MIN_LABEL_GAP_PX = 34
-_TICK_WHITE = QColor(255, 255, 255)
-_LABEL_WHITE = QColor(255, 255, 255)
+# Mindestabstand zwischen rechter und linker Kante benachbarter Beschriftungen (Pixel).
+_MIN_LABEL_TEXT_GAP_PX = 8
+# Striche innerhalb des schwarzen Track-Balkens (inaktiver Zustand: anderer Track).
+_INNER_TICK_ON_DARK_TRACK = QColor(255, 255, 255)
 _INACTIVE_GRAY = QColor(90, 90, 92)
 _TRACK_FILL = QColor(0, 0, 0)
 _TRACK_BORDER = QColor(255, 255, 255)
@@ -62,6 +72,10 @@ class AmateurBandStripWidget(QWidget):
 
     def is_dragging(self) -> bool:
         return self._dragging
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self.update()
 
     def set_band(self, band: Optional[AmateurBand]) -> None:
         if self._band == band:
@@ -218,6 +232,25 @@ class AmateurBandStripWidget(QWidget):
         self.update()
         self.frequency_changed.emit(hz)
 
+    def _label_text_bounds(
+        self,
+        x: float,
+        label: str,
+        align: str,
+        fm: QFontMetrics,
+    ) -> tuple[int, int]:
+        """Horizontale Pixelspanne wie in :meth:`_draw_tick_label` (links, rechts exkl.)."""
+        text_w = fm.horizontalAdvance(label)
+        margin = 2
+        if align == "left":
+            text_x = max(margin, int(round(x)))
+        elif align == "right":
+            text_x = min(self.width() - margin - text_w, int(round(x)) - text_w)
+        else:
+            text_x = int(round(x - text_w / 2))
+            text_x = max(margin, min(text_x, self.width() - margin - text_w))
+        return text_x, text_x + text_w
+
     def _visible_tick_labels(self, track, font: QFont) -> List[tuple[int, str, float, str]]:
         if self._band is None or not self._ticks:
             return []
@@ -235,20 +268,40 @@ class AmateurBandStripWidget(QWidget):
             items.append((hz, label, x, align))
         if not items:
             return []
+
+        gap = max(_MIN_LABEL_TEXT_GAP_PX, int(fm.averageCharWidth()))
+
         visible: List[tuple[int, str, float, str]] = [items[0]]
+        _, pr = self._label_text_bounds(items[0][2], items[0][1], items[0][3], fm)
+
         for entry in items[1:-1]:
-            hz, label, x, align = entry
-            prev_x = visible[-1][2]
-            w = fm.horizontalAdvance(label)
-            if x - prev_x >= max(_MIN_LABEL_GAP_PX, w * 0.85):
+            _hz, label, x, align = entry
+            pl, pr_new = self._label_text_bounds(x, label, align, fm)
+            if pl >= pr + gap:
                 visible.append(entry)
-        if len(items) > 1:
-            last = items[-1]
-            if len(visible) == 1 or last[2] - visible[-1][2] >= _MIN_LABEL_GAP_PX:
-                if visible[-1][0] != last[0]:
-                    visible.append(last)
-            else:
-                visible[-1] = last
+                pr = pr_new
+
+        if len(items) <= 1:
+            return visible
+
+        last = items[-1]
+        ll, _lr = self._label_text_bounds(last[2], last[1], last[3], fm)
+
+        while len(visible) > 1:
+            _, pr_tail = self._label_text_bounds(
+                visible[-1][2], visible[-1][1], visible[-1][3], fm
+            )
+            if ll >= pr_tail + gap:
+                break
+            visible.pop()
+
+        if last[0] != visible[-1][0]:
+            _, pr_tail = self._label_text_bounds(
+                visible[-1][2], visible[-1][1], visible[-1][3], fm
+            )
+            if ll >= pr_tail + gap:
+                visible.append(last)
+
         return visible
 
     def _draw_tick_label(
@@ -260,15 +313,7 @@ class AmateurBandStripWidget(QWidget):
         align: str,
         fm: QFontMetrics,
     ) -> None:
-        text_w = fm.horizontalAdvance(label)
-        margin = 2
-        if align == "left":
-            text_x = max(margin, int(round(x)))
-        elif align == "right":
-            text_x = min(self.width() - margin - text_w, int(round(x)) - text_w)
-        else:
-            text_x = int(round(x - text_w / 2))
-            text_x = max(margin, min(text_x, self.width() - margin - text_w))
+        text_x, _ = self._label_text_bounds(x, label, align, fm)
         p.drawText(text_x, text_y, label)
 
     def _interactive(self) -> bool:
@@ -346,7 +391,7 @@ class AmateurBandStripWidget(QWidget):
                 p.drawRoundedRect(track, _TRACK_RADIUS, _TRACK_RADIUS)
                 for hz in self._inner_ticks():
                     x = self._hz_to_x(hz, track)
-                    p.setPen(QPen(_TICK_WHITE, 1))
+                    p.setPen(QPen(_INNER_TICK_ON_DARK_TRACK, 1))
                     p.drawLine(int(x), track.top() + 1, int(x), track.bottom() - 1)
             else:
                 p.setPen(QPen(QColor(80, 80, 82), 1))
@@ -354,7 +399,7 @@ class AmateurBandStripWidget(QWidget):
                 p.drawRoundedRect(track, _TRACK_RADIUS, _TRACK_RADIUS)
 
             if not self._active:
-                p.setPen(QColor(120, 120, 120))
+                p.setPen(self.palette().color(QPalette.ColorRole.WindowText))
                 p.drawText(
                     track,
                     Qt.AlignmentFlag.AlignCenter,
@@ -363,7 +408,8 @@ class AmateurBandStripWidget(QWidget):
                 return
 
             if self._band is None:
-                p.setPen(_INACTIVE_GRAY)
+                ph = self.palette().color(QPalette.ColorRole.PlaceholderText)
+                p.setPen(ph if ph.isValid() else _INACTIVE_GRAY)
                 p.drawText(
                     track,
                     Qt.AlignmentFlag.AlignCenter,
@@ -373,12 +419,13 @@ class AmateurBandStripWidget(QWidget):
 
             tick_end_y = track.bottom() + _TICK_BELOW_BAR_PX
             text_y = tick_end_y + _LABEL_GAP_BELOW_TICK_PX + fm.ascent()
+            tick_color = self.palette().color(QPalette.ColorRole.WindowText)
             inner_tick_set = set(self._inner_ticks())
             for hz, label, x, align in self._visible_tick_labels(track, label_font):
                 if hz in inner_tick_set:
-                    p.setPen(QPen(_TICK_WHITE, 1))
+                    p.setPen(QPen(tick_color, 1))
                     p.drawLine(int(x), track.bottom(), int(x), tick_end_y)
-                p.setPen(_LABEL_WHITE)
+                p.setPen(tick_color)
                 self._draw_tick_label(p, x, label, text_y, align, fm)
 
             if in_band:

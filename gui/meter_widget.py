@@ -74,7 +74,6 @@ from cat.cat_errors import (
     is_cat_protocol_error_message,
 )
 from cat.ft991_cat import FT991CAT
-from mapping.amateur_bands import amateur_band_for_hz
 from mapping.meter_mapping import (
     METER_INFO,
     MeterInfo,
@@ -92,6 +91,7 @@ from mapping.meter_mapping import (
     po_max_watts_for_freq,
     po_power_ticks_for_freq,
 )
+from mapping.vfo_bands import tx_swr_meter_meaningful_for_ft991_vfo_hz
 from mapping.rx_mapping import (
     AGC_LABELS,
     AGC_SLIDER_LABELS,
@@ -2103,8 +2103,10 @@ class MeterWidget(QWidget):
     #: User hat den RF-Gain-Slider bewegt — Wert (0..255) per CAT schreiben.
     rf_gain_set_requested = Signal(int)
     connection_lost = Signal()
-    #: ``(mode, frequency_a_hz, frequency_b_hz)`` — VFO/Modes vom Poller fürs Header/Profil.
-    rx_info_changed = Signal(object, int, int)
+    #: ``(mode, frequency_a_hz, frequency_b_hz, radio_transmitting)`` —
+    #: VFO/Modes vom Poller fürs Header/Profil. Letztes Flag: ``True``, wenn die
+    #: Frequenz aus einem TX-Poll stammt (kein Memory→VFO-Heuristik dann).
+    rx_info_changed = Signal(object, int, int, bool)
     #: Wird ausgestellt, wenn der Slow-Path einen anderen MIC-Gain als zuletzt
     #: bekannt vom Funkgerät gelesen hat (Drehknopf am TRX).
     mic_gain_synced_from_radio = Signal(int)
@@ -2144,8 +2146,8 @@ class MeterWidget(QWidget):
         self._last_tx: Optional[bool] = None
         self._last_tx_state: Optional[int] = None
         #: Letzte vom Radio gemeldete VFO-A-Frequenz (Hz). Wird aus dem
-        #: RX-Status-Sample übernommen; u. a. für Ausblendung des SWR-TX-Meters
-        #: auf 2 m / 70 cm (siehe :meth:`_sync_tx_swr_bar_visibility`).
+        #: RX/TX-Sample übernommen; für Ausblendung des SWR-TX-Meters ausserhalb
+        #: des HF-Segments (siehe :meth:`_sync_tx_swr_bar_visibility`).
         self._last_vfo_a_hz: Optional[int] = None
         #: POWER-Meter: Kalibrierkurve (10-m-KW, für alle Bänder).
         self._po_calib_scale_max_w: Optional[int] = None
@@ -2651,6 +2653,7 @@ class MeterWidget(QWidget):
             self._emit_rx_frequency_info(
                 sample.frequency_hz,
                 sample.frequency_b_hz,
+                radio_transmitting=True,
             )
         transmitting = sample.transmitting
         self.tx_led.set_active(transmitting)
@@ -2690,7 +2693,7 @@ class MeterWidget(QWidget):
     def _on_rx_sample(self, sample: object) -> None:
         if not isinstance(sample, RxStatusSample):
             return
-        # VFO-A merken — u. a. für SWR-Sichtbarkeit (2 m / 70 cm aus).
+        # VFO-A merken — u. a. für SWR-Sichtbarkeit (nur HF-Segment).
         if sample.frequency_hz is not None:
             self._last_vfo_a_hz = sample.frequency_hz
             smeter_set_calibration_frequency_hz(sample.frequency_hz)
@@ -2747,6 +2750,7 @@ class MeterWidget(QWidget):
                 sample.frequency_hz,
                 sample.frequency_b_hz,
                 mode=sample.mode,
+                radio_transmitting=False,
             )
 
         # Memory-Kanal-Wechsel am Gerät (User dreht MEM/CH-Knopf) an
@@ -2764,6 +2768,7 @@ class MeterWidget(QWidget):
         frequency_b_hz: Optional[int],
         *,
         mode: Optional[RxMode] = None,
+        radio_transmitting: bool = False,
     ) -> None:
         """VFO-Anzeige im Header (auch während TX, wenn nur FA/FB gelesen wurden)."""
         if (
@@ -2777,6 +2782,7 @@ class MeterWidget(QWidget):
             emit_mode,
             int(frequency_hz) if frequency_hz is not None else 0,
             int(frequency_b_hz) if frequency_b_hz is not None else 0,
+            bool(radio_transmitting),
         )
 
     def _sync_mode_dependent_slider_visibility(
@@ -2828,18 +2834,15 @@ class MeterWidget(QWidget):
         self._show_status_message(f"Meter: {message}", timeout_ms=8000)
 
     # ------------------------------------------------------------------
-    # SWR auf 2 m / 70 cm
+    # SWR nur HF-Segment (Kurzwelle/6 m) — nicht UKW/2 m/70 cm
     # ------------------------------------------------------------------
 
-    _SWR_HIDDEN_BAND_NAMES = frozenset({"2 m", "70 cm"})
-
     def _tx_swr_bar_hidden_for_vfo(self) -> bool:
-        """True, wenn das SWR-TX-Meter ausgeblendet werden soll (2 m, 70 cm)."""
+        """True, wenn das SWR-TX-Meter ausgeblendet werden soll (nicht HF-Segment)."""
         hz = self._last_vfo_a_hz
         if hz is None or hz <= 0:
-            return False
-        band = amateur_band_for_hz(int(hz))
-        return band in self._SWR_HIDDEN_BAND_NAMES
+            return True
+        return not tx_swr_meter_meaningful_for_ft991_vfo_hz(int(hz))
 
     def _sync_tx_swr_bar_visibility(self) -> None:
         bar = self._bars[MeterKind.SWR]
@@ -2850,7 +2853,7 @@ class MeterWidget(QWidget):
             bar.show()
 
     def _apply_swr_value(self, bar: "ScaledMeterBar", raw: int) -> None:
-        """Setzt den CAT-SWR-Rohwert auf der Bar (nur sichtbar ausserhalb 2 m / 70 cm)."""
+        """Setzt den CAT-SWR-Rohwert auf der Bar (nur im HF-CAT-Segment sichtbar)."""
         bar.clear_unavailable()
         bar.set_value(raw)
 
@@ -2954,7 +2957,7 @@ class MeterWidget(QWidget):
             bar.set_enabled_visual(True)
         swr = self._bars[MeterKind.SWR]
         swr.clear_unavailable()
-        swr.show()
+        self._sync_tx_swr_bar_visibility()
         self.smeter_bar.reset()
         self.af_gain_bar.set_value(None)
         self.rf_gain_bar.set_value(None)

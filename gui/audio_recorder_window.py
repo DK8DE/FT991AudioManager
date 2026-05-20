@@ -44,6 +44,7 @@ from audio.audio_settings_hub import AudioSettingsHub
 from audio.player_controller import (
     PlayerController,
     PlayerState,
+    build_playlist_entries,
     list_audio_output_devices,
     multimedia_available,
 )
@@ -73,6 +74,7 @@ from .audio_hub_binding import (
     connect_recorder_hub,
     load_global_audio_into_combos,
 )
+from .file_list_widget_style import FILE_LIST_WIDGET_STYLESHEET
 from .folder_dialog import pick_audio_recorder_folder
 from .menu_icons import (
     control_bar_record_red_icon,
@@ -322,6 +324,7 @@ class AudioRecorderWindow(QMainWindow):
         list_box = QGroupBox("Aufnahmen (neueste oben)")
         list_l = QVBoxLayout(list_box)
         self.list_files = QListWidget()
+        self.list_files.setStyleSheet(FILE_LIST_WIDGET_STYLESHEET)
         self.list_files.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         # Doppelt so hoch wie die Qt-Default-QListWidget-Höhe (~200 px), damit
         # man mehr Aufnahmen ohne Scrollen sieht.
@@ -622,9 +625,6 @@ class AudioRecorderWindow(QMainWindow):
             self.combo_bitrate.blockSignals(True)
             self.combo_bitrate.setCurrentIndex(idx)
             self.combo_bitrate.blockSignals(False)
-        # Pre-Roll für Replay wird mit dem Audio-Player geteilt
-        # (settings.audio_player.pre_roll_ms — eigene UI gibt es bewusst nicht).
-        self._player.set_timing(self._settings.audio_player.pre_roll_ms, 0)
         if self._audio_hub is not None:
             load_global_audio_into_combos(
                 self._audio_hub,
@@ -743,8 +743,9 @@ class AudioRecorderWindow(QMainWindow):
         if not self._folder.is_dir():
             self._player.set_playlist([])
             return
-        paths = [self._folder / n for n in self._files]
-        self._player.set_playlist(paths)
+        self._player.set_playlist(
+            build_playlist_entries(self._folder, self._files)
+        )
 
     def _on_list_row_changed(self, row: int) -> None:
         if row < 0 or row >= len(self._files):
@@ -931,9 +932,6 @@ class AudioRecorderWindow(QMainWindow):
             return
         self._mic_ptt_interrupted = False
         self.sync_data_mode_from_main()
-        # Vorlauf wird vom Audio-Player übernommen — falls dort live geändert,
-        # ziehen wir den aktuellen Wert frisch nach.
-        self._player.set_timing(self._settings.audio_player.pre_roll_ms, 0)
         self._player.set_playback_mode("single")
         self._pending_after_apply = "replay"
         self._pending_replay_row = row

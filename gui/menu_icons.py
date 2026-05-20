@@ -11,6 +11,7 @@ from PySide6.QtGui import (
     QIcon,
     QPainter,
     QPainterPath,
+    QPalette,
     QPen,
     QPixmap,
     QPolygonF,
@@ -116,8 +117,13 @@ def volume_role_send_icon() -> QIcon:
 
 
 def volume_role_pc_icon() -> QIcon:
-    """Weißes „PC“ — PC-Ausgabe-Lautstärke."""
-    white = QColor(245, 245, 245)
+    """„PC“ für PC-Ausgabe-Lautstärke — ``WindowText`` der App-Palette (Hell/Dunkel)."""
+    app = QApplication.instance()
+    pc_color = (
+        app.palette().color(QPalette.ColorRole.WindowText)
+        if app is not None
+        else QColor(33, 33, 33)
+    )
 
     def _draw(p: QPainter, size: int) -> None:
         s = float(size)
@@ -125,7 +131,7 @@ def volume_role_pc_icon() -> QIcon:
         font.setPixelSize(max(8, int(s * 0.48)))
         font.setBold(True)
         p.setFont(font)
-        p.setPen(white)
+        p.setPen(pc_color)
         p.drawText(QRectF(0, 0, s, s), Qt.AlignmentFlag.AlignCenter, "PC")
 
     return _control_bar_icon(_draw, logical_px=_TRANSPORT_BTN_ICON_PX)

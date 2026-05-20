@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import enum
 import os
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
 from PySide6.QtCore import QMetaObject, QObject, QThread, Qt, QTimer, QUrl, Signal, Slot, Q_ARG
 
 from cat import SerialCAT
-from model.audio_player_settings import PlaybackMode
+from model.audio_player_settings import (
+    is_pause_token,
+    parse_pause_ms_from_token,
+    PlaybackMode,
+)
 
 from .cat_ptt_worker import CatPttWorker
 from .qt_multimedia_lazy import qt_multimedia_types
@@ -21,9 +27,33 @@ _MULTIMEDIA_AVAILABLE = False
 AfterRx = Literal["idle", "paused", "gap", "stop", "contest_pause", "single_voice"]
 
 
+@dataclass(frozen=True)
+class PlaylistEntry:
+    """Ein Listeneintrag: Audiodatei oder RX-Pause (Millisekunden)."""
+
+    path: Optional[Path]
+    pause_ms: int = 0
+
+    @property
+    def is_pause(self) -> bool:
+        return self.path is None and self.pause_ms > 0
+
+
+def build_playlist_entries(folder: Path, rows: list[str]) -> list[PlaylistEntry]:
+    """Ordner + gespeicherte ``playlist_order``-Zeilen → Controller-Playlist."""
+    out: list[PlaylistEntry] = []
+    for row in rows:
+        if is_pause_token(row):
+            ms = parse_pause_ms_from_token(row)
+            if ms is not None:
+                out.append(PlaylistEntry(None, ms))
+        else:
+            out.append(PlaylistEntry(folder / row, 0))
+    return out
+
+
 class PlayerState(enum.Enum):
     IDLE = "idle"
-    PRE_ROLL = "pre_roll"
     WAITING_TX = "waiting_tx"
     PLAYING = "playing"
     PAUSED_RX = "paused_rx"
@@ -32,7 +62,6 @@ class PlayerState(enum.Enum):
     #: Lange Hörpause im Kontest-Loop — Funkgerät wird auf Sprach-Mode
     #: geschaltet, damit Stationen antworten können.
     LISTEN_PAUSE = "listen_pause"
-    STOPPING = "stopping"
 
 
 def multimedia_available() -> bool:
@@ -84,27 +113,38 @@ def list_audio_output_devices() -> list[tuple[str, str]]:
     return out
 
 
+def _pause_label_de(ms: int) -> str:
+    s = max(1, ms // 1000)
+    if s == 1:
+        return "Pause 1 Sekunde"
+    return f"Pause {s} Sekunden"
+
+
 class PlayerController(QObject):
-    """Zustandsmaschine: Vorlauf → CAT-TX → Wiedergabe → CAT-RX."""
+    """Zustandsmaschine: CAT-TX → Wiedergabe → CAT-RX; optionale Playlist-Pausen."""
 
     state_changed = Signal(object)
     position_changed = Signal(int, int)
     current_file_changed = Signal(str)
+    #: Sendelisten-Zeile (0..n-1) für GUI-Markierung — unverwechselbar bei gleicher Pausen-Dauer.
+    playlist_row_changed = Signal(int)
     error = Signal(str)
     status_message = Signal(str)
     #: Sprach-Mode (USB/LSB/FM) — nach Stopp oder Einzeldatei-Ende.
     voice_mode_requested = Signal()
-    #: Kontest: Hörpause zu Ende — Vorlauf erst nach DATA-Mode (Fenster entscheidet).
+    #: Kontest: Hörpause zu Ende — PTT erst nach DATA-Mode (Fenster entscheidet).
     contest_pre_roll_requested = Signal()
+    #: RX-/Kontest-Pause: Einzelshot-Timer gestartet — Mitte-Countdown in der GUI.
+    rx_pause_countdown_armed = Signal()
 
     def __init__(self, serial_cat: SerialCAT, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._cat = serial_cat
         self._state = PlayerState.IDLE
-        self._paths: list[Path] = []
+        self._entries: list[PlaylistEntry] = []
         self._index = 0
-        self._pre_roll_ms = 1000
-        self._gap_ms = 500
+        #: Akuelle RX-Pause in ms (variable je Listeneintrag; 0 = sofort weiter).
+        self._gap_ms = 0
         self._mode: PlaybackMode = "single"
         self._resume_after_pause = False
         self._after_rx: AfterRx = "idle"
@@ -120,10 +160,6 @@ class PlayerController(QObject):
         self._contest_mode = False
         self._contest_listen_pause_ms = 5000
 
-        self._pre_roll_timer = QTimer(self)
-        self._pre_roll_timer.setSingleShot(True)
-        self._pre_roll_timer.timeout.connect(self._on_pre_roll_done)
-
         self._gap_timer = QTimer(self)
         self._gap_timer.setSingleShot(True)
         self._gap_timer.timeout.connect(self._on_gap_done)
@@ -131,6 +167,9 @@ class PlayerController(QObject):
         self._contest_pause_timer = QTimer(self)
         self._contest_pause_timer.setSingleShot(True)
         self._contest_pause_timer.timeout.connect(self._on_contest_pause_done)
+        #: Monotonic deadline für verbleibende RX-Pause / Kontest-Hörpause (Anzeige).
+        self._gap_deadline_mono: Optional[float] = None
+        self._contest_pause_deadline_mono: Optional[float] = None
 
         self._tick_timer = QTimer(self)
         self._tick_timer.setInterval(200)
@@ -152,6 +191,10 @@ class PlayerController(QObject):
         self._media_ok = False
         self._QMediaPlayer: Optional[type] = None
         self._init_multimedia()
+
+    def _emit_playlist_row(self) -> None:
+        if 0 <= self._index < len(self._entries):
+            self.playlist_row_changed.emit(int(self._index))
 
     def shutdown(self) -> None:
         self._stop_monitor_playback()
@@ -207,42 +250,74 @@ class PlayerController(QObject):
     def current_path(self) -> Optional[Path]:
         return self._current_path()
 
-    def set_playlist(self, paths: list[Path]) -> None:
+    def is_last_audio_file_in_playlist(self) -> bool:
+        """True, wenn der aktuelle Index die letzte Audiodatei in der Playlist ist.
+
+        Nur bei Kettenspiel ohne Kontest — für End-of-Liste-Hinweise in der GUI.
+        """
+        if self._contest_mode or self._mode != "playlist":
+            return False
+        last_i: Optional[int] = None
+        for i, e in enumerate(self._entries):
+            if e.path is not None:
+                last_i = i
+        if last_i is None:
+            return False
+        return self._index == last_i
+
+    def set_playlist(self, entries: list[PlaylistEntry]) -> None:
         """Playlist ersetzen; Index an dieselbe Datei koppeln (wichtig nach Drag & Drop)."""
         current = self._current_path()
-        self._paths = list(paths)
+        self._entries = list(entries)
         if current is not None:
-            try:
-                self._index = self._paths.index(current)
-            except ValueError:
-                self._index = min(self._index, max(0, len(self._paths) - 1))
-        elif self._index >= len(self._paths):
-            self._index = max(0, len(self._paths) - 1)
+            found: Optional[int] = None
+            for i, e in enumerate(self._entries):
+                if e.path == current:
+                    found = i
+                    break
+            if found is not None:
+                self._index = found
+            else:
+                self._index = min(self._index, max(0, len(self._entries) - 1))
+        elif self._index >= len(self._entries):
+            self._index = max(0, len(self._entries) - 1)
 
     def set_index(self, index: int) -> None:
-        if 0 <= index < len(self._paths):
+        if 0 <= index < len(self._entries):
             self._index = index
 
     def load_track(self, index: Optional[int] = None) -> None:
         """Datei laden (ohne Sendung) — Dauer/Position fuer Vorab-Spulen."""
         if index is not None:
-            if index < 0 or index >= len(self._paths):
+            if index < 0 or index >= len(self._entries):
                 return
             self._index = index
         if self.is_busy():
             return
         self._stop_monitor_playback()
-        path = self._current_path()
-        if path is None:
+        entry = (
+            self._entries[self._index]
+            if 0 <= self._index < len(self._entries)
+            else None
+        )
+        if entry is None:
             self.position_changed.emit(0, 0)
             return
+        if entry.path is None:
+            self.current_file_changed.emit(_pause_label_de(entry.pause_ms))
+            self.position_changed.emit(0, 0)
+            self._emit_playlist_row()
+            return
+        path = entry.path
         if not self._media_ok:
             self._init_multimedia()
         if not self._media_ok or self._player is None:
+            self._emit_playlist_row()
             return
 
         url = QUrl.fromLocalFile(str(path.resolve()))
         self.current_file_changed.emit(path.name)
+        self._emit_playlist_row()
         QMP = self._QMediaPlayer
         if (
             QMP is not None
@@ -256,6 +331,7 @@ class PlayerController(QObject):
             )
         ):
             self._emit_position()
+            self._emit_playlist_row()
             return
 
         self._preview_loading = True
@@ -263,10 +339,11 @@ class PlayerController(QObject):
         self._player.stop()
         self._tick_timer.stop()
         self._player.setSource(url)
+        self._emit_playlist_row()
 
-    def set_timing(self, pre_roll_ms: int, gap_between_files_ms: int) -> None:
-        self._pre_roll_ms = max(0, int(pre_roll_ms))
-        self._gap_ms = max(0, int(gap_between_files_ms))
+    def set_timing(self, _pre_roll_ms: int = 0, _gap_between_files_ms: int = 0) -> None:
+        """Legacy / Audio-Recorder — globale Timings werden nicht mehr genutzt."""
+        pass
 
     def set_playback_mode(self, mode: PlaybackMode) -> None:
         self._mode = mode
@@ -451,18 +528,55 @@ class PlayerController(QObject):
         if message:
             self.status_message.emit(f"Mithören PC: {message}")
 
+    def _any_audio_file(self) -> bool:
+        return any(e.path is not None for e in self._entries)
+
+    def _count_audio_files(self) -> int:
+        return sum(1 for e in self._entries if e.path is not None)
+
+    def _next_file_index(self, start: int) -> Optional[int]:
+        for i in range(max(0, start), len(self._entries)):
+            if self._entries[i].path is not None:
+                return i
+        return None
+
+    def _advance_single_to_next_file(self) -> None:
+        n = len(self._entries)
+        if n <= 1:
+            return
+        start = (self._index + 1) % n
+        for step in range(n):
+            i = (start + step) % n
+            if self._entries[i].path is not None:
+                self._index = i
+                return
+
+    def _ensure_play_index_on_file(self) -> bool:
+        if not self._entries:
+            return False
+        if 0 <= self._index < len(self._entries):
+            if self._entries[self._index].path is None:
+                nxt = self._next_file_index(self._index)
+                if nxt is None:
+                    return False
+                self._index = nxt
+        return self._current_path() is not None
+
     def is_busy(self) -> bool:
         return self._state not in (PlayerState.IDLE, PlayerState.PAUSED_RX)
 
     def play(self, index: Optional[int] = None) -> None:
-        if not self._paths:
+        if not self._any_audio_file():
             self.error.emit("Keine Audiodateien in der Liste.")
             return
         if index is not None:
-            if index < 0 or index >= len(self._paths):
+            if index < 0 or index >= len(self._entries):
                 self.error.emit("Ungültiger Dateiindex.")
                 return
             self._index = index
+        if not self._ensure_play_index_on_file():
+            self.error.emit("Keine Audiodatei ab dieser Stelle.")
+            return
         if not self._media_ok:
             self._init_multimedia()
         if not _MULTIMEDIA_AVAILABLE or not self._media_ok:
@@ -477,17 +591,20 @@ class PlayerController(QObject):
             return
         if self._state == PlayerState.PAUSED_RX:
             self._resume_after_pause = True
-            self._begin_pre_roll()
+            self._begin_transmit_for_current_file()
             return
         if self.is_busy():
             return
         self._resume_after_pause = False
-        self._begin_pre_roll()
+        self._begin_transmit_for_current_file()
 
     def seek_position_ms(self, pos_ms: int) -> None:
         """Wiedergabeposition setzen (IDLE-Vorschau, PLAYING oder PAUSED_RX)."""
         if self._player is None or not self._media_ok:
             return
+        if 0 <= self._index < len(self._entries):
+            if self._entries[self._index].path is None:
+                return
         if self._state not in (
             PlayerState.IDLE,
             PlayerState.PLAYING,
@@ -534,6 +651,9 @@ class PlayerController(QObject):
         """
         if self.is_busy() and self._state != PlayerState.PAUSED_RX:
             return
+        if 0 <= self._index < len(self._entries):
+            if self._entries[self._index].path is None:
+                return
         self._preview_loading = False
         self._pending_media_play = False
         if self._player is None:
@@ -550,9 +670,9 @@ class PlayerController(QObject):
 
     def stop(self) -> None:
         self._stop_monitor_playback()
-        self._pre_roll_timer.stop()
         self._gap_timer.stop()
         self._contest_pause_timer.stop()
+        self._clear_rx_pause_deadlines()
         self._tick_timer.stop()
         self._resume_after_pause = False
         self._pending_media_play = False
@@ -562,9 +682,6 @@ class PlayerController(QObject):
             self._finish_stop_idle()
             if self._player is not None:
                 self._emit_position()
-            return
-        if self._state == PlayerState.PRE_ROLL:
-            self._finish_stop_idle()
             return
         if self._state in (PlayerState.GAP, PlayerState.LISTEN_PAUSE):
             self._finish_stop_idle()
@@ -578,30 +695,28 @@ class PlayerController(QObject):
         self.status_message.emit("Gestoppt")
         self.voice_mode_requested.emit()
 
+    def _finish_playlist_done_voice(self) -> None:
+        self._set_state(PlayerState.IDLE)
+        self.status_message.emit("Playlist Ende — Sprach-Mode (MIC)")
+        self.voice_mode_requested.emit()
+        if self._entries:
+            self.load_track()
+
     def _goto_waiting_rx(self) -> None:
         self._set_state(PlayerState.WAITING_RX)
         self._request_ptt(False)
 
     def begin_pre_roll_now(self) -> None:
-        """Vorlauf starten (nach asynchronem CAT, z. B. DATA-Mode beim Kontest)."""
-        self._begin_pre_roll()
+        """Nach asynchronem CAT (DATA-Mode beim Kontest) Sendung starten."""
+        self._begin_transmit_for_current_file()
 
-    def _begin_pre_roll(self) -> None:
+    def _begin_transmit_for_current_file(self) -> None:
         path = self._current_path()
         if path is None:
             self.error.emit("Ungültiger Dateiindex.")
             return
         self.current_file_changed.emit(path.name)
-        self.status_message.emit(f"Vorlauf {self._pre_roll_ms} ms …")
-        self._set_state(PlayerState.PRE_ROLL)
-        if self._pre_roll_ms <= 0:
-            self._on_pre_roll_done()
-        else:
-            self._pre_roll_timer.start(self._pre_roll_ms)
-
-    def _on_pre_roll_done(self) -> None:
-        if self._state != PlayerState.PRE_ROLL:
-            return
+        self._emit_playlist_row()
         self._set_state(PlayerState.WAITING_TX)
         self.status_message.emit("CAT-TX wird geschaltet …")
         self._request_ptt(True)
@@ -627,8 +742,8 @@ class PlayerController(QObject):
     @Slot(str)
     def _on_ptt_failed(self, message: str) -> None:
         self.error.emit(message)
-        self._pre_roll_timer.stop()
         self._gap_timer.stop()
+        self._clear_rx_pause_deadlines()
         self._tick_timer.stop()
         if self._player is not None:
             self._player.stop()
@@ -643,10 +758,6 @@ class PlayerController(QObject):
         if path is None or self._player is None:
             self._set_state(PlayerState.IDLE)
             return
-        # Diagnose: vor dem Wiedergabestart das tatsächlich verwendete
-        # Output-Device + die Software-Lautstärke loggen. Wenn die App den
-        # Träger ohne Modulation sendet, sieht man hier ob das Audio in
-        # die richtige (USB-)Soundkarte des Funkgeräts geroutet wird.
         log = self._cat.get_log() if self._cat else None
         if log is not None:
             dev_desc = "?"
@@ -694,11 +805,16 @@ class PlayerController(QObject):
 
         if action == "gap":
             self._set_state(PlayerState.GAP)
-            self.status_message.emit(f"Pause {self._gap_ms} ms (RX) …")
+            if self._gap_ms > 0:
+                self.status_message.emit(
+                    f"Pause {self._gap_ms / 1000:.1f} s (RX) …"
+                )
             if self._gap_ms <= 0:
                 self._on_gap_done()
             else:
+                self._arm_rx_gap_deadline(self._gap_ms)
                 self._gap_timer.start(self._gap_ms)
+                self.rx_pause_countdown_armed.emit()
             return
 
         if action == "contest_pause":
@@ -710,26 +826,23 @@ class PlayerController(QObject):
             if self._contest_listen_pause_ms <= 0:
                 self._on_contest_pause_done()
             else:
+                self._arm_contest_listen_deadline(self._contest_listen_pause_ms)
                 self._contest_pause_timer.start(self._contest_listen_pause_ms)
+                self.rx_pause_countdown_armed.emit()
             return
 
         if action == "single_voice":
-            if len(self._paths) > 1:
-                self._index = (self._index + 1) % len(self._paths)
+            if self._count_audio_files() > 1:
+                self._advance_single_to_next_file()
             self._set_state(PlayerState.IDLE)
             self.status_message.emit("Datei Ende — Sprach-Mode (MIC)")
             self.voice_mode_requested.emit()
-            # Nächste Datei vorladen — Start kann sofort erneut gedrückt werden.
-            if self._paths:
+            if self._entries:
                 self.load_track()
             return
 
         if action == "playlist_done_voice":
-            self._set_state(PlayerState.IDLE)
-            self.status_message.emit("Playlist Ende — Sprach-Mode (MIC)")
-            self.voice_mode_requested.emit()
-            if self._paths:
-                self.load_track()
+            self._finish_playlist_done_voice()
             return
 
         self._set_state(PlayerState.IDLE)
@@ -738,12 +851,60 @@ class PlayerController(QObject):
     def _on_gap_done(self) -> None:
         if self._state != PlayerState.GAP:
             return
-        self._begin_pre_roll()
+        self._gap_deadline_mono = None
+        if self._index < len(self._entries) and self._entries[self._index].path is None:
+            self._index += 1
+        while self._index < len(self._entries) and self._entries[self._index].path is None:
+            e = self._entries[self._index]
+            self._gap_ms = e.pause_ms
+            self.status_message.emit(
+                f"Pause {self._gap_ms / 1000:.1f} s (RX) …"
+            )
+            if self._gap_ms <= 0:
+                self._index += 1
+                continue
+            self._arm_rx_gap_deadline(self._gap_ms)
+            self._gap_timer.start(self._gap_ms)
+            self.rx_pause_countdown_armed.emit()
+            self._emit_playlist_row()
+            return
+        if self._index >= len(self._entries):
+            self._finish_playlist_done_voice()
+            return
+        self._begin_transmit_for_current_file()
 
     def _on_contest_pause_done(self) -> None:
         if self._state != PlayerState.LISTEN_PAUSE:
             return
+        self._contest_pause_deadline_mono = None
         self.contest_pre_roll_requested.emit()
+
+    def _clear_rx_pause_deadlines(self) -> None:
+        self._gap_deadline_mono = None
+        self._contest_pause_deadline_mono = None
+
+    def _arm_rx_gap_deadline(self, ms: int) -> None:
+        self._gap_deadline_mono = time.monotonic() + max(0, int(ms)) / 1000.0
+
+    def _arm_contest_listen_deadline(self, ms: int) -> None:
+        self._contest_pause_deadline_mono = time.monotonic() + max(
+            0, int(ms)
+        ) / 1000.0
+
+    def rx_pause_remaining_ms(self) -> int:
+        """Verbleibende RX-/Kontest-Hörpause (ms), nur bei aktivem Pausen-Timer."""
+        if self._state == PlayerState.GAP and self._gap_timer.isActive():
+            if self._gap_deadline_mono is None:
+                return 0
+            return max(0, int((self._gap_deadline_mono - time.monotonic()) * 1000))
+        if self._state == PlayerState.LISTEN_PAUSE and self._contest_pause_timer.isActive():
+            if self._contest_pause_deadline_mono is None:
+                return 0
+            return max(
+                0,
+                int((self._contest_pause_deadline_mono - time.monotonic()) * 1000),
+            )
+        return 0
 
     def _try_play_loaded_url(self, url: QUrl) -> bool:
         """Dieselbe URL erneut abspielen, wenn Qt kein erneutes LoadedMedia sendet."""
@@ -816,17 +977,19 @@ class PlayerController(QObject):
         self._player.stop()
         self._resume_after_pause = False
         if self._contest_mode:
-            # Kontest-Loop: dieselbe Datei nochmal nach Hörpause.
             self._after_rx = "contest_pause"
-        elif self._mode == "playlist" and self._index + 1 < len(self._paths):
-            # Playlist: nur kurze Pause, kein Sprach-Mode.
+        elif self._mode == "playlist" and self._index + 1 < len(self._entries):
             self._index += 1
+            nxt = self._entries[self._index]
+            if nxt.path is None:
+                self._gap_ms = nxt.pause_ms
+            else:
+                self._gap_ms = 0
             self._after_rx = "gap"
+            self._emit_playlist_row()
         elif self._mode == "single":
-            # Einzeldatei: stoppen und auf Sprach-Mode (MIC vorne).
             self._after_rx = "single_voice"
         else:
-            # Letzter Titel der Playlist: Sprach-Mode, Index bleibt (letzte Datei).
             self._after_rx = "playlist_done_voice"
         self.status_message.emit("Datei Ende — RX …")
         self._goto_waiting_rx()
@@ -858,8 +1021,8 @@ class PlayerController(QObject):
         self.position_changed.emit(pos, dur)
 
     def _current_path(self) -> Optional[Path]:
-        if 0 <= self._index < len(self._paths):
-            return self._paths[self._index]
+        if 0 <= self._index < len(self._entries):
+            return self._entries[self._index].path
         return None
 
     def _set_state(self, state: PlayerState) -> None:
