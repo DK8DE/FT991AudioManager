@@ -4,7 +4,7 @@ Neuer schlanker Aufbau (ab 0.5.1):
 
 - Oben **rechts**: VFO-A/B und RX/TX-Anzeige; darunter ein **großer
   Meter-Bereich** (S-Meter + DSP links, AF/RF + TX-Meter rechts);
-  darunter **Simp / RPT- / Tune / REV** und Audio-Buttons; unten **Mode-Gruppe**,
+  darunter **Tune / Simp / RPT± / REV** und Audio-Buttons; unten **Mode-Gruppe**,
   **EQ-Profil**, **Speicherkanal** und **Band**; darunter ein eigener Bereich
   **Favoriten** (persistente Soll-Vorgaben).
 - **EQ-Profil- und Mode-Auswahl** bleiben im Hauptfenster; der Equalizer-Editor
@@ -98,7 +98,6 @@ from mapping.amateur_bands import (
     preferred_voice_rx_mode_for_amateur_hz,
     VFO_BAND_CHOICE,
 )
-from mapping.repeater_offset import SHIFT_MINUS
 from mapping.meter_mapping import (
     apply_smeter_calibration_from_settings,
     smeter_set_calibration_frequency_hz,
@@ -1633,12 +1632,10 @@ class MainWindow(QMainWindow):
         self._try_clear_fm_repeater_shift_simplex()
 
     def _on_repeater_shift_polled(self, direction: int) -> None:
-        """IF; P10 vom Poller — Minus-Button an den tatsächlichen TRX-Stand anpassen."""
+        """IF; P10 vom Poller — Shift-Anzeige (Simp / RPT+ / RPT-) und Minus-Taste."""
         if self._relay_rev_active:
             return
-        self._radio_control_bar.set_repeater_minus_checked(
-            int(direction) == SHIFT_MINUS
-        )
+        self._radio_control_bar.sync_repeater_shift_from_if(int(direction))
 
     def _on_rx_info_changed(
         self,

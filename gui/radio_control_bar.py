@@ -1,4 +1,4 @@
-"""Kompakte CAT-Steuerung unter den Meter-Anzeigen (Simp/RPT-, Tune, REV, Audio)."""
+"""Kompakte CAT-Steuerung unter den Meter-Anzeigen (Tune, Simp/RPT±, REV, Audio)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ from typing import Any, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
+
+from mapping.repeater_offset import SHIFT_MINUS, SHIFT_PLUS, SHIFT_SIMPLEX
 
 from .led_widget import Led
 from .menu_icons import (
@@ -20,7 +22,7 @@ _RIG_IO_BLINK_SEQ = (True, False, True, False, True, False, True, False)
 
 
 class RadioControlBar(QWidget):
-    """Tune, REV, Audio-Buttons und FLRig-Anzeige in getrennten Panels."""
+    """Tune, Repeater-Shift (Simp / RPT+ / RPT-), REV, Audio und FLRig."""
 
     repeater_minus_toggled = Signal(bool)
     tune_clicked = Signal()
@@ -36,18 +38,20 @@ class RadioControlBar(QWidget):
 
         self._flrig_blink_active = False
         self._flrig_blink_phase = 0
+        # Letzter Shift aus ``IF;`` P10 (0 Simplex, 1 Plus, 2 Minus) — für Button-Text.
+        self._repeater_shift_dir: int = SHIFT_SIMPLEX
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
-        self._rpt_minus_btn = QPushButton("Simp")
+        self._rpt_minus_btn = QPushButton(self._repeater_shift_caption(SHIFT_SIMPLEX))
         self._rpt_minus_btn.setCheckable(True)
         self._rpt_minus_btn.setMinimumWidth(56)
         self._rpt_minus_btn.setToolTip(
-            "Repeater-Shift: Simp = Simplex (aus), RPT- = Minus-Shift (CAT OS, "
-            "nur FM/C4FM). Wenn RPT- aktiv ist, bleibt Minus auch bei QRG-"
-            "Änderungen in der App erhalten."
+            "Repeater-Shift wie am TRX (IF P10): Simp, RPT+ oder RPT-. "
+            "Taste schaltet Minus ein/aus (CAT OS, nur FM/C4FM); ist RPT- aktiv, "
+            "bleibt Minus bei QRG-Änderungen in der App erhalten."
         )
         self._rpt_minus_btn.setStyleSheet(
             "QPushButton:checked {"
@@ -134,8 +138,8 @@ class RadioControlBar(QWidget):
         ctrl_layout = QHBoxLayout(ctrl_frame)
         ctrl_layout.setContentsMargins(8, 6, 8, 6)
         ctrl_layout.setSpacing(8)
-        ctrl_layout.addWidget(self._rpt_minus_btn)
         ctrl_layout.addWidget(self._tune_btn)
+        ctrl_layout.addWidget(self._rpt_minus_btn)
         ctrl_layout.addWidget(self._rev_btn)
         ctrl_layout.addWidget(self._tcall_btn)
         ctrl_layout.addWidget(self._audio_btn)
@@ -218,19 +222,45 @@ class RadioControlBar(QWidget):
         self._rev_btn.blockSignals(False)
 
     @staticmethod
-    def _repeater_minus_caption(checked: bool) -> str:
-        return "RPT-" if checked else "Simp"
+    def _repeater_shift_caption(direction: int) -> str:
+        d = int(direction)
+        if d == SHIFT_PLUS:
+            return "RPT+"
+        if d == SHIFT_MINUS:
+            return "RPT-"
+        return "Simp"
+
+    def _apply_repeater_shift_button(self) -> None:
+        """Setzt Text; Checked nur bei Minus (Taste = Minus ein/aus)."""
+        d = int(self._repeater_shift_dir)
+        self._rpt_minus_btn.setText(self._repeater_shift_caption(d))
+
+    def sync_repeater_shift_from_if(self, direction: int) -> None:
+        """TRX-Stand aus ``IF;`` P10 — Beschriftung Simp / RPT+ / RPT-, Checked nur bei Minus."""
+        d = int(direction)
+        if d not in (SHIFT_SIMPLEX, SHIFT_PLUS, SHIFT_MINUS):
+            d = SHIFT_SIMPLEX
+        self._repeater_shift_dir = d
+        self._rpt_minus_btn.blockSignals(True)
+        self._rpt_minus_btn.setChecked(d == SHIFT_MINUS)
+        self._rpt_minus_btn.blockSignals(False)
+        self._apply_repeater_shift_button()
 
     def _on_repeater_minus_toggled(self, checked: bool) -> None:
-        self._rpt_minus_btn.setText(self._repeater_minus_caption(bool(checked)))
+        if checked:
+            self._repeater_shift_dir = SHIFT_MINUS
+        else:
+            self._repeater_shift_dir = SHIFT_SIMPLEX
+        self._apply_repeater_shift_button()
         self.repeater_minus_toggled.emit(bool(checked))
 
     def set_repeater_minus_checked(self, checked: bool) -> None:
         chk = bool(checked)
+        self._repeater_shift_dir = SHIFT_MINUS if chk else SHIFT_SIMPLEX
         self._rpt_minus_btn.blockSignals(True)
         self._rpt_minus_btn.setChecked(chk)
         self._rpt_minus_btn.blockSignals(False)
-        self._rpt_minus_btn.setText(self._repeater_minus_caption(chk))
+        self._apply_repeater_shift_button()
 
     def is_repeater_minus_checked(self) -> bool:
         return bool(self._rpt_minus_btn.isChecked())
