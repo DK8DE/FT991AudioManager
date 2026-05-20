@@ -4,7 +4,7 @@ Neuer schlanker Aufbau (ab 0.5.1):
 
 - Oben **rechts**: VFO-A/B und RX/TX-Anzeige; darunter ein **großer
   Meter-Bereich** (S-Meter + DSP links, AF/RF + TX-Meter rechts);
-  darunter **Minus / Tune / REV** und Audio-Buttons; unten **Mode-Gruppe**,
+  darunter **Simp / RPT- / Tune / REV** und Audio-Buttons; unten **Mode-Gruppe**,
   **EQ-Profil**, **Speicherkanal** und **Band**; darunter ein eigener Bereich
   **Favoriten** (persistente Soll-Vorgaben).
 - **EQ-Profil- und Mode-Auswahl** bleiben im Hauptfenster; der Equalizer-Editor

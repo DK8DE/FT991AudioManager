@@ -1,4 +1,4 @@
-"""Kompakte CAT-Steuerung unter den Meter-Anzeigen (Minus, Tune, REV, Audio)."""
+"""Kompakte CAT-Steuerung unter den Meter-Anzeigen (Simp/RPT-, Tune, REV, Audio)."""
 
 from __future__ import annotations
 
@@ -41,13 +41,13 @@ class RadioControlBar(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
-        self._rpt_minus_btn = QPushButton("Minus")
+        self._rpt_minus_btn = QPushButton("Simp")
         self._rpt_minus_btn.setCheckable(True)
         self._rpt_minus_btn.setMinimumWidth(56)
         self._rpt_minus_btn.setToolTip(
-            "Repeater-Shift Minus ein/aus (CAT OS — nur FM/C4FM). "
-            "Aus = Simplex, Ein = Minus-Shift. Solange eingeschaltet, bleibt "
-            "Minus auch bei QRG-Änderungen in der App erhalten."
+            "Repeater-Shift: Simp = Simplex (aus), RPT- = Minus-Shift (CAT OS, "
+            "nur FM/C4FM). Wenn RPT- aktiv ist, bleibt Minus auch bei QRG-"
+            "Änderungen in der App erhalten."
         )
         self._rpt_minus_btn.setStyleSheet(
             "QPushButton:checked {"
@@ -57,7 +57,7 @@ class RadioControlBar(QWidget):
             "  border: 1px solid #2a6aaa;"
             "}"
         )
-        self._rpt_minus_btn.toggled.connect(self.repeater_minus_toggled.emit)
+        self._rpt_minus_btn.toggled.connect(self._on_repeater_minus_toggled)
 
         self._tune_btn = QPushButton("Tune")
         self._tune_btn.setMinimumWidth(72)
@@ -217,10 +217,20 @@ class RadioControlBar(QWidget):
         self._rev_btn.setChecked(checked)
         self._rev_btn.blockSignals(False)
 
+    @staticmethod
+    def _repeater_minus_caption(checked: bool) -> str:
+        return "RPT-" if checked else "Simp"
+
+    def _on_repeater_minus_toggled(self, checked: bool) -> None:
+        self._rpt_minus_btn.setText(self._repeater_minus_caption(bool(checked)))
+        self.repeater_minus_toggled.emit(bool(checked))
+
     def set_repeater_minus_checked(self, checked: bool) -> None:
+        chk = bool(checked)
         self._rpt_minus_btn.blockSignals(True)
-        self._rpt_minus_btn.setChecked(bool(checked))
+        self._rpt_minus_btn.setChecked(chk)
         self._rpt_minus_btn.blockSignals(False)
+        self._rpt_minus_btn.setText(self._repeater_minus_caption(chk))
 
     def is_repeater_minus_checked(self) -> bool:
         return bool(self._rpt_minus_btn.isChecked())
