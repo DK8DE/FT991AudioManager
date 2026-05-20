@@ -56,10 +56,12 @@ class Ft991SharedCatBackend:
         *,
         get_cat: Callable[[], SerialCAT],
         log_write: Callable[[str, str], None],
+        on_frequency_written: Optional[Callable[..., None]] = None,
     ) -> None:
         self._state = state
         self._get_cat = get_cat
         self._log_write = log_write
+        self._on_frequency_written = on_frequency_written
         self._write_q: queue.Queue[_WriteCommand] = queue.Queue()
         self._worker: Optional[threading.Thread] = None
         self._running = False
@@ -98,6 +100,10 @@ class Ft991SharedCatBackend:
 
     def is_serial_connected(self) -> bool:
         return self._get_cat().is_connected()
+
+    def pending_write_count(self) -> int:
+        """Anzahl noch nicht abgearbeiteter Bridge-Befehle (SETFREQ/PTT/…)."""
+        return int(self._write_q.qsize())
 
     def write_command(self, command: str, *, log_ctx: str = "") -> None:
         if not self.is_serial_connected():
@@ -144,6 +150,23 @@ class Ft991SharedCatBackend:
             if str(item.command).strip().upper() != "READFREQ":
                 self._write_q.put(item)
 
+    def refresh_frequency_from_cat(self) -> None:
+        """Liest VFO-A sofort und aktualisiert den Bridge-State (FLRig-Abfragen)."""
+        if not self.is_serial_connected():
+            return
+        now = time.monotonic()
+        if now < self._readfreq_suppress_until_mono:
+            return
+        try:
+            ft = FT991CAT(self._get_cat())
+            hz = ft.read_frequency()
+            self._state.update(frequency_hz=hz)
+            self._state.mark_success()
+            self._last_readfreq_cat_mono = now
+            self._last_sync_f_cat_mono = now
+        except Exception as exc:
+            self._state.set_error(str(exc))
+
     def read_frequency_sync(self) -> int:
         """Liest VFO-A sofort per CAT (SerialCAT-RLock — serialisiert mit Bridge-Worker)."""
         snap = self._state.snapshot()
@@ -165,13 +188,9 @@ class Ft991SharedCatBackend:
                 return max(0, cached)
             ft = FT991CAT(cat)
             hz = ft.read_frequency()
-            if (
-                self._last_setfreq_target_hz > 0
-                and abs(hz - self._last_setfreq_target_hz) > 20
-                and (now - self._last_setfreq_enqueue_mono)
-                < self._post_setfreq_read_suppress_s * 3
-            ):
-                hz = self._last_setfreq_target_hz
+            if now < self._readfreq_suppress_until_mono:
+                if self._last_setfreq_target_hz > 0:
+                    hz = self._last_setfreq_target_hz
             self._state.update(frequency_hz=hz)
             self._state.mark_success()
             self._last_readfreq_cat_mono = now
@@ -225,8 +244,20 @@ class Ft991SharedCatBackend:
                 time.monotonic() + self._post_setfreq_read_suppress_s
             )
             if merged.enqueue_mono >= self._last_setfreq_enqueue_mono:
+                self._last_setfreq_target_hz = hz
                 self._state.update(frequency_hz=hz)
                 self._state.mark_success()
+            cb = self._on_frequency_written
+            if cb is not None:
+                try:
+                    cb(int(hz), False)
+                except TypeError:
+                    try:
+                        cb(int(hz))
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
             if ctx:
                 self._log_write("INFO", f"Rig-Bridge SETFREQ {hz} Hz — {ctx}")
             return
@@ -256,13 +287,9 @@ class Ft991SharedCatBackend:
                 return
             self._last_readfreq_cat_mono = now
             hz = ft.read_frequency()
-            if (
-                self._last_setfreq_target_hz > 0
-                and abs(hz - self._last_setfreq_target_hz) > 20
-                and (now - self._last_setfreq_enqueue_mono)
-                < self._post_setfreq_read_suppress_s * 3
-            ):
-                return
+            if now < self._readfreq_suppress_until_mono:
+                if self._last_setfreq_target_hz > 0:
+                    hz = self._last_setfreq_target_hz
             self._state.update(frequency_hz=hz)
             self._state.mark_success()
             return

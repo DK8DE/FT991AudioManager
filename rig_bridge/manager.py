@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any, Callable, Optional
 
 from cat.serial_cat import SerialCAT
@@ -40,15 +41,22 @@ class RigBridgeManager:
         *,
         get_cat: Callable[[], SerialCAT],
         log_write: Callable[[str, str], None],
+        on_frequency_written: Optional[Callable[..., None]] = None,
     ) -> None:
         self._get_cat = get_cat
         self._log_write = log_write
         self._lock = threading.RLock()
         self._pending_flrig_io = False
+        #: Poller kurz auslassen, damit Bridge-Worker SETFREQ/PTT/MODE senden kann.
+        self._flrig_cat_yield_until_mono = 0.0
+        self._flrig_cat_yield_ms = 200
         self._cfg = normalize_rig_bridge_config(cfg_dict)
         self._state = RadioStateCache()
         self._backend = Ft991SharedCatBackend(
-            self._state, get_cat=get_cat, log_write=self._protocol_log
+            self._state,
+            get_cat=get_cat,
+            log_write=self._protocol_log,
+            on_frequency_written=on_frequency_written,
         )
         self._flrig = FlrigBridgeServer(
             get_state=self._state.snapshot,
@@ -61,12 +69,42 @@ class RigBridgeManager:
             refresh_frequency_before_read=self.request_cat_refresh_async,
         )
 
+    def set_on_frequency_written(
+        self, callback: Optional[Callable[[int], None]]
+    ) -> None:
+        self._backend._on_frequency_written = callback
+
     def update_config(self, cfg_dict: Optional[dict]) -> None:
+        restart_flrig = False
         with self._lock:
+            old = self._cfg
             self._cfg = normalize_rig_bridge_config(cfg_dict)
             self._flrig.set_log_client_traffic(
                 bool(self._cfg["flrig"].get("log_tcp_traffic", True))
             )
+            snap = self._state.snapshot()
+            if snap["protocol_active"].get("flrig"):
+                old_fl = old.get("flrig") if isinstance(old.get("flrig"), dict) else {}
+                new_fl = self._cfg["flrig"]
+                if (
+                    str(old_fl.get("host", "127.0.0.1")).strip()
+                    != str(new_fl.get("host", "127.0.0.1")).strip()
+                    or int(old_fl.get("port", 12345)) != int(new_fl.get("port", 12345))
+                ):
+                    restart_flrig = True
+        if restart_flrig:
+            self.stop_protocol("flrig")
+            self.start_protocol("flrig")
+
+    def bridge_pending_writes(self) -> bool:
+        """True, wenn noch CAT-Schreibbefehle aus FLRig in der Warteschlange sind."""
+        return self._backend.pending_write_count() > 0
+
+    def flrig_poller_should_yield(self) -> bool:
+        """Meter-Poller soll CAT freigeben (FLRig-Traffic oder offene Bridge-Befehle)."""
+        if self.flrig_cat_yield_active():
+            return True
+        return self.bridge_pending_writes()
 
     def _protocol_log(self, level: str, msg: str) -> None:
         self._log_write(level, msg)
@@ -82,8 +120,18 @@ class RigBridgeManager:
         self._state.set_protocol_clients("flrig", max(0, int(n)))
 
     def _notify_flrig_tcp_activity(self) -> None:
+        now = time.monotonic()
         with self._lock:
             self._pending_flrig_io = True
+            self._flrig_cat_yield_until_mono = now + self._flrig_cat_yield_ms / 1000.0
+
+    def flrig_cat_yield_active(self) -> bool:
+        """True, wenn der Meter-Poller den CAT-Port kurz freigeben soll."""
+        return time.monotonic() < self._flrig_cat_yield_until_mono
+
+    def flrig_has_clients(self) -> bool:
+        snap = self._state.snapshot()
+        return int(snap.get("protocol_clients", {}).get("flrig", 0) or 0) > 0
 
     def take_bridge_activity_flags(self) -> bool:
         """Verbraucht TCP-Aktivitätspuls FLRig für die Status-LED."""
@@ -93,11 +141,18 @@ class RigBridgeManager:
         return f
 
     def _enqueue_radio_write(self, command: str, log_ctx: str = "") -> None:
+        now = time.monotonic()
+        with self._lock:
+            until = now + self._flrig_cat_yield_ms / 1000.0
+            if until > self._flrig_cat_yield_until_mono:
+                self._flrig_cat_yield_until_mono = until
         self._backend.write_command(command, log_ctx=log_ctx)
 
     def request_cat_refresh_async(self) -> bool:
+        """Nicht blockierend — READFREQ in die Bridge-Warteschlange (FLRig-TCP-Thread)."""
         if not self._backend.is_serial_connected():
             return False
+        self._notify_flrig_tcp_activity()
         self._backend.write_command("READFREQ", log_ctx="Bridge READFREQ")
         return True
 

@@ -142,6 +142,9 @@ Radio parallel nutzen (über FLRig), während der Audiomanager läuft.
     TX-/RX-Polling, EQ-Profil-Anzeige
   - **Rig-Bridge**: FLRig (siehe oben)
 - **Hilfe → Version**: About-Fenster mit Versionsnummer und Lizenz
+- **Hilfe → Update prüfen**: Vergleich mit dem neuesten Release auf
+  [GitHub Releases](https://github.com/DK8DE/FT991AudioManager/releases)
+  (ein Klick zur Download-Seite, wenn eine neuere Version existiert)
 - Spaltenbreiten/Fenster-Geometrie bleiben über Neustarts erhalten.
 
 ## Geräte-Spezifika und Hinweise

@@ -60,6 +60,11 @@ class WrappingCheckBox(QWidget):
         self._box.setToolTip(tip)
         self._label.setToolTip(tip)
 
+    @property
+    def toggled(self):
+        """Signal des inneren QCheckBox (wie bei QCheckBox.toggled)."""
+        return self._box.toggled
+
 
 def wrap_checkbox(text: str, *, parent: QWidget | None = None) -> WrappingCheckBox:
     return WrappingCheckBox(text, parent=parent)

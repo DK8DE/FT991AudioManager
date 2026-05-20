@@ -64,6 +64,7 @@ class RigBridgeSettingsWidget(QWidget):
             "Bei CAT-Verbindung automatisch starten"
         )
         self.chk_flrig_log = wrap_checkbox("TCP-Verkehr ins CAT-Log")
+        self.chk_flrig_log.toggled.connect(self._on_flrig_log_toggled)
 
         self.ed_flrig_host = QLineEdit()
         self.ed_flrig_host.setPlaceholderText("127.0.0.1")
@@ -148,6 +149,13 @@ class RigBridgeSettingsWidget(QWidget):
         else:
             self.lbl_flrig_status.setText("Gestoppt")
             self.lbl_flrig_status.setStyleSheet("color: gray;")
+
+    def _on_flrig_log_toggled(self, _checked: bool) -> None:
+        """TCP-Logging sofort aktivieren, ohne Dialog zu schließen."""
+        bridge = self._get_bridge()
+        if bridge is not None:
+            self._settings.flrig.log_tcp_traffic = self.chk_flrig_log.isChecked()
+            bridge.update_config(self._settings.to_dict())
 
     def _start_proto(self, name: str) -> None:
         bridge = self._get_bridge()

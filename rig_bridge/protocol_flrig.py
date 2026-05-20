@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import socket
 import threading
+import traceback
 import xml.sax.saxutils as xml_esc
 from typing import Any, Callable, Protocol, Set
 from xml.etree import ElementTree as ET
@@ -83,6 +84,35 @@ def _first_line_is_http(first_line: str) -> bool:
     if t.startswith("POST "):
         return True
     return t.startswith("GET ") and "HTTP/" in first_line.upper()
+
+
+def _configure_client_socket(sock: socket.socket) -> None:
+    """Akzeptierte FLRig-Verbindung: Timeouts und Nagle aus."""
+    try:
+        sock.settimeout(45.0)
+    except OSError:
+        pass
+    try:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        pass
+
+
+def _classify_incoming_buffer(buf: bytearray) -> str:
+    """``http`` | ``legacy`` | ``need_more`` | ``invalid``."""
+    if len(buf) > 16384:
+        return "invalid"
+    if len(buf) >= 5:
+        head4 = buf[:4].upper()
+        if head4 == b"POST" or head4 == b"GET ":
+            return "http"
+    nl = buf.find(b"\n")
+    if nl < 0:
+        return "need_more"
+    first_line = buf[:nl].decode("latin-1", errors="replace").strip()
+    if _first_line_is_http(first_line):
+        return "http"
+    return "legacy"
 
 
 def _read_full_http_request(sock: socket.socket, buf: bytearray) -> bytes | None:
@@ -353,6 +383,17 @@ class FlrigBridgeServer:
         """TCP (XML-RPC oder Textzeilen) ins Rig-Diagnose-Log."""
         self._log_client_traffic = bool(enabled)
 
+    def _log_bridge(self, level: str, msg: str) -> None:
+        """Immer ins CAT-Log (Start/Connect/Fehler), unabhängig vom TCP-Detail-Log."""
+        try:
+            self._log_write(level, msg)
+        except Exception:
+            pass
+
+    def _log_tcp(self, level: str, msg: str) -> None:
+        if self._log_client_traffic:
+            self._log_bridge(level, msg)
+
     def start(self, host: str, port: int) -> None:
         with self._lifecycle_lock:
             host = str(host or "127.0.0.1").strip() or "127.0.0.1"
@@ -369,7 +410,7 @@ class FlrigBridgeServer:
             self._running = True
             self._accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
             self._accept_thread.start()
-            self._log_write("INFO", f"Flrig-Bridge gestartet auf {host}:{port}")
+            self._log_bridge("INFO", f"Flrig-Bridge gestartet auf {host}:{port}")
 
     def stop(self) -> None:
         with self._lifecycle_lock:
@@ -437,6 +478,7 @@ class FlrigBridgeServer:
                 except Exception:
                     pass
                 break
+            _configure_client_socket(c)
             with self._clients_lock:
                 self._clients.add(c)
             self._emit_client_peer_count()
@@ -444,55 +486,63 @@ class FlrigBridgeServer:
 
     def _client_loop(self, client: socket.socket, peer_addr: object | None = None) -> None:
         peer_s = _peer_label(peer_addr)
-        if self._log_client_traffic:
-            self._log_write("INFO", f"Flrig TCP: Client verbunden von {peer_s}")
+        self._log_bridge("INFO", f"Flrig TCP: Client verbunden von {peer_s}")
         try:
             with client:
                 buf = bytearray()
                 while self._running:
-                    chunk = client.recv(8192)
+                    try:
+                        chunk = client.recv(8192)
+                    except socket.timeout:
+                        self._log_bridge(
+                            "WARN",
+                            f"Flrig TCP {peer_s}: Timeout — kein Daten vom Client "
+                            f"(Puffer {len(buf)} B)",
+                        )
+                        break
+                    except OSError as exc:
+                        self._log_bridge(
+                            "WARN",
+                            f"Flrig TCP {peer_s}: recv-Fehler: {exc!r}",
+                        )
+                        break
                     if not chunk:
                         if self._log_client_traffic and len(buf) > 0:
-                            self._log_write(
+                            self._log_tcp(
                                 "INFO",
                                 f"Flrig TCP {peer_s}: Verbindungsende vom Client, "
                                 f"Restpuffer {len(buf)} B",
                             )
                         break
                     buf += chunk
-                    nl = buf.find(b"\n")
-                    if nl < 0:
-                        if len(buf) > 8192:
-                            if self._log_client_traffic:
-                                head = buf[: min(400, len(buf))].decode("latin-1", errors="replace")
-                                self._log_write(
-                                    "WARN",
-                                    f"Flrig TCP {peer_s}: keine Zeilenende in den ersten "
-                                    f"{len(buf)} B (Anfang {head!r}…) — Verbindung wird getrennt",
-                                )
-                            break
+                    kind = _classify_incoming_buffer(buf)
+                    if kind == "need_more":
                         continue
-                    first_line = buf[:nl].decode("latin-1", errors="replace").strip()
-                    if self._log_client_traffic:
-                        self._log_write(
-                            "INFO",
-                            f"Flrig TCP {peer_s}: erste Zeile erkannt ({first_line[:120]!r}…)"
-                            if len(first_line) > 120
-                            else f"Flrig TCP {peer_s}: erste Zeile erkannt {first_line!r}",
+                    if kind == "invalid":
+                        head = buf[: min(400, len(buf))].decode("latin-1", errors="replace")
+                        self._log_bridge(
+                            "WARN",
+                            f"Flrig TCP {peer_s}: unbekanntes Protokoll "
+                            f"({len(buf)} B, Anfang {head!r}…) — getrennt",
                         )
-                    if _first_line_is_http(first_line):
+                        break
+                    if kind == "http":
+                        self._log_tcp("INFO", f"Flrig TCP {peer_s}: XML-RPC/HTTP erkannt")
                         self._xmlrpc_loop(client, buf, peer_s)
                         return
+                    self._log_tcp("INFO", f"Flrig TCP {peer_s}: Textmodus erkannt")
                     self._legacy_line_loop(client, buf, peer_s)
                     return
-        except Exception:
-            pass
+        except Exception as exc:
+            self._log_bridge(
+                "WARN",
+                f"Flrig TCP {peer_s}: Client-Fehler: {exc!r}\n{traceback.format_exc()}",
+            )
         finally:
             with self._clients_lock:
                 self._clients.discard(client)
             self._emit_client_peer_count()
-            if self._log_client_traffic:
-                self._log_write("INFO", f"Flrig TCP: Client-Sitzung beendet ({peer_s})")
+            self._log_bridge("INFO", f"Flrig TCP: Client-Sitzung beendet ({peer_s})")
 
     def _xmlrpc_loop(self, client: socket.socket, buf: bytearray, peer_s: str = "?") -> None:
         try:
@@ -500,7 +550,7 @@ class FlrigBridgeServer:
                 raw = _read_full_http_request(client, buf)
                 if raw is None:
                     if self._log_client_traffic and len(buf) > 0:
-                        self._log_write(
+                        self._log_tcp(
                             "WARN",
                             f"Flrig TCP {peer_s}: unvollständiger HTTP-Request oder zu groß "
                             f"(Restpuffer {len(buf)} B)",
@@ -517,7 +567,7 @@ class FlrigBridgeServer:
                         if first_crlf >= 0
                         else raw[:120].decode("latin-1", errors="replace")
                     )
-                    self._log_write(
+                    self._log_tcp(
                         "INFO",
                         f"Flrig TCP {peer_s}: HTTP-Rohdaten {len(raw)} B, erste Zeile: {req_line!r}",
                     )
@@ -525,13 +575,13 @@ class FlrigBridgeServer:
                     bl = len(body_raw)
                     if bl <= _MAX_LOG_PREVIEW_BYTES:
                         body_txt = body_raw.decode("utf-8", errors="replace")
-                        self._log_write(
+                        self._log_tcp(
                             "INFO",
                             f"Flrig TCP {peer_s}: XML-RPC-Body ({bl} B):\n{body_txt}",
                         )
                     else:
                         prev = body_raw[:_MAX_LOG_PREVIEW_BYTES].decode("utf-8", errors="replace")
-                        self._log_write(
+                        self._log_tcp(
                             "INFO",
                             f"Flrig TCP {peer_s}: XML-RPC-Body ({bl} B, Anfang {_MAX_LOG_PREVIEW_BYTES} B):\n"
                             f"{prev}\n… [gekürzt]",
@@ -540,7 +590,7 @@ class FlrigBridgeServer:
                 method = _parse_method_name(body)
                 if method is None:
                     if self._log_client_traffic:
-                        self._log_write(
+                        self._log_tcp(
                             "WARN",
                             f"Flrig TCP {peer_s}: methodName nicht erkennbar — sende XML-RPC-Fault (parse)",
                         )
@@ -548,7 +598,7 @@ class FlrigBridgeServer:
                 else:
                     params = _param_scalar_values(body)
                     if self._log_client_traffic:
-                        self._log_write(
+                        self._log_tcp(
                             "INFO",
                             f"Flrig TCP {peer_s}: aufgerufen {method!r}, Parameter: {params!r}",
                         )
@@ -571,25 +621,28 @@ class FlrigBridgeServer:
                     m = method if method is not None else "(parse)"
                     rlen = len(resp_xml)
                     if rlen <= 4000:
-                        self._log_write(
+                        self._log_tcp(
                             "INFO",
                             f"Flrig TCP {peer_s}: Antwort auf {m!r} — HTTP 200, "
                             f"XML {rlen} Zeichen:\n{resp_xml}",
                         )
                     else:
                         tail = "…" if rlen > 1800 else ""
-                        self._log_write(
+                        self._log_tcp(
                             "INFO",
                             f"Flrig TCP {peer_s}: Antwort auf {m!r} — HTTP 200, "
                             f"XML {rlen} Zeichen (Anfang):\n{resp_xml[:1800]}{tail}",
                         )
-                    self._log_write(
+                    self._log_tcp(
                         "INFO",
                         f"Flrig TCP {peer_s}: gesendet {len(http)} B roh "
                         f"(inkl. Header), Nutzlast-Zeilenende LF wie von Hamlib erwartet",
                     )
         except Exception as exc:
-            self._log_write("WARN", f"Flrig TCP {peer_s}: XML-RPC Verbindungsfehler: {exc!r}")
+            self._log_bridge(
+                "WARN",
+                f"Flrig TCP {peer_s}: XML-RPC Verbindungsfehler: {exc!r}",
+            )
 
     def _patch_state(self, patch: dict[str, Any]) -> None:
         if self._on_state_patch is not None and patch:
@@ -902,7 +955,7 @@ class FlrigBridgeServer:
         except Exception:
             pass
         if self._log_client_traffic:
-            self._log_write("INFO", f"Flrig TCP {peer_s}: Text RX: {cmd!r}")
+            self._log_tcp("INFO", f"Flrig TCP {peer_s}: Text RX: {cmd!r}")
         up = cmd.upper()
         if up == "GET FREQ" and self._refresh_frequency_before_read is not None:
             try:
@@ -946,5 +999,5 @@ class FlrigBridgeServer:
         else:
             out = "ERR"
         if self._log_client_traffic:
-            self._log_write("INFO", f"Flrig TCP {peer_s}: Text TX: {out!r}")
+            self._log_tcp("INFO", f"Flrig TCP {peer_s}: Text TX: {out!r}")
         return out

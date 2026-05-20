@@ -327,8 +327,9 @@ class SerialCAT:
         Kaskaden bei den folgenden Reads.
 
         Strategie: Wir lesen so lange Frames vom Port, bis einer mit
-        dem erwarteten Praefix beginnt. Vorherige Frames werden im
-        CAT-Log als "Stale-Frame" markiert und verworfen. Yaesus
+        dem erwarteten Praefix beginnt. Vorherige Frames werden verworfen;
+        im CAT-Log erscheint der erste nur als DEBUG (typischer
+        AI-/Restpuffer), ab dem zweiten als WARN. Yaesus
         Fehlerantwort ``?;`` (Command not recognized) reichen wir
         unveraendert an den Caller weiter, damit der hoehere Parser
         daraus seinen Protokollfehler bilden kann.
@@ -344,10 +345,16 @@ class SerialCAT:
                 # kein Stale-Frame -- wir reichen sie durch.
                 return frame
             if self._log is not None:
-                self._log.log_warn(
+                msg = (
                     f"CAT: verworfener Stale-Frame {frame!r} "
                     f"(erwartete Antwort fuer {expected_prefix!r})"
                 )
+                # Ein einzelner Vorlauf-Frame ist auf Yaesu-Leitungen alltaeglich;
+                # nur ab dem zweiten verworfenen Frame WARN (echte Protokoll-Stoerung).
+                if discards == 0:
+                    self._log.log_debug(msg)
+                else:
+                    self._log.log_warn(msg)
             discards += 1
             if discards >= self._MAX_STALE_DISCARDS:
                 # Wir sind aus dem Tritt geraten -- erstmal aufgeben und

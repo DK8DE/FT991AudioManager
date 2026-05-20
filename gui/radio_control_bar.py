@@ -19,8 +19,8 @@ from .menu_icons import (
 _RIG_IO_BLINK_SEQ = (True, False, True, False, True, False, True, False)
 
 
-class RadioControlBar(QFrame):
-    """Tune, REV und Schnellzugriff auf Audio-Player / Recorder."""
+class RadioControlBar(QWidget):
+    """Tune, REV, Audio-Buttons und FLRig-Anzeige in getrennten Panels."""
 
     tune_clicked = Signal()
     rev_toggled = Signal(bool)
@@ -32,15 +32,13 @@ class RadioControlBar(QFrame):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setObjectName("panelFrame")
-        self.setFrameShape(QFrame.Shape.StyledPanel)
 
         self._flrig_blink_active = False
         self._flrig_blink_phase = 0
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(8, 6, 8, 6)
-        root.setSpacing(12)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(8)
 
         self._tune_btn = QPushButton("Tune")
         self._tune_btn.setMinimumWidth(72)
@@ -111,30 +109,39 @@ class RadioControlBar(QFrame):
         )
         self._sound_btn.clicked.connect(self.sound_settings_clicked.emit)
 
-        left = QWidget(self)
-        left_layout = QHBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(8)
-        left_layout.addWidget(self._tune_btn)
-        left_layout.addWidget(self._rev_btn)
-        left_layout.addWidget(self._tcall_btn)
-        left_layout.addWidget(self._audio_btn)
-        left_layout.addWidget(self._recorder_btn)
-        left_layout.addWidget(self._sound_btn)
-        left_layout.addStretch(1)
+        ctrl_frame = QFrame(self)
+        ctrl_frame.setObjectName("panelFrame")
+        ctrl_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        ctrl_layout = QHBoxLayout(ctrl_frame)
+        ctrl_layout.setContentsMargins(8, 6, 8, 6)
+        ctrl_layout.setSpacing(8)
+        ctrl_layout.addWidget(self._tune_btn)
+        ctrl_layout.addWidget(self._rev_btn)
+        ctrl_layout.addWidget(self._tcall_btn)
+        ctrl_layout.addWidget(self._audio_btn)
+        ctrl_layout.addWidget(self._recorder_btn)
+        ctrl_layout.addWidget(self._sound_btn)
+        ctrl_layout.addStretch(1)
 
-        # --- Rig-Bridge: FLRig (rechter Bereich, rechtsbündig) ------
+        # --- Rig-Bridge: FLRig (eigenes Panel, rechts) -----------------
         bridge_tip = (
             "FLRig-Rig-Bridge über die App-CAT-Leitung.\n"
             "Grün: Server läuft. Rot: in Einstellungen aus oder gestoppt / kein CAT.\n"
             "Rot/Grün wechselnd: gerade TCP-Datenverkehr."
         )
+        flrig_frame = QFrame(self)
+        flrig_frame.setObjectName("panelFrame")
+        flrig_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        flrig_layout = QHBoxLayout(flrig_frame)
+        flrig_layout.setContentsMargins(10, 6, 10, 6)
+        flrig_layout.setSpacing(8)
+
         self._lbl_flrig_title = QLabel("FLRig")
         self._lbl_flrig_title.setToolTip(bridge_tip)
         lf = self._lbl_flrig_title.font()
         lf.setBold(True)
         self._lbl_flrig_title.setFont(lf)
-        self._led_flrig = Led(9, self)
+        self._led_flrig = Led(9, flrig_frame)
         self._led_flrig.setToolTip(bridge_tip)
         self._lbl_flrig_clients = QLabel("—")
         self._lbl_flrig_clients.setMinimumWidth(22)
@@ -145,16 +152,12 @@ class RadioControlBar(QFrame):
             "Anzahl verbundener Clients (logische Gegenstellen)"
         )
 
-        right = QWidget(self)
-        right_layout = QHBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(8)
-        right_layout.addWidget(self._lbl_flrig_title)
-        right_layout.addWidget(self._led_flrig)
-        right_layout.addWidget(self._lbl_flrig_clients)
+        flrig_layout.addWidget(self._lbl_flrig_title)
+        flrig_layout.addWidget(self._led_flrig)
+        flrig_layout.addWidget(self._lbl_flrig_clients)
 
-        root.addWidget(left, 1)
-        root.addWidget(right, 0, Qt.AlignmentFlag.AlignRight)
+        root.addWidget(ctrl_frame, 1)
+        root.addWidget(flrig_frame, 0, Qt.AlignmentFlag.AlignRight)
         self.set_controls_enabled(False)
 
     def refresh_rig_bridge_indicators(

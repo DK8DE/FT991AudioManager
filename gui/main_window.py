@@ -5,30 +5,33 @@ Neuer schlanker Aufbau (ab 0.5.1):
 - Oben **rechts**: VFO-A/B und RX/TX-Anzeige; darunter ein **großer
   Meter-Bereich** (S-Meter + DSP links, AF/RF + TX-Meter rechts);
   darunter **Tune / REV** und Audio-Buttons; unten **Mode-Gruppe**,
-  **EQ-Profil**, **Speicherkanal** und **Band** (Dropdown rechts neben dem
-  Speicherkanal).
+  **EQ-Profil**, **Speicherkanal** und **Band**; darunter ein eigener Bereich
+  **Favoriten** (persistente Soll-Vorgaben).
 - **EQ-Profil- und Mode-Auswahl** bleiben im Hauptfenster; der Equalizer-Editor
   (Grundwerte, EQ, Erweitert, Speichern) liegt in **Bearbeiten → Equalizer**.
 - Verbindung: **Datei → Verbinden** / **Datei → Trennen**.
 - Die Verbindungs-Konfiguration liegt unter **Datei → Einstellungen**.
 - Speicherkanäle unter **Bearbeiten → Speicherkanäle**.
 - Das CAT-Log liegt unter **Ansicht → CAT-Log anzeigen** (eigenes Fenster).
+- **Hilfe → Update prüfen**: Abgleich mit dem neuesten Release auf GitHub.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Optional, cast
 
 import serial
 
-from PySide6.QtCore import QEvent, QMetaObject, QObject, Qt, QTimer, QSize
-from PySide6.QtGui import QAction, QGuiApplication, QMouseEvent
+from PySide6.QtCore import QEvent, QMetaObject, QObject, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QDesktopServices, QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (
     QStyle,
     QApplication,
     QComboBox,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLayout,
     QLabel,
     QMainWindow,
@@ -55,6 +58,11 @@ from mapping.rx_mapping import RxMode, coarse_mode_group_for, rx_mode_from_selec
 from audio.audio_settings_hub import AudioSettingsHub
 from audio.t_call_controller import TCallController
 from model import AppSettings, PresetStore
+from model.favorites_store import (
+    FavoritesStore,
+    RadioFavorite,
+    format_favorite_combo_label,
+)
 from rig_bridge import RigBridgeManager
 
 from version import APP_NAME, APP_VERSION
@@ -67,14 +75,21 @@ from .audio_player_window import AudioPlayerWindow
 from .audio_recorder_window import AudioRecorderWindow
 from .equalizer_window import EqualizerWindow
 from .sound_settings_dialog import SoundSettingsWindow
+from .favorites_panel import FavoritesPanelWidget
 from .log_widget import LogWindow
 from .memory_editor_dialog import open_memory_editor
 from .memory_loader import MemoryChannelLoader
-from .meter_widget import MeterWidget
+from .meter_widget import (
+    APP_FREQ_WRITE_DRAG_HOLD_MS,
+    APP_FREQ_WRITE_HOLD_MS,
+    FREQ_CATCHUP_POLL_MS,
+    MeterWidget,
+)
 from .profile_widget import ProfileWidget
 from .radio_control_bar import RadioControlBar
 from .settings_dialog import ConnectionSettingsDialog
 from .theme import apply_theme
+from .update_check import UpdateCheckOutcome, UpdateCheckThread
 from mapping.amateur_bands import (
     amateur_band_at_hz,
     amateur_band_for_hz,
@@ -94,6 +109,34 @@ _VFO_CAPTION_STYLE_IN_BAND = "color: #5ddc7a; font-weight: bold;"
 _VFO_CAPTION_STYLE_OUT_OF_BAND = "color: #ff6b6b; font-weight: bold;"
 _VFO_CAPTION_TO_FREQ_GAP_PX = 10
 _VFO_FREQ_COLOR = "#FFFFFF"
+
+#: Abgleich VFO-A vs. ``MT``-Frequenz: ``MC`` bleibt nach VFO-Drehen oft auf alter Kanalnummer.
+_MEM_FREQ_MATCH_TOLERANCE_HZ = 500
+
+
+def _restore_memory_channel_if_fa_matches_slot(
+    ft: FT991CAT, active_mc: Optional[int], fa_hz: int
+) -> Optional[int]:
+    """Liefert die Kanalnummer für Connect-/UI-Restore nur, wenn sie zur VFO-A-Frequenz passt.
+
+    Wenn ``MC`` noch einen Kanal meldet, die aktuelle ``FA``-Frequenz aber nicht mehr
+    mit dem Inhalt von ``MT`` (Speicher-Slot) übereinstimmt, wurde faktisch per
+    Drehknopf auf VFO getuned — dann ``None`` (VFO-Wiederherstellung).
+    """
+    if active_mc is None or int(active_mc) <= 0:
+        return None
+    ch = int(active_mc)
+    if fa_hz <= 0:
+        return ch
+    try:
+        mem = ft.read_memory_channel_tag(ch)
+    except CatError:
+        return ch
+    if mem is None or mem.frequency_hz <= 0:
+        return ch
+    if abs(int(fa_hz) - int(mem.frequency_hz)) > _MEM_FREQ_MATCH_TOLERANCE_HZ:
+        return None
+    return ch
 
 
 def _status_bar_mode_text(mode_value: str) -> str:
@@ -135,6 +178,7 @@ class MainWindow(QMainWindow):
             log_write=self._rig_bridge_log_write,
         )
         self._preset_store = PresetStore.load()
+        self._favorites_store = FavoritesStore.load()
 
         apply_smeter_calibration_from_settings(settings.smeter_calibration)
 
@@ -161,6 +205,8 @@ class MainWindow(QMainWindow):
         self._vfo_b_write_timer.timeout.connect(self._flush_vfo_b_frequency_write)
         self._vfo_a_display_hz: int = 0
         self._vfo_b_display_hz: int = 0
+        self._vfo_a_last_written_hz: Optional[int] = None
+        self._vfo_a_last_write_mono: float = 0.0
         self._relay_rev_active: bool = False
         self._relay_output_hz: Optional[int] = None
         # Memory-Kanal, der vor REV-Einschalten aktiv war (``None`` =
@@ -169,6 +215,10 @@ class MainWindow(QMainWindow):
         self._relay_pre_rev_memory_channel: Optional[int] = None
         #: Speicherkanal beim Connect (``None`` = war VFO, sonst Kanalnr.).
         self._connect_restore_memory_channel: Optional[int] = None
+        #: VFO/Mode beim Connect (Wiederherstellung nach Speicherkanal-Scan).
+        self._connect_restore_vfo_a_hz: Optional[int] = None
+        self._connect_restore_vfo_b_hz: Optional[int] = None
+        self._connect_restore_mode: Optional[RxMode] = None
         #: Zähler offener Connect-Init-Schritte (Profil-Write + Memory-Load).
         self._connect_init_pending: int = 0
         #: T.CALL wartet auf DATA-FM per CAT (Apply/Engage).
@@ -178,6 +228,9 @@ class MainWindow(QMainWindow):
         self._tcall_release_engage_plain: bool = False
         #: Vorübergehend von DATA-USB/… auf DATA-FM — danach zurückschalten.
         self._tcall_restore_data_mode: Optional[RxMode] = None
+        #: MT-Frequenz pro Kanal (Memory-Loader) — Abgleich bei VFO-Drehen mit aktivem MC.
+        self._memory_slot_frequency_hz: dict[int, int] = {}
+        self._update_check_thread: Optional[UpdateCheckThread] = None
 
         self._build_ui()
         self._t_call = TCallController(self._audio_hub, parent=self)
@@ -209,6 +262,13 @@ class MainWindow(QMainWindow):
         self.meter_widget.rx_info_changed.connect(self._on_rx_info_changed)
         self.meter_widget.status_message_requested.connect(
             self._on_meter_status_message
+        )
+        self._rig_bridge.set_on_frequency_written(self._on_rig_bridge_frequency_written)
+        self.meter_widget.set_cat_yield_checker(
+            self._rig_bridge.flrig_poller_should_yield
+        )
+        self.meter_widget.set_cat_catchup_limit_checker(
+            self._rig_bridge.flrig_has_clients
         )
         # User dreht am Gerät den MEM/CH-Knopf → Combo nachziehen.
         self.meter_widget.memory_channel_changed.connect(
@@ -487,6 +547,9 @@ class MainWindow(QMainWindow):
         self._band_strip_name.setMinimumWidth(48)
         self._band_strip = AmateurBandStripWidget()
         self._band_strip.frequency_changed.connect(self._on_band_strip_frequency)
+        self._band_strip.frequency_drag_finished.connect(
+            self._on_band_strip_drag_finished
+        )
         band_row.addWidget(self._band_strip_caption, 0, Qt.AlignmentFlag.AlignVCenter)
         band_row.addWidget(self._band_strip_name, 0, Qt.AlignmentFlag.AlignVCenter)
         band_row.addWidget(self._band_strip, stretch=1)
@@ -566,6 +629,24 @@ class MainWindow(QMainWindow):
         bottom_outer.addLayout(bottom_row2)
 
         layout.addWidget(bottom_bar)
+
+        # Eigener panelFrame wie Mode/Speicher — nicht im selben Kasten wie Speicherkanal.
+        favorites_bar = QFrame()
+        favorites_bar.setObjectName("panelFrame")
+        favorites_bar.setFrameShape(QFrame.StyledPanel)
+        fav_outer = QVBoxLayout(favorites_bar)
+        fav_outer.setContentsMargins(8, 6, 8, 6)
+        fav_outer.setSpacing(0)
+        self._favorites_panel = FavoritesPanelWidget(favorites_bar)
+        fav_outer.addWidget(self._favorites_panel)
+        self._favorites_panel.btn_save.clicked.connect(self._on_favorite_save_clicked)
+        self._favorites_panel.btn_delete.clicked.connect(self._on_favorite_delete_clicked)
+        self._favorites_panel.btn_edit.clicked.connect(self._on_favorite_edit_clicked)
+        self._favorites_panel.combo.activated.connect(self._on_favorite_combo_activated)
+        self._refresh_favorites_combo()
+        self._favorites_panel.setEnabled(False)
+
+        layout.addWidget(favorites_bar)
 
         self.setCentralWidget(central)
         self._refresh_band_strip()
@@ -696,12 +777,6 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
 
         self.dark_mode_action = QAction("&Dark Mode", self)
-        self.dark_mode_action.setIcon(
-            menu_action_icon(
-                QStyle.StandardPixmap.SP_DesktopIcon,
-                theme_name="weather-night",
-            )
-        )
         self.dark_mode_action.setCheckable(True)
         self.dark_mode_action.setChecked(self._settings.ui.force_dark_mode)
         self.dark_mode_action.setShortcut("Ctrl+D")
@@ -719,6 +794,16 @@ class MainWindow(QMainWindow):
         )
         version_action.triggered.connect(self._show_about)
         help_menu.addAction(version_action)
+
+        update_check_action = QAction("Update &prüfen…", self)
+        update_check_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_BrowserReload,
+                theme_name="view-refresh",
+            )
+        )
+        update_check_action.triggered.connect(self._on_check_for_updates)
+        help_menu.addAction(update_check_action)
 
     # ------------------------------------------------------------------
     # Verbinden / Trennen
@@ -793,7 +878,7 @@ class MainWindow(QMainWindow):
         except CatConnectionLostError:
             self._on_connection_lost()
             return False
-        self._capture_connect_memory_state()
+        self._capture_connect_radio_state()
         self._prepare_connect_for_cat_bulk_io()
         self._begin_connect_init()
         self._refresh_header_status(connected=True, info=self._last_identity_info)
@@ -810,8 +895,9 @@ class MainWindow(QMainWindow):
         # Manuelles Trennen schaltet auch den Auto-Reconnect aus, bis der
         # User wieder explizit "Verbinden" wählt oder die App neu startet.
         self._reconnect_timer.stop()
-        self._connect_restore_memory_channel = None
+        self._clear_connect_restore_snapshot()
         self._connect_init_pending = 0
+        self._memory_slot_frequency_hz.clear()
         self._memory_loader.stop()
         self._cat.disconnect()
         self._last_identity_info = ""
@@ -826,8 +912,9 @@ class MainWindow(QMainWindow):
         """Wird gerufen, wenn MeterPoller oder Profil-Worker einen IO-Fehler
         bekommen. SerialCAT hat sich intern schon getrennt.
         """
-        self._connect_restore_memory_channel = None
+        self._clear_connect_restore_snapshot()
         self._connect_init_pending = 0
+        self._memory_slot_frequency_hz.clear()
         if self._cat.is_connected():
             # Sicherheitsnetz — sollte normalerweise schon im SerialCAT
             # passiert sein.
@@ -1193,6 +1280,7 @@ class MainWindow(QMainWindow):
                 # war). Das ist gewollt — die Eingangsfrequenz steht
                 # ueblicherweise nicht im Memory.
                 ft.write_frequency(listen_hz)
+                self._notify_meter_app_frequency_write(listen_hz)
                 self._relay_output_hz = output_hz
                 self._relay_pre_rev_memory_channel = pre_channel
                 self._relay_rev_active = True
@@ -1214,8 +1302,8 @@ class MainWindow(QMainWindow):
                     if restore_hz is None or restore_hz <= 0:
                         restore_hz = ft.read_frequency()
                     ft.write_frequency(restore_hz)
+                    self._notify_meter_app_frequency_write(restore_hz)
                     self._select_memory_combo_vfo()
-                    self._select_band_combo_vfo()
                     self._apply_vfo_a_display_hz(restore_hz)
                 self._relay_rev_active = False
                 self._relay_output_hz = None
@@ -1242,6 +1330,23 @@ class MainWindow(QMainWindow):
             self.band_combo.setCurrentIndex(idx)
             self.band_combo.blockSignals(False)
 
+    def _sync_band_combo_to_frequency(self, hz: int) -> None:
+        """Band-Dropdown = aktuelles Amateurband oder „VFO“ (außerhalb)."""
+        f = int(hz)
+        if f <= 0:
+            self._select_band_combo_vfo()
+            return
+        band = amateur_band_at_hz(f)
+        if band is None:
+            self._select_band_combo_vfo()
+            return
+        idx = self.band_combo.findData(band.center_hz)
+        if idx < 0:
+            return
+        self.band_combo.blockSignals(True)
+        self.band_combo.setCurrentIndex(idx)
+        self.band_combo.blockSignals(False)
+
     def _on_band_choice_activated(self, choice: int) -> None:
         if not self._cat.is_connected():
             return
@@ -1257,9 +1362,11 @@ class MainWindow(QMainWindow):
                     raise CatError("VFO-Modus konnte nicht gesetzt werden.")
                 hz = int(choice)
                 ft.write_frequency(hz)
+                self._notify_meter_app_frequency_write(hz)
                 self._relay_output_hz = hz
+                self._apply_vfo_a_display_hz(hz)
             self._select_memory_combo_vfo()
-            self._select_band_combo_vfo()
+            self._sync_band_combo_to_frequency(self._vfo_a_display_hz)
         except CatConnectionLostError:
             self._on_connection_lost()
         except CatError as exc:
@@ -1301,6 +1408,7 @@ class MainWindow(QMainWindow):
         self.profile_widget.set_cat_available(connected)
         self.meter_widget.on_connection_changed(connected)
         self._radio_control_bar.set_controls_enabled(connected)
+        self._favorites_panel.setEnabled(connected)
         if connected:
             self._rig_bridge.update_config(self._settings.rig_bridge.to_dict())
             self._rig_bridge.on_app_connected()
@@ -1375,16 +1483,24 @@ class MainWindow(QMainWindow):
         self._band_strip.set_active(connected)
         self._band_strip.set_band(band)
         self._band_strip.set_frequency_hz(hz)
+        if connected:
+            self._sync_band_combo_to_frequency(hz)
 
     def _on_band_strip_frequency(self, hz: int) -> None:
         if not self._cat.is_connected():
             return
+        self._vfo_a_display_hz = hz
+        if not self._relay_rev_active:
+            self._relay_output_hz = hz
         self._vfo_a_triplet.set_frequency_hz(hz)
-        self._on_user_vfo_a_frequency(hz)
-        band = amateur_band_at_hz(hz)
-        if band is not None:
-            self._band_strip_name.setText(band.name)
-            self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
+        self._update_vfo_caption_band_color(self._vfo_a_caption, hz)
+        self._refresh_band_strip()
+        self._write_vfo_a_to_radio(hz, fast_drag=True)
+
+    def _on_band_strip_drag_finished(self, hz: int) -> None:
+        if not self._cat.is_connected():
+            return
+        self._write_vfo_a_to_radio(hz, force=True)
 
     def _apply_vfo_a_display_hz(self, hz: int) -> None:
         """VFO-A-Anzeige sofort setzen (z. B. nach REV oder CAT-Schreiben)."""
@@ -1398,6 +1514,28 @@ class MainWindow(QMainWindow):
         self._rig_bridge.update_from_radio(frequency_hz=hz)
         self._refresh_band_strip()
 
+    def _maybe_leave_memory_for_vfo_tune(self, frequency_hz: int) -> None:
+        """MC/Combo noch Speicher, aber Frequenz ≠ Slot — Nutzer hat gedreht → VFO."""
+        if self._relay_rev_active:
+            return
+        if not self.memory_combo.isEnabled():
+            return
+        cur = self.memory_combo.currentData()
+        if not isinstance(cur, int) or int(cur) <= 0:
+            return
+        ch = int(cur)
+        expected = self._memory_slot_frequency_hz.get(ch)
+        if expected is None:
+            return
+        if abs(int(frequency_hz) - int(expected)) <= _MEM_FREQ_MATCH_TOLERANCE_HZ:
+            return
+        try:
+            FT991CAT(self._cat).switch_to_vfo_mode()
+        except (CatConnectionLostError, CatError):
+            pass
+        self._select_memory_combo_vfo()
+        self._sync_band_combo_to_frequency(int(frequency_hz))
+
     def _on_rx_info_changed(
         self, mode: object, frequency_hz: int, frequency_b_hz: int
     ) -> None:
@@ -1409,6 +1547,7 @@ class MainWindow(QMainWindow):
             self._rig_bridge.update_from_radio()
         if frequency_hz > 0:
             if not self._relay_rev_active:
+                self._maybe_leave_memory_for_vfo_tune(int(frequency_hz))
                 self._relay_output_hz = frequency_hz
             self._apply_vfo_a_display_hz(frequency_hz)
         if frequency_b_hz > 0:
@@ -1436,10 +1575,65 @@ class MainWindow(QMainWindow):
         if channel <= 0:
             if current != self._VFO_ITEM_DATA:
                 self._select_memory_combo_vfo()
-                self._select_band_combo_vfo()
+                self._sync_band_combo_to_frequency(self._vfo_a_display_hz)
         else:
             if current != channel:
                 self._select_memory_combo_by_channel(channel)
+
+    def _vfo_a_fast_write_interval_ms(self) -> int:
+        """CAT-Takt beim Band-Streifen (schnell, an RX-Poll orientiert)."""
+        rx_ms = int(self._settings.polling.rx_interval_ms)
+        return max(50, min(rx_ms, FREQ_CATCHUP_POLL_MS))
+
+    def _vfo_a_write_interval_ms(self) -> int:
+        """CAT-Takt für VFO-Eingabe — entspricht dem RX-Poll-Intervall."""
+        return max(50, int(self._settings.polling.rx_interval_ms))
+
+    def _on_rig_bridge_frequency_written(self, hz: int, from_flrig: bool = True) -> None:
+        """FLRig/Bridge: kein 900-ms-Poll-Stopp — nur Referenz für Catchup-Logik."""
+        if hz > 0:
+            self.meter_widget.note_flrig_frequency_hz(int(hz))
+            self._rig_bridge.update_from_radio(frequency_hz=int(hz))
+
+    def _notify_meter_app_frequency_write(
+        self, hz: int, *, hold_ms: int = -1
+    ) -> None:
+        if hz > 0:
+            self.meter_widget.notify_app_frequency_write(int(hz), hold_ms)
+
+    def _write_vfo_a_to_radio(
+        self, hz: int, *, force: bool = False, fast_drag: bool = False
+    ) -> None:
+        if not self._cat.is_connected():
+            return
+        target = int(hz)
+        if target <= 0:
+            return
+        now = time.monotonic()
+        if fast_drag:
+            interval_s = self._vfo_a_fast_write_interval_ms() / 1000.0
+            hold_ms = APP_FREQ_WRITE_DRAG_HOLD_MS
+        else:
+            interval_s = self._vfo_a_write_interval_ms() / 1000.0
+            hold_ms = APP_FREQ_WRITE_HOLD_MS
+        if (
+            not force
+            and self._vfo_a_last_written_hz == target
+            and (now - self._vfo_a_last_write_mono) < interval_s
+        ):
+            self._vfo_a_pending_hz = target
+            return
+        self._vfo_a_write_timer.stop()
+        self._vfo_a_pending_hz = None
+        try:
+            FT991CAT(self._cat).write_frequency(target)
+            self._vfo_a_last_written_hz = target
+            self._vfo_a_last_write_mono = now
+            if not self._relay_rev_active:
+                self._relay_output_hz = target
+            self._notify_meter_app_frequency_write(target, hold_ms=hold_ms)
+        except CatError as exc:
+            QMessageBox.warning(self, "VFO-A", str(exc))
 
     def _on_user_vfo_a_frequency(self, hz: int) -> None:
         if not self._cat.is_connected():
@@ -1449,17 +1643,20 @@ class MainWindow(QMainWindow):
             self._relay_output_hz = hz
         self._update_vfo_caption_band_color(self._vfo_a_caption, hz)
         self._vfo_a_pending_hz = hz
+        pending_ms = max(
+            1,
+            self._vfo_a_write_interval_ms() - int(
+                (time.monotonic() - self._vfo_a_last_write_mono) * 1000
+            ),
+        )
+        self._vfo_a_write_timer.setInterval(pending_ms)
         self._vfo_a_write_timer.start()
 
     def _flush_vfo_a_frequency_write(self) -> None:
         if not self._cat.is_connected() or self._vfo_a_pending_hz is None:
             return
         hz = self._vfo_a_pending_hz
-        self._vfo_a_pending_hz = None
-        try:
-            FT991CAT(self._cat).write_frequency(hz)
-        except CatError as exc:
-            QMessageBox.warning(self, "VFO-A", str(exc))
+        self._write_vfo_a_to_radio(hz, force=True)
 
     def _on_user_vfo_b_frequency(self, hz: int) -> None:
         if not self._cat.is_connected():
@@ -1508,27 +1705,82 @@ class MainWindow(QMainWindow):
         self._persist_settings()
 
     # ------------------------------------------------------------------
-    # Connect-Init: Speicherkanal merken / wiederherstellen
+    # Connect-Init: Funkzustand merken / wiederherstellen
     # ------------------------------------------------------------------
 
-    def _capture_connect_memory_state(self) -> None:
-        """Merkt den aktiven Speicherkanal vor Profil-Write und MT-Scan."""
+    def _clear_connect_restore_snapshot(self) -> None:
         self._connect_restore_memory_channel = None
+        self._connect_restore_vfo_a_hz = None
+        self._connect_restore_vfo_b_hz = None
+        self._connect_restore_mode = None
+
+    def _capture_connect_radio_state(self) -> None:
+        """Liest Speicherkanal, VFO-A/B und Mode vom Funkgerät vor dem MT-Scan."""
+        self._clear_connect_restore_snapshot()
         if not self._cat.is_connected():
             return
         try:
-            active = FT991CAT(self._cat).read_active_memory_channel()
+            ft = FT991CAT(self._cat)
+            active = ft.read_active_memory_channel()
+            try:
+                self._connect_restore_mode = ft.read_rx_mode()
+            except CatError as exc:
+                self._cat_log.log_warn(f"Connect: Mode lesen fehlgeschlagen: {exc}")
+            fa = 0
+            try:
+                fa = int(ft.read_frequency())
+                if fa > 0:
+                    self._connect_restore_vfo_a_hz = fa
+            except CatError as exc:
+                self._cat_log.log_warn(f"Connect: VFO-A lesen fehlgeschlagen: {exc}")
+            try:
+                fb = ft.read_frequency_b()
+                if fb > 0:
+                    self._connect_restore_vfo_b_hz = int(fb)
+            except CatError as exc:
+                self._cat_log.log_warn(f"Connect: VFO-B lesen fehlgeschlagen: {exc}")
+
+            restore_ch = _restore_memory_channel_if_fa_matches_slot(ft, active, fa)
+            if restore_ch is not None:
+                self._connect_restore_memory_channel = restore_ch
+                self._cat_log.log_info(
+                    f"Connect: Funkgerät auf Speicherkanal {restore_ch:03d} "
+                    "(wird nach Init wiederhergestellt)"
+                )
+            else:
+                if active is not None and int(active) > 0 and fa > 0:
+                    self._cat_log.log_info(
+                        f"Connect: VFO — MC meldet Kanal {int(active):03d}, aber VFO-A "
+                        "passt nicht zum Speicherinhalt (nach Init VFO/Frequenz wiederherstellen)"
+                    )
+                else:
+                    self._cat_log.log_info(
+                        "Connect: Funkgerät im VFO-Modus "
+                        "(Frequenz und Mode werden nach Init wiederhergestellt)"
+                    )
         except CatConnectionLostError:
             self._on_connection_lost()
             return
-        except CatError:
+        except CatError as exc:
+            self._cat_log.log_warn(f"Connect: Funkzustand lesen fehlgeschlagen: {exc}")
             return
-        if active is not None and active > 0:
-            self._connect_restore_memory_channel = int(active)
-            self._cat_log.log_info(
-                f"Connect: Funkgerät stand auf Speicherkanal {active:03d} "
-                "(wird nach Init wiederhergestellt)"
+        self._apply_connect_snapshot_to_ui()
+
+    def _apply_connect_snapshot_to_ui(self) -> None:
+        """Zeigt den beim Connect gelesenen Funkzustand sofort in der GUI."""
+        if self._connect_restore_vfo_a_hz and self._connect_restore_vfo_a_hz > 0:
+            self._apply_vfo_a_display_hz(self._connect_restore_vfo_a_hz)
+        if self._connect_restore_vfo_b_hz and self._connect_restore_vfo_b_hz > 0:
+            self._vfo_b_display_hz = self._connect_restore_vfo_b_hz
+            self._vfo_b_triplet.set_frequency_hz(self._connect_restore_vfo_b_hz)
+            self._update_vfo_caption_band_color(
+                self._vfo_b_caption, self._connect_restore_vfo_b_hz
             )
+        if self._connect_restore_mode is not None:
+            self._mode_label.setText(
+                _status_bar_mode_text(self._connect_restore_mode.value)
+            )
+            self.profile_widget.notify_radio_mode(self._connect_restore_mode)
 
     def _prepare_connect_for_cat_bulk_io(self) -> None:
         """VFO-Modus für MT-Scan und Profil-Roundtrips (nur wenn vorher Memory)."""
@@ -1564,14 +1816,18 @@ class MainWindow(QMainWindow):
             self._connect_init_step_done("profile")
 
     def _finish_connect_init(self) -> None:
-        """Nach Profil-Write und Memory-Load: ursprünglichen Kanal wieder setzen."""
+        """Nach Profil-Write und Memory-Load: Funkzustand vom Start wiederherstellen."""
         if not self._cat.is_connected():
             self._connect_init_pending = 0
             return
         restore_ch = self._connect_restore_memory_channel
-        self._connect_restore_memory_channel = None
+        restore_a = self._connect_restore_vfo_a_hz
+        restore_b = self._connect_restore_vfo_b_hz
+        restore_mode = self._connect_restore_mode
+        self._clear_connect_restore_snapshot()
         self._connect_init_pending = 0
         ft = FT991CAT(self._cat)
+        status_msg = ""
         try:
             if restore_ch is not None:
                 self._cat_log.log_info(
@@ -1579,29 +1835,55 @@ class MainWindow(QMainWindow):
                     "(Zustand vor Software-Start) ==="
                 )
                 ft.select_memory_channel(restore_ch)
-                hz = ft.read_frequency()
-                if hz > 0:
-                    self._apply_vfo_a_display_hz(hz)
-                try:
-                    mode = ft.read_rx_mode()
-                    self._mode_label.setText(_status_bar_mode_text(mode.value))
-                except CatError:
-                    pass
+                status_msg = f"Funkgerät wieder auf Speicherkanal {restore_ch:03d}"
+            else:
+                self._cat_log.log_info(
+                    "=== VFO-Zustand wiederherstellen "
+                    "(Frequenz und Mode vom Start) ==="
+                )
+                if not ft.switch_to_vfo_mode():
+                    raise CatError("VFO-Modus konnte nicht gesetzt werden.")
+                if restore_a is not None and restore_a > 0:
+                    ft.write_frequency(restore_a)
+                    self._notify_meter_app_frequency_write(restore_a)
+                if restore_b is not None and restore_b > 0:
+                    ft.write_frequency_b(restore_b)
+                if restore_mode is not None:
+                    ft.set_rx_mode(restore_mode)
+                status_msg = "Funkgerät: VFO-Zustand vom Start wiederhergestellt"
+            hz = ft.read_frequency()
+            if hz > 0:
+                self._apply_vfo_a_display_hz(hz)
+            try:
+                fb = ft.read_frequency_b()
+                if fb > 0:
+                    self._vfo_b_display_hz = fb
+                    self._vfo_b_triplet.set_frequency_hz(fb)
+                    self._update_vfo_caption_band_color(self._vfo_b_caption, fb)
+            except CatError:
+                pass
+            try:
+                mode = ft.read_rx_mode()
+                self._mode_label.setText(_status_bar_mode_text(mode.value))
+                self.profile_widget.notify_radio_mode(mode)
+            except CatError:
+                if restore_mode is not None:
+                    self._mode_label.setText(
+                        _status_bar_mode_text(restore_mode.value)
+                    )
+                    self.profile_widget.notify_radio_mode(restore_mode)
             self._sync_memory_combo_from_radio()
         except CatConnectionLostError:
             self._on_connection_lost()
             return
         except CatError as exc:
             self._cat_log.log_warn(
-                f"Speicherkanal nach Connect-Init nicht wiederherstellbar: {exc}"
+                f"Funkzustand nach Connect-Init nicht wiederherstellbar: {exc}"
             )
             self._sync_memory_combo_from_radio()
         sb = self.statusBar()
-        if sb is not None and restore_ch is not None:
-            sb.showMessage(
-                f"Funkgerät wieder auf Speicherkanal {restore_ch:03d}",
-                4000,
-            )
+        if sb is not None and status_msg:
+            sb.showMessage(status_msg, 4000)
 
     # ------------------------------------------------------------------
     # Speicherkanal-Combo
@@ -1640,26 +1922,35 @@ class MainWindow(QMainWindow):
         self.memory_combo.setCurrentIndex(self.memory_combo.count() - 1)
 
     def _sync_memory_combo_from_radio(self) -> None:
-        """Liest ``MC;`` und stellt die Combo auf VFO bzw. aktiven Kanal."""
+        """Liest ``MC;`` + ``FA`` und stellt die Combo auf VFO bzw. aktiven Kanal."""
         if not self._cat.is_connected():
             return
         self._normalize_memory_combo_vfo_label()
+        ft = FT991CAT(self._cat)
         active: Optional[int]
         try:
-            active = FT991CAT(self._cat).read_active_memory_channel()
+            active = ft.read_active_memory_channel()
         except CatConnectionLostError:
             self._on_connection_lost()
             return
         except CatError:
             active = None
+        fa = 0
+        try:
+            fr = ft.read_frequency()
+            if fr is not None and fr > 0:
+                fa = int(fr)
+        except CatError:
+            pass
+        effective = _restore_memory_channel_if_fa_matches_slot(ft, active, fa)
         self.memory_combo.blockSignals(True)
         try:
-            if active is None:
+            if effective is None:
                 vfo_idx = self.memory_combo.findData(self._VFO_ITEM_DATA)
                 if vfo_idx >= 0:
                     self.memory_combo.setCurrentIndex(vfo_idx)
             else:
-                self._select_memory_combo_by_channel(active)
+                self._select_memory_combo_by_channel(effective)
         finally:
             self.memory_combo.blockSignals(False)
 
@@ -1667,6 +1958,9 @@ class MainWindow(QMainWindow):
         """Wird vom Loader pro gefundenem Speicherkanal aufgerufen."""
         if not isinstance(channel, MemoryChannel):
             return
+        self._memory_slot_frequency_hz[int(channel.channel)] = int(
+            channel.frequency_hz
+        )
         freq_mhz = channel.frequency_hz / 1_000_000.0
         # Zeichenkette wie „012 — RELAIS DB0XX (145.500 MHz, FM)"
         # Tag-leere Slots bekommen ein „— (ohne Name)" Platzhalter.
@@ -1728,7 +2022,7 @@ class MainWindow(QMainWindow):
         try:
             if data == self._VFO_ITEM_DATA:
                 ft.switch_to_vfo_mode()
-                self._select_band_combo_vfo()
+                self._sync_band_combo_to_frequency(self._vfo_a_display_hz)
             elif isinstance(data, int):
                 ft.select_memory_channel(int(data))
         except CatConnectionLostError:
@@ -1737,6 +2031,241 @@ class MainWindow(QMainWindow):
             sb = self.statusBar()
             if sb is not None:
                 sb.showMessage(f"Speicherkanal-Wechsel fehlgeschlagen: {exc}", 5000)
+
+    # ------------------------------------------------------------------
+    # Favoriten (Soll-Vorgaben)
+    # ------------------------------------------------------------------
+
+    def _refresh_favorites_combo(self) -> None:
+        self._favorites_panel.combo.blockSignals(True)
+        self._favorites_panel.combo.clear()
+        for i, fav in enumerate(self._favorites_store.favorites):
+            self._favorites_panel.combo.addItem(
+                format_favorite_combo_label(fav), int(i)
+            )
+        self._favorites_panel.combo.blockSignals(False)
+
+    def _favorites_selected_store_index(self) -> Optional[int]:
+        idx = self._favorites_panel.combo.currentIndex()
+        if idx < 0:
+            return None
+        data = self._favorites_panel.combo.itemData(idx)
+        if data is None:
+            return None
+        i = int(data)
+        if i < 0 or i >= len(self._favorites_store.favorites):
+            return None
+        return i
+
+    def _snapshot_favorite_from_radio(self, name: str) -> RadioFavorite:
+        ft = FT991CAT(self._cat)
+        fq = int(ft.read_frequency())
+        mode = ft.read_rx_mode()
+        sql = int(ft.read_squelch())
+        ag = int(ft.read_af_gain())
+        rg = int(ft.read_rf_gain())
+        pc = int(ft.read_pc_power_watts())
+        eq_name = self.profile_widget.profile_combo.currentText().strip()
+        return RadioFavorite(
+            name=RadioFavorite.validate_name(name),
+            frequency_hz=fq,
+            mode=mode.value,
+            eq_profile_name=eq_name,
+            squelch=sql,
+            af_gain=ag,
+            rf_gain=rg,
+            pc_power_watts=pc,
+        )
+
+    def _on_favorite_save_clicked(self) -> None:
+        if not self._cat.is_connected():
+            QMessageBox.warning(
+                self,
+                "Favoriten",
+                "Bitte zuerst mit dem Funkgerät verbinden.",
+            )
+            return
+        sel = self._favorites_selected_store_index()
+        replace_idx: Optional[int] = None
+        new_name: Optional[str] = None
+        if sel is not None:
+            box = QMessageBox(self)
+            box.setWindowTitle("Favorit speichern")
+            box.setText(
+                "Den gewählten Favoriten überschreiben oder einen neuen anlegen?"
+            )
+            btn_over = box.addButton(
+                "Überschreiben", QMessageBox.ButtonRole.AcceptRole
+            )
+            btn_new = box.addButton(
+                "Neu anlegen", QMessageBox.ButtonRole.ActionRole
+            )
+            btn_cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is None or clicked == btn_cancel:
+                return
+            if clicked == btn_over:
+                replace_idx = sel
+            else:
+                text, ok = QInputDialog.getText(
+                    self,
+                    "Neuer Favorit",
+                    "Name:",
+                )
+                if not ok:
+                    return
+                new_name = text
+        else:
+            text, ok = QInputDialog.getText(
+                self,
+                "Neuer Favorit",
+                "Name:",
+            )
+            if not ok:
+                return
+            new_name = text
+        try:
+            if replace_idx is not None:
+                nm = self._favorites_store.favorites[replace_idx].name
+                snap = self._snapshot_favorite_from_radio(nm)
+                self._favorites_store.upsert(snap, replace_index=replace_idx)
+            else:
+                assert new_name is not None
+                snap = self._snapshot_favorite_from_radio(new_name)
+                self._favorites_store.upsert(snap)
+            self._favorites_store.save()
+        except (ValueError, CatError) as exc:
+            QMessageBox.warning(self, "Favoriten", str(exc))
+            return
+        except CatConnectionLostError:
+            self._on_connection_lost()
+            return
+        self._refresh_favorites_combo()
+        sb = self.statusBar()
+        if sb is not None:
+            sb.showMessage("Favorit gespeichert.", 4000)
+
+    def _on_favorite_delete_clicked(self) -> None:
+        sel = self._favorites_selected_store_index()
+        if sel is None:
+            QMessageBox.information(
+                self,
+                "Favoriten",
+                "Bitte zuerst einen Favoriten auswählen.",
+            )
+            return
+        fav = self._favorites_store.favorites[sel]
+        if (
+            QMessageBox.question(
+                self,
+                "Favorit löschen",
+                f"Favorit „{fav.name}“ wirklich löschen?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        try:
+            self._favorites_store.remove_at(sel)
+            self._favorites_store.save()
+        except (IndexError, OSError) as exc:
+            QMessageBox.warning(self, "Favoriten", str(exc))
+            return
+        self._refresh_favorites_combo()
+
+    def _on_favorite_edit_clicked(self) -> None:
+        if not self._cat.is_connected():
+            QMessageBox.warning(
+                self,
+                "Favoriten",
+                "Bitte zuerst mit dem Funkgerät verbinden.",
+            )
+            return
+        sel = self._favorites_selected_store_index()
+        if sel is None:
+            QMessageBox.information(
+                self,
+                "Favoriten",
+                "Bitte zuerst einen Favoriten auswählen.",
+            )
+            return
+        fav = self._favorites_store.favorites[sel]
+        try:
+            snap = self._snapshot_favorite_from_radio(fav.name)
+            self._favorites_store.upsert(snap, replace_index=sel)
+            self._favorites_store.save()
+        except (ValueError, CatError) as exc:
+            QMessageBox.warning(self, "Favoriten", str(exc))
+            return
+        except CatConnectionLostError:
+            self._on_connection_lost()
+            return
+        self._refresh_favorites_combo()
+        self._favorites_panel.combo.setCurrentIndex(
+            self._favorites_panel.combo.findData(sel)
+        )
+        sb = self.statusBar()
+        if sb is not None:
+            sb.showMessage(f"Favorit „{fav.name}“ aktualisiert.", 4000)
+
+    def _on_favorite_combo_activated(self, index: int) -> None:
+        if not self._cat.is_connected():
+            QMessageBox.warning(
+                self,
+                "Favoriten",
+                "Bitte zuerst mit dem Funkgerät verbinden.",
+            )
+            return
+        if index < 0:
+            return
+        data = self._favorites_panel.combo.itemData(index)
+        if data is None:
+            return
+        store_i = int(data)
+        if store_i < 0 or store_i >= len(self._favorites_store.favorites):
+            return
+        self._apply_favorite(self._favorites_store.favorites[store_i])
+
+    def _apply_favorite(self, fav: RadioFavorite) -> None:
+        if not self._cat.is_connected():
+            return
+        ft = FT991CAT(self._cat)
+        try:
+            if not ft.switch_to_vfo_mode():
+                raise CatError("VFO-Modus konnte nicht gesetzt werden.")
+            mode = rx_mode_from_selection(fav.mode, default=RxMode.USB)
+            ft.set_rx_mode(mode)
+            if fav.frequency_hz > 0:
+                ft.write_frequency(fav.frequency_hz)
+                self._notify_meter_app_frequency_write(fav.frequency_hz)
+            ft.write_squelch(max(0, min(100, fav.squelch)))
+            ft.write_af_gain(max(0, min(255, fav.af_gain)))
+            ft.write_rf_gain(max(0, min(255, fav.rf_gain)))
+            if fav.pc_power_watts > 0:
+                ft.set_pc_power_watts(fav.pc_power_watts)
+        except CatConnectionLostError:
+            self._on_connection_lost()
+            return
+        except CatError as exc:
+            QMessageBox.warning(self, "Favorit", str(exc))
+            return
+        self._apply_vfo_a_display_hz(fav.frequency_hz)
+        self._sync_band_combo_to_frequency(fav.frequency_hz)
+        self._mode_label.setText(_status_bar_mode_text(mode.value))
+        self.profile_widget.notify_radio_mode(mode)
+        eq = fav.eq_profile_name.strip()
+        if eq:
+            if not self.profile_widget.select_profile_by_name(eq):
+                QMessageBox.information(
+                    self,
+                    "Favorit",
+                    f"EQ-Profil „{eq}“ nicht gefunden — nur Funkwerte übernommen.",
+                )
+        sb = self.statusBar()
+        if sb is not None:
+            sb.showMessage(f"Favorit „{fav.name}“ angewendet.", 4000)
 
     def _start_memory_load(self) -> None:
         """Stößt den Hintergrund-Loader an. Idempotent — laufende Loads
@@ -1748,6 +2277,7 @@ class MainWindow(QMainWindow):
         """
         if not self._cat.is_connected():
             return
+        self._memory_slot_frequency_hz.clear()
         # Combo zurück auf „VFO" + disabled, damit der User während des
         # Loadings keinen halben Inhalt sieht.
         self._reset_memory_combo(placeholder="VFO (lade Kanäle…)")
@@ -1977,6 +2507,68 @@ class MainWindow(QMainWindow):
 
     def _show_about(self) -> None:
         AboutWindow(self).exec()
+
+    def _on_check_for_updates(self) -> None:
+        """Hilfe → Update prüfen — neuestes Release per GitHub-API."""
+        t = self._update_check_thread
+        if t is not None and t.isRunning():
+            return
+        thread = UpdateCheckThread(self)
+        self._update_check_thread = thread
+        thread.outcome.connect(self._on_update_check_outcome)
+
+        def _clear_thread_ref() -> None:
+            if self._update_check_thread is thread:
+                self._update_check_thread = None
+
+        thread.finished.connect(_clear_thread_ref)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_update_check_outcome(self, outcome: object) -> None:
+        if not isinstance(outcome, UpdateCheckOutcome):
+            return
+        o = outcome
+        if not o.ok:
+            QMessageBox.warning(
+                self,
+                "Update prüfen",
+                (
+                    f"Die eingebaute Version ist v{o.current}.\n\n"
+                    f"Die Prüfung ist fehlgeschlagen:\n{o.error_message}"
+                ),
+            )
+            return
+        if o.update_available:
+            box = QMessageBox(self)
+            box.setWindowTitle("Update verfügbar")
+            box.setIcon(QMessageBox.Icon.Information)
+            box.setText(
+                "Es gibt eine neuere Version auf GitHub.\n\n"
+                f"Installiert: v{o.current}\n"
+                f"Aktuelles Release: v{o.latest}"
+            )
+            box.setInformativeText(
+                "Über die verlinkte Seite findest du Setup-EXE und portable ZIP."
+            )
+            open_btn = box.addButton(
+                "Zur neuen Version", QMessageBox.ButtonRole.AcceptRole
+            )
+            close_btn = box.addButton("Schließen", QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(close_btn)
+            box.exec()
+            if box.clickedButton() == open_btn:
+                QDesktopServices.openUrl(QUrl(o.release_url))
+        else:
+            QMessageBox.information(
+                self,
+                "Update prüfen",
+                (
+                    "Version ist aktuell.\n\n"
+                    f"Installiert: v{o.current}\n"
+                    f"Neuestes GitHub-Release: v{o.latest}"
+                ),
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle

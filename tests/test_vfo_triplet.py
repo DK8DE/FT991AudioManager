@@ -44,6 +44,14 @@ class VfoDecomposeTest(unittest.TestCase):
         self.assertEqual(snap_vfo_hz_to_10hz_grid(14_229_254), 14_229_250)
         self.assertEqual(snap_vfo_hz_to_10hz_grid(14_229_255), 14_229_260)
 
+    def test_snap_does_not_land_in_2m_uhf_gap(self) -> None:
+        """164.999.999 MHz (CAT-Max 2 m) darf nicht als 165 MHz (Lücke) erscheinen."""
+        self.assertEqual(snap_vfo_hz_to_10hz_grid(164_999_999), 164_999_990)
+        self.assertEqual(snap_vfo_hz_to_10hz_grid(165_000_000), 164_999_990)
+
+    def test_compose_rejects_165mhz_block_in_gap(self) -> None:
+        self.assertEqual(compose_frequency_hz(165, 0, 0), 164_999_990)
+
 
 class VfoTripletDisplayTest(unittest.TestCase):
     def test_khz_block_shows_three_digits(self) -> None:

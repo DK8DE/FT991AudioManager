@@ -17,6 +17,7 @@ from mapping.vfo_bands import (
     VFO_CAT_MAX_HZ,
     VFO_CAT_MIN_HZ,
     clamp_vfo_frequency_hz,
+    is_valid_vfo_frequency_hz,
     step_vfo_frequency_hz,
 )
 
@@ -27,9 +28,27 @@ VFO_HZ_SEGMENT_STEP = 10
 
 
 def snap_vfo_hz_to_10hz_grid(hz: int) -> int:
-    """Frequenz auf 10-Hz-Raster (letzte Ziffer der Hz-Anzeige = 0)."""
-    h = clamp_vfo_frequency_hz(int(hz))
-    return int(round(h / VFO_HZ_SEGMENT_STEP) * VFO_HZ_SEGMENT_STEP)
+    """Frequenz auf 10-Hz-Raster; nie in Bandlücken (z. B. 165 MHz nach Rundung).
+
+    ``164.999.999`` MHz rundet mathematisch auf ``165.000.000`` MHz — das liegt in der
+    CAT-Lücke zwischen 2 m und 70 cm. Dann den gültigen 10-Hz-Nachbarn wählen.
+    """
+    raw = max(VFO_CAT_MIN_HZ, min(VFO_CAT_MAX_HZ, int(hz)))
+    rounded = int(round(raw / VFO_HZ_SEGMENT_STEP) * VFO_HZ_SEGMENT_STEP)
+    rounded = max(VFO_CAT_MIN_HZ, min(VFO_CAT_MAX_HZ, rounded))
+    if is_valid_vfo_frequency_hz(rounded):
+        return rounded
+    hi = rounded + VFO_HZ_SEGMENT_STEP
+    lo = rounded - VFO_HZ_SEGMENT_STEP
+    hi_ok = hi <= VFO_CAT_MAX_HZ and is_valid_vfo_frequency_hz(hi)
+    lo_ok = lo >= VFO_CAT_MIN_HZ and is_valid_vfo_frequency_hz(lo)
+    if lo_ok and not hi_ok:
+        return lo
+    if hi_ok and not lo_ok:
+        return hi
+    if lo_ok and hi_ok:
+        return lo if abs(raw - lo) <= abs(raw - hi) else hi
+    return clamp_vfo_frequency_hz(raw)
 
 
 def decompose_frequency_hz(hz: int) -> Tuple[int, int, int]:

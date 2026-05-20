@@ -35,6 +35,7 @@ class AmateurBandStripWidget(QWidget):
     """Horizontaler Streifen mit Ticks, Frequenzlabels und beweglichem Zeiger."""
 
     frequency_changed = Signal(int)
+    frequency_drag_finished = Signal(int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -312,6 +313,8 @@ class AmateurBandStripWidget(QWidget):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton and self._dragging:
             self._dragging = False
+            if self._frequency_hz > 0:
+                self.frequency_drag_finished.emit(self._frequency_hz)
             self._update_hover_cursor(event.position())
             event.accept()
             return
@@ -383,9 +386,9 @@ class AmateurBandStripWidget(QWidget):
                 needle_h = 9
                 tri = QPolygonF(
                     [
-                        QPointF(needle_x, track.top() - needle_h),
-                        QPointF(needle_x - 6, track.top() - 1),
-                        QPointF(needle_x + 6, track.top() - 1),
+                        QPointF(needle_x, track.top() + needle_h),
+                        QPointF(needle_x - 6, track.top()),
+                        QPointF(needle_x + 6, track.top()),
                     ]
                 )
                 p.setPen(QPen(QColor(120, 20, 20), 1))
@@ -394,7 +397,7 @@ class AmateurBandStripWidget(QWidget):
                 p.setPen(QPen(_NEEDLE_LINE_COLOR, 2))
                 p.drawLine(
                     int(needle_x),
-                    track.top(),
+                    track.top() + needle_h,
                     int(needle_x),
                     track.bottom(),
                 )

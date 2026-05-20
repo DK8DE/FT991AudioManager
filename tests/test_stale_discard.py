@@ -93,9 +93,10 @@ class StaleDiscardTest(unittest.TestCase):
         response = cat.send_command("SQ0;")
         self.assertEqual(response, "SQ0006;")
         warns = [e for e in log.snapshot() if e.level == LogLevel.WARN]
-        self.assertEqual(len(warns), 1)
-        self.assertIn("TX0;", warns[0].text)
-        self.assertIn("SQ0", warns[0].text)
+        self.assertEqual(warns, [])
+        debugs = [e for e in log.snapshot() if e.level == LogLevel.DEBUG]
+        self.assertTrue(any("TX0;" in e.text for e in debugs))
+        self.assertTrue(any("SQ0" in e.text for e in debugs))
 
     def test_multiple_stale_frames_get_discarded(self) -> None:
         cat, _fake, _log = _make_cat([b"TX0;", b"NB01;", b"SM0021;", b"GT01;"])

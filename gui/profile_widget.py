@@ -80,6 +80,11 @@ from .extended_widget import ExtendedSettingsWidget
 _BASE_STEPS = 23
 
 
+def _ssb_audio_cat_fields_relevant(mode_selection: str) -> bool:
+    """PR0/PL/PR1/SSB-BPF per CAT nur in SSB — wie :meth:`AudioBasicsWidget.apply_mode_relevance`."""
+    return coarse_mode_group_for(mode_selection).upper() == "SSB"
+
+
 def _total_steps_for(mode_selection: str) -> int:
     return _BASE_STEPS + len(defs_for_mode(coarse_mode_group_for(mode_selection)))
 
@@ -204,18 +209,33 @@ class _ProfileIoWorker(QObject):
         mic_gain = self._safe_read(
             "MIC Gain (MG)", self._ft.get_mic_gain, MIC_GAIN_DEFAULT
         )
-        processor_enabled = self._safe_read(
-            "Speech Processor (PR0)", self._ft.get_processor_enabled, False
-        )
-        processor_level = self._safe_read(
-            "Processor Level (PL)", self._ft.get_processor_level, PROCESSOR_LEVEL_DEFAULT
-        )
-        mic_eq_enabled = self._safe_read(
-            "Parametric MIC EQ (PR1)", self._ft.get_mic_eq_enabled, False
-        )
-        ssb_bpf = self._safe_read(
-            "SSB TX-Bandbreite (EX112)", self._ft.get_ssb_bpf, SSB_BPF_DEFAULT_KEY
-        )
+        if _ssb_audio_cat_fields_relevant(self._live_mode_group):
+            processor_enabled = self._safe_read(
+                "Speech Processor (PR0)", self._ft.get_processor_enabled, False
+            )
+            processor_level = self._safe_read(
+                "Processor Level (PL)",
+                self._ft.get_processor_level,
+                PROCESSOR_LEVEL_DEFAULT,
+            )
+            mic_eq_enabled = self._safe_read(
+                "Parametric MIC EQ (PR1)", self._ft.get_mic_eq_enabled, False
+            )
+            ssb_bpf = self._safe_read(
+                "SSB TX-Bandbreite (EX112)", self._ft.get_ssb_bpf, SSB_BPF_DEFAULT_KEY
+            )
+        else:
+            processor_enabled = False
+            processor_level = PROCESSOR_LEVEL_DEFAULT
+            mic_eq_enabled = False
+            ssb_bpf = SSB_BPF_DEFAULT_KEY
+            for label in (
+                "Speech Processor (PR0)",
+                "Processor Level (PL)",
+                "Parametric MIC EQ (PR1)",
+                "SSB TX-Bandbreite (EX112)",
+            ):
+                self._tick(f"{label} (nur SSB — übersprungen)")
 
         # EQ-Sets: bei Fehler Default-EQ verwenden (statt Komplettabbruch)
         normal_eq = self._safe_eq_read("Normal-EQ", NORMAL_EQ_MENUS)
@@ -303,33 +323,34 @@ class _ProfileIoWorker(QObject):
             self._ft.set_mic_gain(profile.mic_gain)
             written += 1
 
-        if (baseline is None or
-                baseline.speech_processor_enabled != profile.speech_processor_enabled):
-            self._tick(
-                f"Speech Processor -> "
-                f"{'an' if profile.speech_processor_enabled else 'aus'}"
-            )
-            self._ft.set_processor_enabled(profile.speech_processor_enabled)
-            written += 1
+        if _ssb_audio_cat_fields_relevant(self._live_mode_group):
+            if (baseline is None or
+                    baseline.speech_processor_enabled != profile.speech_processor_enabled):
+                self._tick(
+                    f"Speech Processor -> "
+                    f"{'an' if profile.speech_processor_enabled else 'aus'}"
+                )
+                self._ft.set_processor_enabled(profile.speech_processor_enabled)
+                written += 1
 
-        if (baseline is None or
-                baseline.speech_processor_level != profile.speech_processor_level):
-            self._tick(f"Processor Level -> {profile.speech_processor_level}")
-            self._ft.set_processor_level(profile.speech_processor_level)
-            written += 1
+            if (baseline is None or
+                    baseline.speech_processor_level != profile.speech_processor_level):
+                self._tick(f"Processor Level -> {profile.speech_processor_level}")
+                self._ft.set_processor_level(profile.speech_processor_level)
+                written += 1
 
-        if (baseline is None or
-                baseline.mic_eq_enabled != profile.mic_eq_enabled):
-            self._tick(
-                f"Parametric MIC EQ -> {'an' if profile.mic_eq_enabled else 'aus'}"
-            )
-            self._ft.set_mic_eq_enabled(profile.mic_eq_enabled)
-            written += 1
+            if (baseline is None or
+                    baseline.mic_eq_enabled != profile.mic_eq_enabled):
+                self._tick(
+                    f"Parametric MIC EQ -> {'an' if profile.mic_eq_enabled else 'aus'}"
+                )
+                self._ft.set_mic_eq_enabled(profile.mic_eq_enabled)
+                written += 1
 
-        if baseline is None or baseline.ssb_tx_bpf != profile.ssb_tx_bpf:
-            self._tick(f"SSB TX-Bandbreite -> {profile.ssb_tx_bpf}")
-            self._ft.set_ssb_bpf(profile.ssb_tx_bpf)
-            written += 1
+            if baseline is None or baseline.ssb_tx_bpf != profile.ssb_tx_bpf:
+                self._tick(f"SSB TX-Bandbreite -> {profile.ssb_tx_bpf}")
+                self._ft.set_ssb_bpf(profile.ssb_tx_bpf)
+                written += 1
 
         written += self._ft.write_eq(
             profile.normal_eq,
@@ -689,6 +710,32 @@ class ProfileWidget(QWidget):
 
     def current_profile_name(self) -> Optional[str]:
         return self._current_profile_name
+
+    def select_profile_by_name(self, name: str) -> bool:
+        """Programmgesteuert ein EQ-Profil wählen und — bei CAT — ins Gerät schreiben.
+
+        Ohne Rückfrage bei „dirty“ (z. B. Favoriten-Anwendung).
+        """
+        n = str(name or "").strip()
+        if not n:
+            return False
+        idx = self.profile_combo.findText(n)
+        if idx < 0:
+            return False
+        self._suppress_dirty = True
+        self.profile_combo.blockSignals(True)
+        self.profile_combo_eq.blockSignals(True)
+        try:
+            self.profile_combo.setCurrentIndex(idx)
+            self.profile_combo_eq.setCurrentIndex(idx)
+        finally:
+            self.profile_combo.blockSignals(False)
+            self.profile_combo_eq.blockSignals(False)
+            self._suppress_dirty = False
+        self._apply_profile_to_editors(n)
+        if self._cat.is_connected():
+            self._schedule_action("write_full")
+        return True
 
     @staticmethod
     def _resolve_profile_name(

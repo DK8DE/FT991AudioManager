@@ -182,6 +182,17 @@ MAX_INTERVAL_MS = 5000
 #: Bei rx_interval = 500 ms entspricht N=6 -> alle 3 Sekunden.
 SLOW_PATH_TICKS = 6
 
+#: Nach GUI/FLRig-Schreiben: Meter-Polling kurz aussetzen (CAT entlasten).
+APP_FREQ_WRITE_HOLD_MS = 900
+#: Während Band-Streifen-Ziehen: kurze Poll-Pause (wird bei jedem Schreiben erneuert).
+APP_FREQ_WRITE_DRAG_HOLD_MS = 80
+#: VFO am Gerät gedreht: nur Frequenz pollen, bis 1 s stabil.
+FREQ_CATCHUP_STABLE_MS = 1000
+FREQ_CATCHUP_POLL_MS = 100
+#: Abweichung vom letzten App-Schreibwert gilt noch als „eigenes“ SETFREQ.
+APP_FREQ_WRITE_MATCH_HZ = 30
+APP_FREQ_WRITE_MATCH_WINDOW_S = 2.0
+
 
 # ----------------------------------------------------------------------
 # Poller (Worker)
@@ -212,9 +223,14 @@ class MeterPoller(QObject):
         serial_cat: SerialCAT,
         tx_interval_ms: int = DEFAULT_INTERVAL_TX_MS,
         rx_interval_ms: int = DEFAULT_INTERVAL_RX_MS,
+        *,
+        cat_yield_checker: Optional[Callable[[], bool]] = None,
+        cat_catchup_limit_checker: Optional[Callable[[], bool]] = None,
     ) -> None:
         super().__init__()
         self._cat = serial_cat
+        self._cat_yield_checker = cat_yield_checker
+        self._cat_catchup_limit_checker = cat_catchup_limit_checker
         self._tx_interval_ms = self._clamp(tx_interval_ms)
         self._rx_interval_ms = max(self._tx_interval_ms, self._clamp(rx_interval_ms))
         self._active = False
@@ -229,6 +245,14 @@ class MeterPoller(QObject):
         # weder ``NR0;`` noch ``BC0;``. Reads in diesem Set werden in
         # zukuenftigen Ticks lautlos uebersprungen.
         self._disabled_reads: set[str] = set()
+        self._last_polled_freq_a: Optional[int] = None
+        self._freq_catchup_active = False
+        self._freq_catchup_last_hz: Optional[int] = None
+        self._freq_catchup_stable_since_mono: Optional[float] = None
+        self._poll_defer_until_mono = 0.0
+        self._last_app_write_hz = 0
+        self._last_app_write_mono = 0.0
+        self._catchup_last_smeter = 0
 
     @staticmethod
     def _clamp(ms: int) -> int:
@@ -246,6 +270,82 @@ class MeterPoller(QObject):
     def set_rx_interval_ms(self, ms: int) -> None:
         self._rx_interval_ms = max(self._tx_interval_ms, self._clamp(ms))
 
+    def _reset_freq_priority_state(self) -> None:
+        self._last_polled_freq_a = None
+        self._freq_catchup_active = False
+        self._freq_catchup_last_hz = None
+        self._freq_catchup_stable_since_mono = None
+        self._poll_defer_until_mono = 0.0
+        self._last_app_write_hz = 0
+        self._last_app_write_mono = 0.0
+
+    @Slot(int, int)
+    def notify_app_frequency_write(self, hz: int, hold_ms: int = -1) -> None:
+        """GUI hat VFO-A gesetzt — Polling kurz pausieren (nicht für FLRig)."""
+        f = int(hz)
+        now = time.monotonic()
+        if hold_ms < 0:
+            hold_ms = APP_FREQ_WRITE_HOLD_MS
+        if hold_ms > 0:
+            self._poll_defer_until_mono = now + max(50, int(hold_ms)) / 1000.0
+        self._last_app_write_hz = f
+        self._last_app_write_mono = now
+        if f > 0:
+            self._last_polled_freq_a = f
+        self._freq_catchup_active = False
+        self._freq_catchup_last_hz = None
+        self._freq_catchup_stable_since_mono = None
+
+    @Slot(int)
+    def note_flrig_frequency_hz(self, hz: int) -> None:
+        """FLRig SETFREQ — nur Anzeige-Referenz, kein GUI-Schreib-Polling."""
+        f = int(hz)
+        if f <= 0:
+            return
+        self._last_polled_freq_a = f
+
+    def _app_write_still_settling(self, hz: int, now: float) -> bool:
+        if self._last_app_write_hz <= 0:
+            return False
+        if (now - self._last_app_write_mono) > APP_FREQ_WRITE_MATCH_WINDOW_S:
+            return False
+        return abs(int(hz) - self._last_app_write_hz) <= APP_FREQ_WRITE_MATCH_HZ
+
+    def _note_polled_frequency_a(self, hz: Optional[int]) -> None:
+        if hz is None or hz <= 0:
+            return
+        now = time.monotonic()
+        if now < self._poll_defer_until_mono:
+            self._last_polled_freq_a = int(hz)
+            return
+        if self._app_write_still_settling(hz, now):
+            self._last_polled_freq_a = int(hz)
+            return
+        prev = self._last_polled_freq_a
+        if prev is not None and int(hz) != prev:
+            self._enter_freq_catchup(int(hz))
+        self._last_polled_freq_a = int(hz)
+
+    def _enter_freq_catchup(self, hz: int) -> None:
+        self._freq_catchup_active = True
+        self._freq_catchup_last_hz = hz
+        self._freq_catchup_stable_since_mono = time.monotonic()
+
+    def _update_freq_catchup_stability(self, hz: Optional[int]) -> None:
+        if not self._freq_catchup_active or hz is None or hz <= 0:
+            return
+        now = time.monotonic()
+        if self._freq_catchup_last_hz != int(hz):
+            self._freq_catchup_last_hz = int(hz)
+            self._freq_catchup_stable_since_mono = now
+            return
+        since = self._freq_catchup_stable_since_mono
+        if since is not None and (now - since) * 1000.0 >= FREQ_CATCHUP_STABLE_MS:
+            self._freq_catchup_active = False
+            self._freq_catchup_last_hz = None
+            self._freq_catchup_stable_since_mono = None
+            self._force_full_rx = True
+
     # Steuerung ------------------------------------------------------------
 
     @Slot()
@@ -260,6 +360,7 @@ class MeterPoller(QObject):
         # Neu verbinden = neue Lerngrundlage: vielleicht haengt jetzt ein
         # FT-991A statt eines FT-991 dran, der die Befehle doch versteht.
         self._disabled_reads.clear()
+        self._reset_freq_priority_state()
         self.running_changed.emit(True)
         QTimer.singleShot(0, self._tick)
 
@@ -279,6 +380,17 @@ class MeterPoller(QObject):
 
         if not self._cat.is_connected():
             self._schedule_next(self._rx_interval_ms)
+            return
+
+        now = time.monotonic()
+        if now < self._poll_defer_until_mono:
+            self._schedule_next(50)
+            return
+
+        if self._cat_yield_active():
+            if self._freq_catchup_active:
+                self._freq_catchup_active = False
+            self._schedule_next(45)
             return
 
         try:
@@ -350,6 +462,7 @@ class MeterPoller(QObject):
         freq_b_hz: Optional[int] = None
         try:
             freq_hz = ft.read_frequency()
+            self._note_polled_frequency_a(freq_hz)
         except CatConnectionLostError:
             raise
         except CatError:
@@ -384,12 +497,73 @@ class MeterPoller(QObject):
         self._force_full_rx = True
         return self._tx_interval_ms
 
+    def _poll_rx_frequency_catchup(self, ft: FT991CAT) -> int:
+        """Nur VFO-A/B lesen (VFO am Gerät gedreht), bis 1 s stabil."""
+        zero_values = {
+            MeterKind.COMP: 0, MeterKind.ALC: 0,
+            MeterKind.PO: 0, MeterKind.SWR: 0,
+        }
+        self.tx_sample.emit(
+            TxMeterSample(
+                transmitting=False,
+                values=zero_values,
+                tx_state=self._current_tx_state,
+            )
+        )
+        freq_a: Optional[int] = None
+        freq_b: Optional[int] = None
+        try:
+            freq_a = ft.read_frequency()
+        except CatConnectionLostError:
+            raise
+        except CatError:
+            pass
+        try:
+            freq_b = ft.read_frequency_b()
+        except CatConnectionLostError:
+            raise
+        except CatError:
+            pass
+        self._note_polled_frequency_a(freq_a)
+        self._update_freq_catchup_stability(freq_a)
+        self.rx_sample.emit(
+            RxStatusSample(
+                smeter=self._catchup_last_smeter,
+                frequency_hz=freq_a,
+                frequency_b_hz=freq_b,
+            )
+        )
+        return FREQ_CATCHUP_POLL_MS
+
+    def _cat_yield_active(self) -> bool:
+        checker = self._cat_yield_checker
+        if checker is None:
+            return False
+        try:
+            return bool(checker())
+        except Exception:
+            return False
+
+    def _cat_catchup_limited(self) -> bool:
+        checker = self._cat_catchup_limit_checker
+        if checker is None:
+            return False
+        try:
+            return bool(checker())
+        except Exception:
+            return False
+
     def _poll_rx(self, ft: FT991CAT) -> int:
         """Liest S-Meter und (alle N Ticks) DSP/Pegel/Mode/Freq.
 
         TX-Bars werden mit einem Null-TxMeterSample zurückgesetzt — die
         ``set_value``-Cache-Logik verhindert unnötige Repaints.
         """
+        if self._freq_catchup_active and not self._cat_catchup_limited():
+            return self._poll_rx_frequency_catchup(ft)
+        if self._freq_catchup_active:
+            self._freq_catchup_active = False
+
         # TX-Status-Update an die GUI (Bars auf 0, TX-LED aus).
         zero_values = {
             MeterKind.COMP: 0, MeterKind.ALC: 0,
@@ -404,6 +578,7 @@ class MeterPoller(QObject):
         )
 
         smeter = ft.read_smeter()
+        self._catchup_last_smeter = smeter
 
         slow_path = self._force_full_rx or (self._rx_tick % SLOW_PATH_TICKS == 0)
         self._rx_tick += 1
@@ -456,6 +631,7 @@ class MeterPoller(QObject):
         mode = _safe("mode", ft.read_rx_mode)
         freq_a = _safe("freq_a", ft.read_frequency)
         freq_b = _safe("freq_b", ft.read_frequency_b)
+        self._note_polled_frequency_a(freq_a)
 
         def _read_active_mc() -> int:
             # read_active_memory_channel liefert ``None`` im VFO-Modus.
@@ -1953,6 +2129,8 @@ class MeterWidget(QWidget):
         super().__init__(parent)
         self._integrated_main_layout = bool(integrated_main_layout)
         self._cat = serial_cat
+        self._cat_yield_checker: Optional[Callable[[], bool]] = None
+        self._cat_catchup_limit_checker: Optional[Callable[[], bool]] = None
         # Hochlevel-Wrapper für DSP-Writes (NB / DNR / DNF). Wird beim
         # Schreiben benutzt; ``SerialCAT`` ist über RLock threadsafe,
         # daher kollidiert das nicht mit dem parallel laufenden Poller.
@@ -2294,6 +2472,18 @@ class MeterWidget(QWidget):
                 Q_ARG(int, self._rx_interval_ms),
             )
 
+    def set_cat_yield_checker(
+        self, checker: Optional[Callable[[], bool]]
+    ) -> None:
+        """CAT kurz für Rig-Bridge (FLRig) freigeben — z. B. ``flrig_cat_yield_active``."""
+        self._cat_yield_checker = checker
+
+    def set_cat_catchup_limit_checker(
+        self, checker: Optional[Callable[[], bool]]
+    ) -> None:
+        """Catchup-Polling aus (z. B. solange FLRig verbunden ist)."""
+        self._cat_catchup_limit_checker = checker
+
     def start_polling(self) -> None:
         if self.is_running():
             return
@@ -2303,6 +2493,8 @@ class MeterWidget(QWidget):
             self._cat,
             tx_interval_ms=self._tx_interval_ms,
             rx_interval_ms=self._rx_interval_ms,
+            cat_yield_checker=self._cat_yield_checker,
+            cat_catchup_limit_checker=self._cat_catchup_limit_checker,
         )
         poller.moveToThread(thread)
 
@@ -2356,6 +2548,29 @@ class MeterWidget(QWidget):
         """Setzt einen mit :meth:`pause_polling` pausierten Poller fort."""
         if self._poller is not None:
             QMetaObject.invokeMethod(self._poller, "start", Qt.QueuedConnection)
+
+    def notify_app_frequency_write(self, hz: int, hold_ms: int = -1) -> None:
+        """GUI: Frequenz-Schreiben — Poller kurz pausieren."""
+        if self._poller is None:
+            return
+        QMetaObject.invokeMethod(
+            self._poller,
+            "notify_app_frequency_write",
+            Qt.QueuedConnection,
+            Q_ARG(int, int(hz)),
+            Q_ARG(int, int(hold_ms)),
+        )
+
+    def note_flrig_frequency_hz(self, hz: int) -> None:
+        """FLRig SETFREQ — ohne Poll-Pause."""
+        if self._poller is None:
+            return
+        QMetaObject.invokeMethod(
+            self._poller,
+            "note_flrig_frequency_hz",
+            Qt.QueuedConnection,
+            Q_ARG(int, int(hz)),
+        )
 
     def ensure_polling(self) -> None:
         """Poller fortsetzen oder neu starten (z. B. nach Speicherkanal-Editor)."""
