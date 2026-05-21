@@ -15,8 +15,8 @@ Zusätzliche Anzeigen rund um den Plot:
 
 Die externen Schnittstellen (``set_settings``, ``get_settings``,
 ``set_read_only``, ``set_path_status``, ``changed``) bleiben kompatibel
-zur vorherigen Version, damit der Rest der App nicht angefasst werden
-muss.
+zur vorherigen Version. ``changed`` entspricht dabei nur noch echten
+Benutzer-/Plot-Änderungen, nicht dem programmatischen ``set_settings``.
 """
 
 from __future__ import annotations
@@ -199,14 +199,13 @@ class EQEditorWidget(QWidget):
     # ------------------------------------------------------------------
 
     def set_settings(self, settings: EQSettings) -> None:
-        """Programmatischer Set — aktualisiert Plot und Wert-Anzeigen."""
-        # ``settings_changed`` wird vom EqCurveView nur bei echten Maus-
-        # Interaktionen gefeuert, daher hier kein Block-Aufwand nötig.
+        """Programmatischer Set — aktualisiert Plot und Wert-Anzeigen.
+
+        Bewusst kein ``changed``-Signal: echte Änderungen laufen über
+        :meth:`_on_curve_changed` nach Bedienung am Plot.
+        """
         self.curve_view.set_settings(settings)
         self._update_value_labels(settings)
-        # Bestehender Vertrag: ``changed`` wird auch beim programmatischen
-        # Set gefeuert (so verhielt sich auch die vorherige Implementierung).
-        self.changed.emit()
 
     def get_settings(self) -> EQSettings:
         return self.curve_view.get_settings()

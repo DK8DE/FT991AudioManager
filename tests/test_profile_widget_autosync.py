@@ -20,6 +20,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from gui.profile_widget import ProfileWidget  # noqa: E402
+from mapping.audio_mapping import MIC_GAIN_MAX, MIC_GAIN_MIN  # noqa: E402
 from model import AudioProfile, PresetStore  # noqa: E402
 from model.preset_store import DEFAULT_PROFILE_NAME  # noqa: E402
 
@@ -245,6 +246,37 @@ class OnModeChangedTest(unittest.TestCase):
         for call in self.widget._dispatch_action.call_args_list:
             kind, _payload = call.args
             self.assertNotEqual(kind, "set_mode_and_read")
+
+
+class SuppressDirtyAndMicMeterTest(unittest.TestCase):
+    """Kein Pseudo-„dirty“ ohne echte Änderung (MIC-Poll / Suppress-Stapel)."""
+
+    def test_mic_gain_noop_when_unchanged(self) -> None:
+        w = _make_widget(connected=False)
+        mg = w.basics.get_values().mic_gain
+        w.apply_mic_gain_from_meter(mg)
+        self.assertFalse(w._dirty)
+
+    def test_mic_gain_change_still_marks_dirty(self) -> None:
+        w = _make_widget(connected=False)
+        mg = w.basics.get_values().mic_gain
+        other = mg + 1 if mg < MIC_GAIN_MAX else mg - 1
+        other = max(MIC_GAIN_MIN, min(MIC_GAIN_MAX, other))
+        self.assertNotEqual(other, mg)
+        w.apply_mic_gain_from_meter(other)
+        self.assertTrue(w._dirty)
+
+    def test_nested_suppress_blocks_mark_dirty(self) -> None:
+        w = _make_widget(connected=False)
+        self.assertEqual(w._suppress_dirty_depth, 0)
+        with w._hold_suppress_dirty():
+            self.assertEqual(w._suppress_dirty_depth, 1)
+            with w._hold_suppress_dirty():
+                self.assertEqual(w._suppress_dirty_depth, 2)
+                w._mark_dirty()
+                self.assertFalse(w._dirty)
+            self.assertEqual(w._suppress_dirty_depth, 1)
+        self.assertEqual(w._suppress_dirty_depth, 0)
 
 
 class NotifyTxStateTest(unittest.TestCase):

@@ -12,6 +12,7 @@ einfriert. Vor jedem Schreibvorgang wird der TX-Status geprüft.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import time
 import traceback
@@ -425,7 +426,8 @@ class ProfileWidget(QWidget):
         self._startup_profile_name: Optional[str] = (
             initial_last_profile.strip() if initial_last_profile else None
         )
-        self._suppress_dirty = False
+        #: Tiefe > 0 blockiert `_mark_dirty` (verschachtelbar bei Profil-/Read-Loads).
+        self._suppress_dirty_depth = 0
         self._dirty = False
         #: Speicherkanal-Editor blockiert CAT-Auto-Writes (Deadlock-Vermeidung).
         self._cat_blocked = False
@@ -485,6 +487,15 @@ class ProfileWidget(QWidget):
 
         self._build_ui()
         self._reload_profile_list()
+
+    @contextlib.contextmanager
+    def _hold_suppress_dirty(self):
+        """Editor-Signale während eines programmatischen Loads ignorieren."""
+        self._suppress_dirty_depth += 1
+        try:
+            yield
+        finally:
+            self._suppress_dirty_depth -= 1
 
     # ------------------------------------------------------------------
     # UI
@@ -659,8 +670,15 @@ class ProfileWidget(QWidget):
         return panel
 
     def apply_mic_gain_from_meter(self, value: int) -> None:
-        """MIC vom Meter-Slider — Equalizer-Grundwerte anpassen, Auto-Sync."""
-        self.basics.set_mic_gain_value(int(value), emit_sync=False)
+        """MIC vom Meter-Slider oder Radio-Poll — nur bei geändertem Wert dirty.
+
+        Gleiche MIC-Stichproben dürfen kein „Ungespeichert“ erzeugen
+        (z. B. erster Poll nach Reconnect / Profil-Wechsel).
+        """
+        v = max(MIC_GAIN_MIN, min(MIC_GAIN_MAX, int(value)))
+        if v == self.basics.get_values().mic_gain:
+            return
+        self.basics.set_mic_gain_value(v, emit_sync=False)
         self._mark_dirty()
 
     def _on_profile_combo_eq_changed(self, _idx: int) -> None:
@@ -722,17 +740,16 @@ class ProfileWidget(QWidget):
         idx = self.profile_combo.findText(n)
         if idx < 0:
             return False
-        self._suppress_dirty = True
-        self.profile_combo.blockSignals(True)
-        self.profile_combo_eq.blockSignals(True)
-        try:
-            self.profile_combo.setCurrentIndex(idx)
-            self.profile_combo_eq.setCurrentIndex(idx)
-        finally:
-            self.profile_combo.blockSignals(False)
-            self.profile_combo_eq.blockSignals(False)
-            self._suppress_dirty = False
-        self._apply_profile_to_editors(n)
+        with self._hold_suppress_dirty():
+            self.profile_combo.blockSignals(True)
+            self.profile_combo_eq.blockSignals(True)
+            try:
+                self.profile_combo.setCurrentIndex(idx)
+                self.profile_combo_eq.setCurrentIndex(idx)
+            finally:
+                self.profile_combo.blockSignals(False)
+                self.profile_combo_eq.blockSignals(False)
+            self._apply_profile_to_editors(n)
         if self._cat.is_connected():
             self._schedule_action("write_full")
         return True
@@ -757,39 +774,38 @@ class ProfileWidget(QWidget):
         previously = self._current_profile_name
         prefer = self._startup_profile_name
         self._startup_profile_name = None
-        self._suppress_dirty = True
-        self.profile_combo.blockSignals(True)
-        self.profile_combo_eq.blockSignals(True)
-        try:
-            self.profile_combo.clear()
-            self.profile_combo_eq.clear()
-            for name in names:
-                self.profile_combo.addItem(name)
-                self.profile_combo_eq.addItem(name)
+        with self._hold_suppress_dirty():
+            self.profile_combo.blockSignals(True)
+            self.profile_combo_eq.blockSignals(True)
+            try:
+                self.profile_combo.clear()
+                self.profile_combo_eq.clear()
+                for name in names:
+                    self.profile_combo.addItem(name)
+                    self.profile_combo_eq.addItem(name)
+                if names:
+                    if select_first and not prefer:
+                        target = names[0]
+                    else:
+                        target = self._resolve_profile_name(
+                            names, prefer=prefer, previously=previously
+                        )
+                    idx = self.profile_combo.findText(target or "")
+                    if idx >= 0:
+                        self.profile_combo.setCurrentIndex(idx)
+                        self.profile_combo_eq.setCurrentIndex(idx)
+            finally:
+                self.profile_combo.blockSignals(False)
+                self.profile_combo_eq.blockSignals(False)
+
             if names:
-                if select_first and not prefer:
-                    target = names[0]
-                else:
-                    target = self._resolve_profile_name(
-                        names, prefer=prefer, previously=previously
-                    )
-                idx = self.profile_combo.findText(target or "")
-                if idx >= 0:
-                    self.profile_combo.setCurrentIndex(idx)
-                    self.profile_combo_eq.setCurrentIndex(idx)
-        finally:
-            self.profile_combo.blockSignals(False)
-            self.profile_combo_eq.blockSignals(False)
-            self._suppress_dirty = False
+                self._apply_profile_to_editors(self.profile_combo.currentText())
+            else:
+                self._current_profile_name = None
+                self._set_editors_enabled(False)
 
-        if names:
-            self._apply_profile_to_editors(self.profile_combo.currentText())
-        else:
-            self._current_profile_name = None
-            self._set_editors_enabled(False)
-
-        self._dirty = False
-        self._refresh_status()
+            self._dirty = False
+            self._refresh_status()
 
     def _notify_active_profile(self) -> None:
         if self._current_profile_name:
@@ -800,8 +816,7 @@ class ProfileWidget(QWidget):
         if profile is None:
             return
         self._current_profile_name = profile.name
-        self._suppress_dirty = True
-        try:
+        with self._hold_suppress_dirty():
             self.basics.set_values(
                 AudioBasicsValues(
                     mic_gain=profile.mic_gain,
@@ -817,8 +832,6 @@ class ProfileWidget(QWidget):
             self._apply_mode_relevance(
                 coarse_mode_group_for(self.mode_combo.currentText())
             )
-        finally:
-            self._suppress_dirty = False
         self._dirty = False
         self._refresh_status()
         self._notify_active_profile()
@@ -906,7 +919,7 @@ class ProfileWidget(QWidget):
             self._apply_mode_relevance(
                 coarse_mode_group_for(self.mode_combo.currentText())
             )
-        if self._suppress_dirty:
+        if self._suppress_dirty_depth > 0:
             return
         if self._cat.is_connected():
             target_mode = rx_mode_from_selection(self.mode_combo.currentText())
@@ -933,7 +946,7 @@ class ProfileWidget(QWidget):
             w.setEnabled(enabled)
 
     def _on_profile_selected(self) -> None:
-        if self._suppress_dirty:
+        if self._suppress_dirty_depth > 0:
             return
         if self._dirty and self._current_profile_name:
             answer = QMessageBox.question(
@@ -949,14 +962,15 @@ class ProfileWidget(QWidget):
             if answer == QMessageBox.Cancel:
                 idx = self.profile_combo.findText(self._current_profile_name)
                 if idx >= 0:
-                    self._suppress_dirty = True
-                    self.profile_combo.blockSignals(True)
-                    self.profile_combo_eq.blockSignals(True)
-                    self.profile_combo.setCurrentIndex(idx)
-                    self.profile_combo_eq.setCurrentIndex(idx)
-                    self.profile_combo.blockSignals(False)
-                    self.profile_combo_eq.blockSignals(False)
-                    self._suppress_dirty = False
+                    with self._hold_suppress_dirty():
+                        self.profile_combo.blockSignals(True)
+                        self.profile_combo_eq.blockSignals(True)
+                        try:
+                            self.profile_combo.setCurrentIndex(idx)
+                            self.profile_combo_eq.setCurrentIndex(idx)
+                        finally:
+                            self.profile_combo.blockSignals(False)
+                            self.profile_combo_eq.blockSignals(False)
                 return
             if answer == QMessageBox.Yes:
                 self._save_current_profile_inplace()
@@ -971,7 +985,7 @@ class ProfileWidget(QWidget):
             self._schedule_action("write_full")
 
     def _mark_dirty(self) -> None:
-        if self._suppress_dirty:
+        if self._suppress_dirty_depth > 0:
             return
         self._dirty = True
         self._refresh_status()
@@ -1343,8 +1357,8 @@ class ProfileWidget(QWidget):
             return
         self._follow_radio_mode_combo = True
         try:
-            # currentIndexChanged löst _on_mode_changed aus, das (wenn
-            # ``_suppress_dirty`` False ist) einen Auto-Read planen.
+            # currentIndexChanged löst _on_mode_changed aus, das ohne
+            # laufende Profil-Suppression einen Auto-Read plant.
             self.mode_combo.setCurrentIndex(idx)
         finally:
             self._follow_radio_mode_combo = False
@@ -1442,8 +1456,7 @@ class ProfileWidget(QWidget):
         if not isinstance(profile, AudioProfile):
             return
         skipped_list = list(skipped) if isinstance(skipped, list) else []
-        self._suppress_dirty = True
-        try:
+        with self._hold_suppress_dirty():
             self.basics.set_values(
                 AudioBasicsValues(
                     mic_gain=profile.mic_gain,
@@ -1459,8 +1472,6 @@ class ProfileWidget(QWidget):
             self._apply_mode_relevance(
                 coarse_mode_group_for(self.mode_combo.currentText())
             )
-        finally:
-            self._suppress_dirty = False
         # Nach einem Read sind UI-Werte == Geräte-Werte → nichts mehr zu
         # schreiben. Außerdem stoppen wir den Debounce-Timer, falls noch
         # Reste laufen.
