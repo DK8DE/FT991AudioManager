@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional, cast
 
 from ._app_paths import app_data_dir
 from .audio_player_settings import AudioPlayerSettings
@@ -36,8 +36,8 @@ DEFAULT_TIMEOUT_MS = 1000
 
 DEFAULT_POLL_TX_MS = 100
 DEFAULT_POLL_RX_MS = 100
-POLL_MIN_MS = 100
-POLL_MAX_MS = 5000
+POLL_MIN_MS = 10
+POLL_MAX_MS = 1000
 
 
 @dataclass
@@ -205,7 +205,7 @@ class AppSettings:
 def _clamp_poll(value: object, fallback: int) -> int:
     """Robust gegen Müll im JSON: erzwingt int und klemmt auf den erlaubten Bereich."""
     try:
-        ms = int(value)
+        ms = int(cast(Any, value))
     except (TypeError, ValueError):
         ms = fallback
     return max(POLL_MIN_MS, min(POLL_MAX_MS, ms))

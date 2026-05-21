@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from .audio_player_settings import AudioPlayerSettings, DEFAULT_VOLUME_PERCENT
 from .audio_recorder_settings import AudioRecorderSettings
@@ -167,7 +167,7 @@ class GlobalAudioSettings:
 
 def _clamp_volume(value: object) -> int:
     try:
-        v = int(value)
+        v = int(cast(Any, value))
     except (TypeError, ValueError):
         v = DEFAULT_VOLUME_PERCENT
     return max(0, min(100, v))

@@ -24,7 +24,26 @@ from .qt_multimedia_lazy import qt_multimedia_types
 _MULTIMEDIA_IMPORT = False
 _MULTIMEDIA_AVAILABLE = False
 
-AfterRx = Literal["idle", "paused", "gap", "stop", "contest_pause", "single_voice"]
+AfterRx = Literal[
+    "idle",
+    "paused",
+    "gap",
+    "stop",
+    "contest_pause",
+    "single_voice",
+    "playlist_done_voice",
+]
+
+
+def _invoke_ptt_worker_set_transmit(worker: QObject, on: bool) -> None:
+    """Queued ``invokeMethod`` mit ``bytes``-Slot (PySide6-Stub-kompatibel)."""
+
+    QMetaObject.invokeMethod(
+        worker,
+        b"set_transmit",
+        Qt.ConnectionType.QueuedConnection,
+        Q_ARG(bool, on),
+    )
 
 
 @dataclass(frozen=True)
@@ -723,12 +742,7 @@ class PlayerController(QObject):
 
     def _request_ptt(self, on: bool) -> None:
         self._expect_ptt_on = on
-        QMetaObject.invokeMethod(
-            self._ptt_worker,
-            "set_transmit",
-            Qt.ConnectionType.QueuedConnection,
-            Q_ARG(bool, on),
-        )
+        _invoke_ptt_worker_set_transmit(self._ptt_worker, bool(on))
 
     @Slot(bool)
     def _on_ptt_succeeded(self, on: bool) -> None:

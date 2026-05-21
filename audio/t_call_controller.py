@@ -144,13 +144,22 @@ class TCallController(QObject):
     def _ensure_players(self) -> bool:
         if self._media_ok and self._player_send is not None:
             return True
+        wav_path = self._wav_path
+        if wav_path is None or not wav_path.is_file():
+            wav_path = resolve_t_call_wav_path()
+            self._wav_path = wav_path
+        if wav_path is None:
+            self.error.emit(
+                "Rufton-Datei fehlt (1750.wav im Ordner audio/).",
+            )
+            return False
         mm = qt_multimedia_types()
         if mm is None:
             self.error.emit("Qt Multimedia nicht verfügbar.")
             return False
         QAudioOutput, _QMediaDevices, QMediaPlayer = mm
         self._QMediaPlayer = QMediaPlayer
-        url = QUrl.fromLocalFile(str(self._wav_path.resolve()))
+        url = QUrl.fromLocalFile(str(wav_path.resolve()))
 
         send_id = self._device_id(ROLE_SEND)
         pc_id = self._device_id(ROLE_PC)
@@ -263,7 +272,9 @@ class TCallController(QObject):
             self._apply_volumes()
             sender = self.sender()
             if sender is not None and self._media_ready(sender):
-                sender.play()
+                play_fn = getattr(sender, "play", None)
+                if callable(play_fn):
+                    play_fn()
             if not self._pending_play:
                 return
             if all(
@@ -275,11 +286,12 @@ class TCallController(QObject):
             return
         if status == QMP.MediaStatus.InvalidMedia:
             self._pending_play = False
-            player = self.sender()
+            player_obj = self.sender()
             msg = ""
-            if player is not None:
+            getter = getattr(player_obj, "errorString", None) if player_obj is not None else None
+            if callable(getter):
                 try:
-                    msg = player.errorString()
+                    msg = str(getter() or "")
                 except Exception:
                     pass
             self.error.emit(msg or "1750.wav konnte nicht geladen werden.")

@@ -10,8 +10,12 @@ from typing import Any, Callable, Iterator, Optional, TypeVar
 _T = TypeVar("_T")
 
 _PYCAW_OK = False
-_AudioDeviceState = None
-_DEVICE_STATE_ACTIVE = None
+_AudioDeviceState: Any = None
+_DEVICE_STATE_ACTIVE: Any = None
+_IAudioMeterInformation: Any = None
+AudioUtilities: Any = None
+CLSCTX_ALL: Any = None
+IAudioEndpointVolume: Any = None
 
 if sys.platform == "win32":
     try:
@@ -28,9 +32,12 @@ if sys.platform == "win32":
         _AudioDeviceState = AudioDeviceState
         _DEVICE_STATE_ACTIVE = DEVICE_STATE.ACTIVE
     except ImportError:
-        _IAudioMeterInformation = None  # type: ignore[misc, assignment]
+        CLSCTX_ALL = None
+        AudioUtilities = None
+        IAudioEndpointVolume = None
+        _IAudioMeterInformation = None
 else:
-    _IAudioMeterInformation = None  # type: ignore[misc, assignment]
+    _IAudioMeterInformation = None
 
 
 def windows_endpoint_volume_available() -> bool:
@@ -99,7 +106,8 @@ def _get_imm_device_by_id(device_id: str) -> Any | None:
     if not _PYCAW_OK or not device_id:
         return None
     try:
-        enumerator = AudioUtilities.GetDeviceEnumerator()
+        # Stubs für COM/pycaw kennen ``GetDevice`` am Enumerator oft nicht.
+        enumerator: Any = AudioUtilities.GetDeviceEnumerator()
         return enumerator.GetDevice(device_id)
     except Exception:
         return None

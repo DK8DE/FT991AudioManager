@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, cast
 
 PlaybackMode = Literal["single", "playlist"]
 DataMode = Literal["DATA-USB", "DATA-LSB", "DATA-FM"]
@@ -147,7 +147,7 @@ class AudioPlayerSettings:
 
 def _clamp_volume(value: object) -> int:
     try:
-        v = int(value)
+        v = int(cast(Any, value))
     except (TypeError, ValueError):
         v = DEFAULT_VOLUME_PERCENT
     return max(0, min(100, v))
@@ -155,7 +155,7 @@ def _clamp_volume(value: object) -> int:
 
 def _clamp_contest_listen_ms(value: object) -> int:
     try:
-        ms = int(value)
+        ms = int(cast(Any, value))
     except (TypeError, ValueError):
         ms = DEFAULT_CONTEST_LISTEN_MS
     return max(MIN_TIMING_MS, min(MAX_CONTEST_LISTEN_MS, ms))
