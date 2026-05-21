@@ -191,13 +191,19 @@ class RadioControlBar(QWidget):
         flrig_io: bool,
     ) -> None:
         """Aktualisiert LED und Client-Zähler (periodisch vom Hauptfenster)."""
-        rb = rig_bridge_cfg or {}
+        rb: dict[str, Any] = rig_bridge_cfg if isinstance(rig_bridge_cfg, dict) else {}
         rb_on = bool(rb.get("enabled", True))
-        fl_cfg = rb.get("flrig") if isinstance(rb.get("flrig"), dict) else {}
+        raw_flrig = rb.get("flrig")
+        fl_cfg: dict[str, Any] = raw_flrig if isinstance(raw_flrig, dict) else {}
+
+        proto: dict[str, Any] = (
+            proto_status if isinstance(proto_status, dict) else {}
+        )
+
         fl_want = rb_on and bool(fl_cfg.get("enabled", True))
 
-        fl_on = bool(proto_status.get("flrig_active"))
-        n_fl = int(proto_status.get("flrig_clients", 0) or 0)
+        fl_on = bool(proto.get("flrig_active"))
+        n_fl = int(proto.get("flrig_clients", 0) or 0)
 
         seq = _RIG_IO_BLINK_SEQ
         if flrig_io and fl_want and fl_on:

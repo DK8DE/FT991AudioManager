@@ -35,6 +35,7 @@ def bind_tcp_listen_socket(host: str, port: int) -> socket.socket:
     use_dual_stack = h in ("", "localhost", "127.0.0.1", "::1", "0.0.0.0")
 
     if use_dual_stack and hasattr(socket, "AF_INET6"):
+        s: socket.socket | None = None
         try:
             s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
             s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
@@ -42,10 +43,11 @@ def bind_tcp_listen_socket(host: str, port: int) -> socket.socket:
             s.bind(("::", port_i))
             return s
         except OSError:
-            try:
-                s.close()
-            except Exception:
-                pass
+            if s is not None:
+                try:
+                    s.close()
+                except Exception:
+                    pass
 
     bind_host = (host or "").strip() or "127.0.0.1"
     if bind_host.lower() in ("localhost", "::1"):

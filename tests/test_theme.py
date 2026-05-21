@@ -19,13 +19,15 @@ from gui.theme import (
 )
 
 
+
+
 _app: QApplication | None = None
 
 
 def _ensure_app() -> QApplication:
     global _app
     existing = QApplication.instance()
-    if existing is not None:
+    if isinstance(existing, QApplication):
         return existing
     _app = QApplication(sys.argv[:1])
     return _app
@@ -35,18 +37,19 @@ class DarkPaletteTest(unittest.TestCase):
     def test_palette_has_required_colors(self) -> None:
         palette = make_dark_palette()
         self.assertEqual(
-            palette.color(QPalette.Window).name().upper(), DARK_COLORS["Window"]
+            palette.color(QPalette.ColorRole.Window).name().upper(),
+            DARK_COLORS["Window"],
         )
         self.assertEqual(
-            palette.color(QPalette.Highlight).name().upper(),
+            palette.color(QPalette.ColorRole.Highlight).name().upper(),
             DARK_COLORS["Highlight"],
         )
         self.assertEqual(
-            palette.color(QPalette.HighlightedText).name().upper(),
+            palette.color(QPalette.ColorRole.HighlightedText).name().upper(),
             DARK_COLORS["HighlightedText"],
         )
         self.assertEqual(
-            palette.color(QPalette.BrightText).name().upper(),
+            palette.color(QPalette.ColorRole.BrightText).name().upper(),
             DARK_COLORS["BrightText"],
         )
 
@@ -70,7 +73,7 @@ class ApplyThemeTest(unittest.TestCase):
         apply_theme(app, dark=True)
         self.assertTrue(is_dark_mode())
         self.assertEqual(
-            app.palette().color(QPalette.Window).name().upper(),
+            app.palette().color(QPalette.ColorRole.Window).name().upper(),
             DARK_COLORS["Window"],
         )
         self.assertEqual(current_log_colors(), LOG_COLORS_DARK)

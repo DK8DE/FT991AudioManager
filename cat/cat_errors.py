@@ -59,15 +59,15 @@ def is_cat_protocol_error_message(text: str) -> bool:
 
 
 class CatCommandUnsupportedError(CatProtocolError):
-    """Das Funkgerät hat ``?;`` zurückgeliefert.
+    """Das Funkgerät hat ``?;`` zurückgeliefert. \n\n
 
-    Yaesu nutzt ``?;`` als generische "command not recognized"-Antwort.
-    Wir trennen das von anderen Protokollfehlern, damit hoehere Schichten
-    den Befehl gezielt fuer die laufende Sitzung deaktivieren koennen --
-    z. B. der FT-991 ohne A versteht ``NR0;`` und ``BC0;`` nicht; ohne
-    diese Trennung wuerde der Slow-Path bei jedem Tick erneut versuchen
-    und das CAT-Log mit WARN-Meldungen fluten.
+    Yaesu nutzt ``?;`` als generische "command not recognized"-Antwort. \n
+    Wir trennen das von anderen Protokollfehlern, damit hoehere Schichten \n
+    den Befehl gezielt fuer die laufende Sitzung deaktivieren koennen -- \n
+    z. B. der FT-991 ohne A versteht ``NR0;`` und ``BC0;`` nicht; ohne \n
+    diese Trennung wuerde der Slow-Path bei jedem Tick erneut versuchen \n
+    und das CAT-Log mit WARN-Meldungen fluten. \n
 
-    Unterklasse von :class:`CatProtocolError`, sodass bestehende
-    ``except CatProtocolError``-Pfade weiterhin greifen.
+    Unterklasse von :class:`CatProtocolError`, sodass bestehende \n
+    ``except CatProtocolError``-Pfade weiterhin greifen. \n
     """

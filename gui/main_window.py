@@ -116,6 +116,9 @@ _VFO_TRIPLET_FREQ_COLOR_DARK = "#FFFFFF"
 #: Abgleich VFO-A vs. ``MT``-Frequenz: ``MC`` bleibt nach VFO-Drehen oft auf alter Kanalnummer.
 _MEM_FREQ_MATCH_TOLERANCE_HZ = 500
 
+#: Erste Zeile der Favoriten-Combo („keiner gewählt“ / zurück nach VFO-MEM-Wechsel).
+_FAVORITES_COMBO_PLACEHOLDER_LABEL = "Favoriten"
+
 
 def _restore_memory_channel_if_fa_matches_slot(
     ft: FT991CAT, active_mc: Optional[int], fa_hz: int
@@ -1462,13 +1465,15 @@ class MainWindow(QMainWindow):
             if sb is not None:
                 sb.showMessage(str(exc), 4000)
 
-    def _select_memory_combo_vfo(self) -> None:
+    def _select_memory_combo_vfo(self, *, reset_favorites_placeholder: bool = True) -> None:
         vfo_idx = self.memory_combo.findData(self._VFO_ITEM_DATA)
         if vfo_idx < 0:
             return
         self.memory_combo.blockSignals(True)
         self.memory_combo.setCurrentIndex(vfo_idx)
         self.memory_combo.blockSignals(False)
+        if reset_favorites_placeholder:
+            self._reset_favorites_combo_to_placeholder()
 
     # ------------------------------------------------------------------
     # Slots
@@ -2060,7 +2065,9 @@ class MainWindow(QMainWindow):
                 continue
         return -1
 
-    def _select_memory_combo_by_channel(self, channel: int) -> None:
+    def _select_memory_combo_by_channel(
+        self, channel: int, *, reset_favorites_placeholder: bool = True
+    ) -> None:
         """Wählt einen Kanal in der Combo (ohne CAT-Befehl).
 
         Wenn die Zeile nach dem Laden fehlt (z. B. Nutzdaten-Typ oder
@@ -2071,6 +2078,8 @@ class MainWindow(QMainWindow):
         idx = self._memory_combo_index_for_channel(ch)
         if idx >= 0:
             self.memory_combo.setCurrentIndex(idx)
+            if reset_favorites_placeholder:
+                self._reset_favorites_combo_to_placeholder()
             return
         label: str
         mem: Optional[MemoryChannel] = None
@@ -2086,6 +2095,8 @@ class MainWindow(QMainWindow):
             label = f"{ch:03d} — (aktuell aktiv)"
         self.memory_combo.addItem(label, ch)
         self.memory_combo.setCurrentIndex(self.memory_combo.count() - 1)
+        if reset_favorites_placeholder:
+            self._reset_favorites_combo_to_placeholder()
 
     def _sync_memory_combo_from_radio(self) -> None:
         """Liest ``MC;`` + ``FA`` und stellt die Combo auf VFO bzw. aktiven Kanal."""
@@ -2171,6 +2182,7 @@ class MainWindow(QMainWindow):
         """User hat einen Eintrag im Memory-Dropdown gewählt."""
         if not self._cat.is_connected():
             return
+        self._reset_favorites_combo_to_placeholder()
         data = self.memory_combo.itemData(index)
         ft = FT991CAT(self._cat)
         try:
@@ -2191,13 +2203,24 @@ class MainWindow(QMainWindow):
     # Favoriten (Soll-Vorgaben)
     # ------------------------------------------------------------------
 
-    def _refresh_favorites_combo(self) -> None:
+    def _reset_favorites_combo_to_placeholder(self) -> None:
+        """Zeile „Favoriten“ wählen (kein konkreter Eintrag aktiv)."""
+        if self._favorites_panel.combo.count() <= 0:
+            return
+        self._favorites_panel.combo.blockSignals(True)
+        self._favorites_panel.combo.setCurrentIndex(0)
+        self._favorites_panel.combo.blockSignals(False)
+
+    def _refresh_favorites_combo(self, *, select_placeholder: bool = True) -> None:
         self._favorites_panel.combo.blockSignals(True)
         self._favorites_panel.combo.clear()
+        self._favorites_panel.combo.addItem(_FAVORITES_COMBO_PLACEHOLDER_LABEL, None)
         for i, fav in enumerate(self._favorites_store.favorites):
             self._favorites_panel.combo.addItem(
                 format_favorite_combo_label(fav), int(i)
             )
+        if select_placeholder:
+            self._favorites_panel.combo.setCurrentIndex(0)
         self._favorites_panel.combo.blockSignals(False)
 
     def _favorites_selected_store_index(self) -> Optional[int]:
@@ -2357,10 +2380,11 @@ class MainWindow(QMainWindow):
         except CatConnectionLostError:
             self._on_connection_lost()
             return
-        self._refresh_favorites_combo()
-        self._favorites_panel.combo.setCurrentIndex(
-            self._favorites_panel.combo.findData(sel)
-        )
+        self._refresh_favorites_combo(select_placeholder=False)
+        qi = self._favorites_panel.combo.findData(sel)
+        self._favorites_panel.combo.blockSignals(True)
+        self._favorites_panel.combo.setCurrentIndex(qi if qi >= 0 else 0)
+        self._favorites_panel.combo.blockSignals(False)
         sb = self.statusBar()
         if sb is not None:
             sb.showMessage(f"Favorit „{fav.name}“ aktualisiert.", 4000)
@@ -2381,9 +2405,17 @@ class MainWindow(QMainWindow):
         store_i = int(data)
         if store_i < 0 or store_i >= len(self._favorites_store.favorites):
             return
-        self._apply_favorite(self._favorites_store.favorites[store_i])
+        self._apply_favorite(
+            self._favorites_store.favorites[store_i],
+            favorite_store_index=store_i,
+        )
 
-    def _apply_favorite(self, fav: RadioFavorite) -> None:
+    def _apply_favorite(
+        self,
+        fav: RadioFavorite,
+        *,
+        favorite_store_index: Optional[int] = None,
+    ) -> None:
         if not self._cat.is_connected():
             return
         ft = FT991CAT(self._cat)
@@ -2419,6 +2451,12 @@ class MainWindow(QMainWindow):
                     "Favorit",
                     f"EQ-Profil „{eq}“ nicht gefunden — nur Funkwerte übernommen.",
                 )
+        self._select_memory_combo_vfo(reset_favorites_placeholder=False)
+        if favorite_store_index is not None:
+            ri = self._favorites_panel.combo.findData(int(favorite_store_index))
+            self._favorites_panel.combo.blockSignals(True)
+            self._favorites_panel.combo.setCurrentIndex(ri if ri >= 0 else 0)
+            self._favorites_panel.combo.blockSignals(False)
         sb = self.statusBar()
         if sb is not None:
             sb.showMessage(f"Favorit „{fav.name}“ angewendet.", 4000)

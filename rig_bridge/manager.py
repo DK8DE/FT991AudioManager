@@ -84,8 +84,14 @@ class RigBridgeManager:
             )
             snap = self._state.snapshot()
             if snap["protocol_active"].get("flrig"):
-                old_fl = old.get("flrig") if isinstance(old.get("flrig"), dict) else {}
-                new_fl = self._cfg["flrig"]
+                old_raw = old.get("flrig")
+                old_fl: dict[str, Any] = (
+                    old_raw if isinstance(old_raw, dict) else {}
+                )
+                new_raw = self._cfg.get("flrig")
+                new_fl: dict[str, Any] = (
+                    new_raw if isinstance(new_raw, dict) else {}
+                )
                 if (
                     str(old_fl.get("host", "127.0.0.1")).strip()
                     != str(new_fl.get("host", "127.0.0.1")).strip()

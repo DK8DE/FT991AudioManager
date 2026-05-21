@@ -9,7 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from PySide6.QtCore import QByteArray, QMetaObject, Qt, QThread, QTimer, Q_ARG, QUrl, Signal
+from PySide6.QtCore import QByteArray, QMetaObject, QObject, Qt, QThread, QTimer, Q_ARG, QUrl, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -105,6 +105,27 @@ _REMAINING_STYLE_WARN = "color: #ff4444; font-weight: bold;"
 _PLAYLIST_TOKEN_ROLE = Qt.ItemDataRole.UserRole
 #: Nach Mode-Umschalten am TRX (DATA für CAT-Audio): kurz warten, dann Play/PTT.
 _CAT_PLAY_RADIO_SETTLE_MS = 200
+
+
+def _invoke_worker_slot(receiver: QObject, method_name: bytes) -> None:
+    QMetaObject.invokeMethod(
+        receiver,
+        method_name,
+        Qt.ConnectionType.QueuedConnection,
+    )
+
+
+def _invoke_worker_slot_qarg_str(
+    receiver: QObject,
+    method_name: bytes,
+    arg: str,
+) -> None:
+    QMetaObject.invokeMethod(
+        receiver,
+        method_name,
+        Qt.ConnectionType.QueuedConnection,
+        Q_ARG(str, arg),
+    )
 
 
 def _write_playlist_end_warnton_wav(path: Path) -> None:
@@ -352,11 +373,11 @@ class AudioPlayerWindow(QMainWindow):
         )
         self.btn_add_pause.clicked.connect(self._on_add_list_pause)
         list_btn_row.addWidget(self.btn_add_pause)
-        self.btn_edit_pause = QPushButton("Pause ändern …")
+        self.btn_edit_pause = QPushButton("Ändern")
         self.btn_edit_pause.setToolTip("Nur bei einer Pausen-Zeile aktiv.")
         self.btn_edit_pause.clicked.connect(self._on_edit_list_pause)
         list_btn_row.addWidget(self.btn_edit_pause)
-        self.btn_delete_pause = QPushButton("Pause löschen")
+        self.btn_delete_pause = QPushButton("Löschen")
         self.btn_delete_pause.setToolTip("Entfernt die markierte Pausen-Zeile.")
         self.btn_delete_pause.clicked.connect(self._on_delete_list_pause)
         list_btn_row.addWidget(self.btn_delete_pause)
@@ -436,7 +457,7 @@ class AudioPlayerWindow(QMainWindow):
             lbl.setMinimumWidth(_LABEL_W)
             return lbl
 
-        self.radio_single = QRadioButton("Nach jeder Datei stoppen (RX)")
+        self.radio_single = QRadioButton("Nach jeder Datei stoppen")
         self.radio_playlist = QRadioButton("Alle nacheinander")
         self._mode_group = QButtonGroup(self)
         self._mode_group.addButton(self.radio_single)
@@ -449,9 +470,9 @@ class AudioPlayerWindow(QMainWindow):
             "Warnen beim Ende der Aussendung"
         )
         self.check_warn_transmission_end.setToolTip(
-            "In den letzten 10 Sekunden der letzten Datei ertönt ein kurzer "
-            "Hinweis auf dem PC-Ausgabegerät (Combobox „PC-Ausgabe“). "
-            "Nicht über die Sende-Soundkarte / nicht über den CAT-Audiopfad."
+            "In den letzten 10 Sekunden der letzten Datei ertönt ein kurzer \n"
+            "Hinweis auf dem PC-Ausgabegerät (Combobox „PC-Ausgabe“). \n"
+            "Nicht über die Sende-Soundkarte / nicht über den CAT-Audiopfad.\n"
         )
         self.check_warn_transmission_end.toggled.connect(
             self._on_warn_transmission_end_toggled
@@ -462,10 +483,10 @@ class AudioPlayerWindow(QMainWindow):
 
         self.check_contest = QCheckBox("Kontest-Loop")
         self.check_contest.setToolTip(
-            "Markierte Datei dauerhaft wiederholen (Auto-Ruf für Contests). "
-            "Nach jeder Wiedergabe folgt die eingestellte Hörpause im "
-            "Sprach-Mode (USB/LSB/FM), damit Stationen antworten können. "
-            "MIC-PTT bricht den Loop ab — kein automatischer Neustart."
+            "Markierte Datei dauerhaft wiederholen (Auto-Ruf für Contests).\n"
+            "Nach jeder Wiedergabe folgt die eingestellte Hörpause im \n"
+            "Sprach-Mode (USB/LSB/FM), damit Stationen antworten können. \n"
+            "MIC-PTT bricht den Loop ab — kein automatischer Neustart.\n"
         )
         self.check_contest.toggled.connect(self._on_contest_toggled)
         mode_l.addWidget(self.check_contest)
@@ -530,7 +551,7 @@ class AudioPlayerWindow(QMainWindow):
 
         self.check_tx_monitor_pc = QCheckBox("Ausgabe Mithören")
         self.check_tx_monitor_pc.setToolTip(
-            "Während der CAT-Sendung dieselbe Tonspur wie auf der Sende-Soundkarte "
+            "Während der CAT-Sendung dieselbe Tonspur wie auf der Sende-Soundkarte \n"
             "zusätzlich auf dem PC-Ausgabegerät ausgeben (gleiche Datei, zweiter Player)."
         )
         self.check_tx_monitor_pc.toggled.connect(self._on_tx_monitor_pc_toggled)
@@ -544,7 +565,7 @@ class AudioPlayerWindow(QMainWindow):
 
         if not multimedia_available():
             self.lbl_status.setText(
-                "Audio-Wiedergabe nicht verfügbar. "
+                "Audio-Wiedergabe nicht verfügbar. \n"
                 "pip install PySide6-Addons — App danach neu starten."
             )
             self.btn_play.setEnabled(False)
@@ -968,11 +989,10 @@ class AudioPlayerWindow(QMainWindow):
         if self._radio_setup.data_mode == data_mode:
             return
         self.lbl_status.setText(f"Funkgerät wird auf {data_mode.value} geschaltet …")
-        QMetaObject.invokeMethod(
+        _invoke_worker_slot_qarg_str(
             self._setup_worker,
-            "run_set_data_mode",
-            Qt.ConnectionType.QueuedConnection,
-            Q_ARG(str, data_mode.value),
+            b"run_set_data_mode",
+            data_mode.value,
         )
 
     def _ensure_pc_player(self) -> bool:
@@ -1649,11 +1669,7 @@ class AudioPlayerWindow(QMainWindow):
             self.lbl_status.setText(
                 f"Schalte zurück auf {self._radio_setup.data_mode.value} …"
             )
-            QMetaObject.invokeMethod(
-                self._setup_worker,
-                "run_engage_data",
-                Qt.ConnectionType.QueuedConnection,
-            )
+            _invoke_worker_slot(self._setup_worker, b"run_engage_data")
             return
         self._start_cat_play_when_ready(idx)
 
@@ -1664,11 +1680,7 @@ class AudioPlayerWindow(QMainWindow):
             self._defer_contest_pre_roll_until_engage_data = True
             target = self._radio_setup.data_mode.value
             self.lbl_status.setText(f"Loop-Restart — schalte auf {target} …")
-            QMetaObject.invokeMethod(
-                self._setup_worker,
-                "run_engage_data",
-                Qt.ConnectionType.QueuedConnection,
-            )
+            _invoke_worker_slot(self._setup_worker, b"run_engage_data")
             return
         self._controller.begin_pre_roll_now()
 
@@ -1741,11 +1753,7 @@ class AudioPlayerWindow(QMainWindow):
             return
         voice = self._radio_setup.voice_mode.value
         self.lbl_status.setText(f"Schalte auf {voice} …")
-        QMetaObject.invokeMethod(
-            self._setup_worker,
-            "run_engage_plain",
-            Qt.ConnectionType.QueuedConnection,
-        )
+        _invoke_worker_slot(self._setup_worker, b"run_engage_plain")
 
     def _handle_contest_state_transition(self, state: PlayerState) -> None:
         """Mode-Wechsel bei Kontest-Loop und Hörpause.
@@ -1763,11 +1771,7 @@ class AudioPlayerWindow(QMainWindow):
                 self.lbl_status.setText(
                     f"Kontest-Hörpause — schalte auf {voice} …"
                 )
-                QMetaObject.invokeMethod(
-                    self._setup_worker,
-                    "run_engage_plain",
-                    Qt.ConnectionType.QueuedConnection,
-                )
+                _invoke_worker_slot(self._setup_worker, b"run_engage_plain")
             return
 
     def _update_transport_buttons(self) -> None:
@@ -1965,11 +1969,7 @@ class AudioPlayerWindow(QMainWindow):
             self._audio_radio_session.on_window_shown(self)
             return
         if self._cat.is_connected():
-            QMetaObject.invokeMethod(
-                self._setup_worker,
-                "run_apply_pc_menus",
-                Qt.ConnectionType.QueuedConnection,
-            )
+            _invoke_worker_slot(self._setup_worker, b"run_apply_pc_menus")
 
     def _on_pc_menus_finished(self, ok: bool, message: str) -> None:
         if message:
@@ -1984,20 +1984,12 @@ class AudioPlayerWindow(QMainWindow):
         self.lbl_status.setText(
             f"Funkgerät wird auf {target} / 048+077+109→USB, 070→REAR, 072→USB geschaltet …"
         )
-        QMetaObject.invokeMethod(
-            self._setup_worker,
-            "run_apply",
-            Qt.ConnectionType.QueuedConnection,
-        )
+        _invoke_worker_slot(self._setup_worker, b"run_apply")
 
     def _request_radio_restore(self) -> None:
         if not self._radio_setup.is_applied:
             return
-        QMetaObject.invokeMethod(
-            self._setup_worker,
-            "run_restore",
-            Qt.ConnectionType.QueuedConnection,
-        )
+        _invoke_worker_slot(self._setup_worker, b"run_restore")
 
     def _radio_transmit_activity_busy(self) -> bool:
         """CAT-Sendung / Replay läuft noch (PTT oder Wiedergabe-Pipeline)."""
@@ -2125,10 +2117,9 @@ class AudioPlayerWindow(QMainWindow):
                 self.lbl_status.setText(
                     f"MIC PTT erkannt — schalte auf {voice} …"
                 )
-                QMetaObject.invokeMethod(
+                _invoke_worker_slot(
                     self._setup_worker,
-                    "run_engage_plain_forced",
-                    Qt.ConnectionType.QueuedConnection,
+                    b"run_engage_plain_forced",
                 )
             return
         if state == TX_STATE_RX and self._mic_ptt_interrupted:
@@ -2136,17 +2127,9 @@ class AudioPlayerWindow(QMainWindow):
             # ggf. nochmal sauber setzen (Force-Write während TX wird vom
             # FT-991 nicht immer angenommen).
             if self._radio_setup.needs_plain_verify:
-                QMetaObject.invokeMethod(
-                    self._setup_worker,
-                    "run_verify_plain",
-                    Qt.ConnectionType.QueuedConnection,
-                )
+                _invoke_worker_slot(self._setup_worker, b"run_verify_plain")
             elif self._radio_setup.in_data_mode:
-                QMetaObject.invokeMethod(
-                    self._setup_worker,
-                    "run_engage_plain",
-                    Qt.ConnectionType.QueuedConnection,
-                )
+                _invoke_worker_slot(self._setup_worker, b"run_engage_plain")
 
     def force_close(self) -> None:
         self._force_close = True

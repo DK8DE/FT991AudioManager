@@ -35,7 +35,8 @@ class FavoritesPanelWidget(QWidget):
         )
         self.combo.setToolTip(
             "Gespeicherte Soll-Vorgaben (Frequenz, Mode, EQ-Profil, SQL, AF, RF, Power). "
-            "Auswahl wird ins Funkgerät übertragen."
+            "Erste Zeile „Favoriten“ bedeutet keine Auswahl; nach Wechsel des "
+            "Speicherkanals oder VFO erscheint sie wieder."
         )
         row.addWidget(self.combo, stretch=1)
 
