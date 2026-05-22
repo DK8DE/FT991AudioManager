@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Literal, Optional
 
-from PySide6.QtCore import QModelIndex, Qt
+from PySide6.QtCore import QModelIndex, Qt, QTimer
 from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -29,12 +29,13 @@ from PySide6.QtWidgets import (
 from cat import CatError, FT991CAT, SerialCAT
 from gui.app_icon import app_icon
 from gui.memory_editor_io import (
+    backup_path,
     export_csv,
     export_json,
     import_csv,
     import_json,
+    load_backup_json,
     save_backup_json,
-    backup_path,
 )
 from gui.memory_editor_table import (
     COL_LOCAL_PC_POWER,
@@ -50,6 +51,7 @@ from gui.profile_widget import ProfileWidget
 from mapping.rx_mapping import format_frequency_hz
 from model import AppSettings
 from model._app_paths import app_data_dir
+from model.memory_combo_cache import memory_editor_bank_cache_path
 from model.memory_editor_channel import (
     MemoryChannelBank,
     MemoryEditorChannel,
@@ -69,6 +71,9 @@ class MemoryEditorWindow(QMainWindow):
         app_settings: Optional[AppSettings] = None,
         persist_settings: Optional[Callable[[], None]] = None,
         apply_local_memory_overrides: Optional[Callable[[int], None]] = None,
+        sync_main_memory_dropdown: Optional[
+            Callable[[MemoryChannelBank], None]
+        ] = None,
         parent: Optional[QWidget] = None,
         on_closed: Optional[Callable[[], None]] = None,
     ) -> None:
@@ -90,10 +95,11 @@ class MemoryEditorWindow(QMainWindow):
         self._app_settings = app_settings
         self._persist_settings = persist_settings
         self._apply_local_memory_overrides = apply_local_memory_overrides
+        self._sync_main_memory_dropdown = sync_main_memory_dropdown
 
         self._build_ui()
         self._wire_signals()
-        self._start_read_from_radio()
+        self._bootstrap_initial_data()
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -315,6 +321,78 @@ class MemoryEditorWindow(QMainWindow):
 
         self.table.setFocus()
 
+    def _bootstrap_initial_data(self) -> None:
+        """Beim ersten Mal: vom Gerät lesen. Später: lokale Bank, „Neu laden“ = MT."""
+        if self._try_load_editor_from_disk_cache():
+            return
+        QTimer.singleShot(0, self._start_initial_radio_read_without_dirty_prompt)
+
+    def _try_load_editor_from_disk_cache(self) -> bool:
+        if self._app_settings is None:
+            return False
+        if not self._app_settings.ui.memory_editor_disk_cache_ready:
+            return False
+        path = memory_editor_bank_cache_path()
+        if not path.is_file():
+            return False
+        try:
+            bank = load_backup_json(path)
+        except (OSError, ValueError, KeyError, TypeError):
+            return False
+        self._bank = bank
+        self._bank.layout_changed = False
+        self._model.set_bank(self._bank)
+        self._hydrate_memory_local_prefs_from_app_settings()
+        self._persist_local_memory_mappings()
+        self._refresh_memory_local_column_cells()
+        self._apply_filter()
+        self.status_label.setText(
+            "Liste aus lokalem Zwischenspeicher — „Neu laden“ liest vom Gerät."
+        )
+        return True
+
+    def _start_initial_radio_read_without_dirty_prompt(self) -> None:
+        """Erster Start ohne Disk-Cache: Lesen ohne „Änderungen verwerfen?“-Dialog."""
+        self._commit_pending_editor()
+        if not self._cat.is_connected():
+            self.status_label.setText("Nicht verbunden — Speicher nicht gelesen.")
+            return
+        if self._host.is_busy:
+            return
+        if self._read_progress is not None:
+            self._read_progress.close()
+        self._read_progress = QProgressDialog(
+            "Speicherkanäle lesen …", "Abbrechen", 0, 100, self
+        )
+        self._read_progress.setWindowTitle("Erstes Einlesen")
+        self._read_progress.setWindowModality(Qt.WindowModal)
+        self._read_progress.setMinimumDuration(0)
+        self._read_progress.canceled.connect(self._host.stop)
+        self._read_progress.show()
+        self.status_label.setText("Lese Speicherkanäle vom Gerät …")
+        self._host.start_read()
+
+    def _persist_editor_disk_cache_and_flag(self) -> None:
+        if self._app_settings is None:
+            return
+        try:
+            save_backup_json(self._bank, memory_editor_bank_cache_path())
+            self._app_settings.ui.memory_editor_disk_cache_ready = True
+            if self._persist_settings is not None:
+                self._persist_settings()
+            else:
+                self._app_settings.save()
+        except OSError:
+            pass
+
+    def _notify_main_memory_dropdown(self) -> None:
+        if self._sync_main_memory_dropdown is None:
+            return
+        try:
+            self._sync_main_memory_dropdown(self._bank)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _start_read_from_radio(self) -> None:
         self._commit_pending_editor()
         if not self._cat.is_connected():
@@ -371,6 +449,8 @@ class MemoryEditorWindow(QMainWindow):
                 f"belegte Kanäle geladen."
             )
             self._apply_filter()
+            self._persist_editor_disk_cache_and_flag()
+            self._notify_main_memory_dropdown()
 
     def _save_to_radio(self) -> None:
         self._commit_pending_editor()
@@ -455,6 +535,8 @@ class MemoryEditorWindow(QMainWindow):
         self._model.set_bank(self._bank)
         QMessageBox.information(self, "Speichern", "Schreiben abgeschlossen.")
         self.status_label.setText("Gespeichert.")
+        self._persist_editor_disk_cache_and_flag()
+        self._notify_main_memory_dropdown()
 
     def _on_op_failed(self, message: str) -> None:
         if self._read_progress:
@@ -849,6 +931,9 @@ def open_memory_editor(
     app_settings: Optional[AppSettings] = None,
     persist_settings: Optional[Callable[[], None]] = None,
     apply_local_memory_overrides: Optional[Callable[[int], None]] = None,
+    sync_main_memory_dropdown: Optional[
+        Callable[[MemoryChannelBank], None]
+    ] = None,
     parent: Optional[QWidget] = None,
     on_closed: Optional[Callable[[], None]] = None,
 ) -> MemoryEditorWindow:
@@ -859,6 +944,7 @@ def open_memory_editor(
         app_settings=app_settings,
         persist_settings=persist_settings,
         apply_local_memory_overrides=apply_local_memory_overrides,
+        sync_main_memory_dropdown=sync_main_memory_dropdown,
         parent=parent,
         on_closed=on_closed,
     )

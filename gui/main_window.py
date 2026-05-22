@@ -59,6 +59,13 @@ from mapping.rx_mapping import RxMode, coarse_mode_group_for, rx_mode_from_selec
 from audio.audio_settings_hub import AudioSettingsHub
 from audio.t_call_controller import TCallController
 from model import AppSettings, PresetStore
+from model.memory_combo_cache import (
+    load_memory_combo_cache,
+    memory_channels_from_editor_bank,
+    memory_combo_cache_path,
+    save_memory_combo_cache,
+)
+from model.memory_editor_channel import MEMORY_EDITOR_MAX, MemoryChannelBank
 from model.favorites_store import (
     FavoritesStore,
     RadioFavorite,
@@ -236,6 +243,8 @@ class MainWindow(QMainWindow):
         self._tcall_restore_data_mode: Optional[RxMode] = None
         #: MT-Frequenz pro Kanal (Memory-Loader) — Abgleich bei VFO-Drehen mit aktivem MC.
         self._memory_slot_frequency_hz: dict[int, int] = {}
+        #: Für Dropdown-Persistenz: vollständige :class:`~mapping.memory_mapping.MemoryChannel`.
+        self._memory_combo_catalog: dict[int, MemoryChannel] = {}
         #: Zuletzt per Band/Frequenz automatisch gesetzter Phone-Mode (LSB/USB/FM).
         self._last_applied_band_voice_mode: Optional[RxMode] = None
         self._update_check_thread: Optional[UpdateCheckThread] = None
@@ -915,7 +924,13 @@ class MainWindow(QMainWindow):
         if not self.profile_widget.request_apply_active_profile():
             self._connect_init_step_done("profile")
         # Speicherkanäle im Hintergrund laden (nach kurzer Verzögerung).
-        QTimer.singleShot(50, self._start_memory_load)
+        if (
+            self._settings.ui.memory_dropdown_scan_completed
+            and memory_combo_cache_path().is_file()
+        ):
+            QTimer.singleShot(50, self._apply_memory_dropdown_from_cache)
+        else:
+            QTimer.singleShot(50, self._start_memory_load)
         return True
 
     def _do_disconnect(self) -> None:
@@ -2028,6 +2043,8 @@ class MainWindow(QMainWindow):
         Eintrag. Signale werden während des Resets blockiert, damit kein
         Memory-Wechsel zum Radio geschickt wird.
         """
+        self._memory_combo_catalog.clear()
+        self._memory_slot_frequency_hz.clear()
         self.memory_combo.blockSignals(True)
         try:
             self.memory_combo.clear()
@@ -2100,6 +2117,7 @@ class MainWindow(QMainWindow):
         ch = int(mem.channel)
         hz = int(mem.frequency_hz)
         self._memory_slot_frequency_hz[ch] = hz
+        self._memory_combo_catalog[ch] = mem
         label = self._format_memory_channel_combo_label(mem)
         for i in range(self.memory_combo.count() - 1, 0, -1):
             data = self.memory_combo.itemData(i)
@@ -2248,13 +2266,9 @@ class MainWindow(QMainWindow):
         finally:
             self.memory_combo.blockSignals(False)
 
-    def _on_memory_load_progress(self, current: int, total: int) -> None:
-        if self._cat.is_connected():
-            self._connection_footer_label.setText(
-                f"lade Speicherkanäle… {current}/{total}"
-            )
-
-    def _on_memory_load_finished(self, found: int) -> None:
+    def _finalize_memory_load_ui(
+        self, *, occupied_count: int, from_cache: bool
+    ) -> None:
         self.memory_combo.setEnabled(self._cat.is_connected())
         self.band_combo.setEnabled(self._cat.is_connected())
         self._refresh_header_status(
@@ -2265,11 +2279,116 @@ class MainWindow(QMainWindow):
             self.meter_widget.resume_polling()
         sb = self.statusBar()
         if sb is not None and self._cat.is_connected():
-            sb.showMessage(
-                f"Speicherkanäle: {found} belegte Slots geladen",
-                4000,
-            )
+            if from_cache:
+                sb.showMessage(
+                    (
+                        f"Speicherkanäle: {occupied_count} aus lokalem "
+                        "Zwischenspeicher (ohne Funkgerät-Scan)."
+                    ),
+                    4000,
+                )
+            else:
+                sb.showMessage(
+                    f"Speicherkanäle: {occupied_count} belegte Slots geladen",
+                    4000,
+                )
         self._connect_init_step_done("memory")
+
+    def _apply_memory_dropdown_from_cache(self) -> None:
+        """Befüllt die Memory-Combo aus ``memory_combo_cache.json`` (nach erstem Scan)."""
+        if not self._cat.is_connected():
+            self._connect_init_step_done("memory")
+            return
+        if (
+            not self._settings.ui.memory_dropdown_scan_completed
+            or not memory_combo_cache_path().is_file()
+        ):
+            self._start_memory_load()
+            return
+        rows_opt = load_memory_combo_cache()
+        if rows_opt is None:
+            self._settings.ui.memory_dropdown_scan_completed = False
+            try:
+                self._persist_settings()
+            except OSError:
+                pass
+            self._start_memory_load()
+            return
+        rows = rows_opt
+        self.meter_widget.pause_polling()
+        self.memory_combo.blockSignals(True)
+        try:
+            self._memory_combo_catalog.clear()
+            self._reset_memory_combo(placeholder="VFO …")
+            self.memory_combo.setEnabled(False)
+            self.band_combo.setEnabled(False)
+            self._connection_footer_label.setText(
+                "Speicherkanäle (Zwischenspeicher)"
+            )
+            self._refresh_header_status(
+                connected=True,
+                info=self._last_identity_info,
+            )
+            for m in sorted(rows, key=lambda x: int(x.channel)):
+                self._upsert_memory_combo_channel(m)
+        finally:
+            self.memory_combo.blockSignals(False)
+        self._finalize_memory_load_ui(
+            occupied_count=len(rows), from_cache=True
+        )
+
+    def _sync_memory_dropdown_from_editor_bank(self, bank: MemoryChannelBank) -> None:
+        """Nach Editor-Lesen/Schreiben: Dropdown wie die lokale Kanaliste."""
+        if not self._cat.is_connected():
+            return
+        from_editor = memory_channels_from_editor_bank(bank)
+        merged: dict[int, MemoryChannel] = {}
+        for mc in list(self._memory_combo_catalog.values()):
+            if int(mc.channel) > MEMORY_EDITOR_MAX:
+                merged[int(mc.channel)] = mc
+        for mc in from_editor:
+            merged[int(mc.channel)] = mc
+        ordered = sorted(merged.values(), key=lambda m: int(m.channel))
+        prev = self.memory_combo.currentData()
+
+        self.memory_combo.blockSignals(True)
+        try:
+            self._memory_combo_catalog.clear()
+            self._reset_memory_combo()
+            self._normalize_memory_combo_vfo_label()
+            for m in ordered:
+                self._upsert_memory_combo_channel(m)
+            if isinstance(prev, int) and int(prev) > 0:
+                idx = self._memory_combo_index_for_channel(int(prev))
+                if idx >= 0:
+                    self.memory_combo.setCurrentIndex(idx)
+        finally:
+            self.memory_combo.blockSignals(False)
+        try:
+            save_memory_combo_cache(ordered)
+            self._settings.ui.memory_dropdown_scan_completed = True
+            self._persist_settings()
+        except OSError:
+            pass
+
+    def _on_memory_load_progress(self, current: int, total: int) -> None:
+        if self._cat.is_connected():
+            self._connection_footer_label.setText(
+                f"lade Speicherkanäle… {current}/{total}"
+            )
+
+    def _on_memory_load_finished(self, found: int) -> None:
+        try:
+            rows = sorted(
+                self._memory_combo_catalog.values(),
+                key=lambda m: int(m.channel),
+            )
+            save_memory_combo_cache(rows)
+            self._settings.ui.memory_dropdown_scan_completed = True
+            self._persist_settings()
+        except OSError:
+            pass
+        self._finalize_memory_load_ui(occupied_count=found, from_cache=False)
 
     def _on_memory_load_failed(self, message: object) -> None:
         self.memory_combo.setEnabled(self._cat.is_connected())
@@ -2279,7 +2398,7 @@ class MainWindow(QMainWindow):
                 f"Verbunden — {message}"
             )
             self.meter_widget.resume_polling()
-        self._connect_init_step_done("memory")
+        self._finalize_memory_load_ui(occupied_count=0, from_cache=False)
 
     def _on_memory_combo_activated(self, index: int) -> None:
         """User hat einen Eintrag im Memory-Dropdown gewählt."""
@@ -2575,9 +2694,7 @@ class MainWindow(QMainWindow):
         """
         if not self._cat.is_connected():
             return
-        self._memory_slot_frequency_hz.clear()
-        # Combo zurück auf „VFO" + disabled, damit der User während des
-        # Loadings keinen halben Inhalt sieht.
+        self._memory_combo_catalog.clear()
         self._reset_memory_combo(placeholder="VFO (lade Kanäle…)")
         self.memory_combo.setEnabled(False)
         self.band_combo.setEnabled(False)
@@ -2714,6 +2831,7 @@ class MainWindow(QMainWindow):
             app_settings=self._settings,
             persist_settings=self._persist_settings,
             apply_local_memory_overrides=self._apply_local_memory_overrides,
+            sync_main_memory_dropdown=self._sync_memory_dropdown_from_editor_bank,
             parent=self,
             on_closed=self._on_memory_editor_closed,
         )

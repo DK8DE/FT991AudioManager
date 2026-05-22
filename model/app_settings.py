@@ -93,6 +93,12 @@ class UiSettings:
     #: Pro Speicherkanal: optionale lokale Sendeleistung (0 bis bandabhängigem Maximum,
     #: in App/settings.json gespeichert, in 5-W-Schritten — nicht Teil der Geräte-Kanaldaten).
     memory_channel_local_pc_power: Dict[str, int] = field(default_factory=dict)
+    #: Nach erstem erfolgreichen MT-Scan wird die Hauptfenster-Dropdown aus
+    #: ``memory_combo_cache.json`` befüllt (kein erneuter Scan bei Verbinden).
+    memory_dropdown_scan_completed: bool = False
+    #: Es liegt eine lokale Kopie der 100 Kanäle vom Speicherkanal-Editor vor
+    #: (Öffnen ohne Funkgerät-Burst möglich, bis „Neu laden").
+    memory_editor_disk_cache_ready: bool = False
 
 
 @dataclass
@@ -173,6 +179,12 @@ class AppSettings:
             ),
             memory_channel_local_pc_power=_parse_memory_pc_power_map(
                 ui_raw.get("memory_channel_local_pc_power")
+            ),
+            memory_dropdown_scan_completed=bool(
+                ui_raw.get("memory_dropdown_scan_completed", False)
+            ),
+            memory_editor_disk_cache_ready=bool(
+                ui_raw.get("memory_editor_disk_cache_ready", False)
             ),
         )
         rig_bridge = RigBridgeSettings.from_dict(rig_bridge_raw)
