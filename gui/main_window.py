@@ -1993,7 +1993,11 @@ class MainWindow(QMainWindow):
                         _status_bar_mode_text(restore_mode.value)
                     )
                     self.profile_widget.notify_radio_mode(restore_mode)
-            self._sync_memory_combo_from_radio()
+            self._sync_memory_combo_from_radio(
+                preferred_memory_after_restore=(
+                    restore_ch if restore_ch is not None else None
+                ),
+            )
         except CatConnectionLostError:
             self._on_connection_lost()
             return
@@ -2001,7 +2005,11 @@ class MainWindow(QMainWindow):
             self._cat_log.log_warn(
                 f"Funkzustand nach Connect-Init nicht wiederherstellbar: {exc}"
             )
-            self._sync_memory_combo_from_radio()
+            self._sync_memory_combo_from_radio(
+                preferred_memory_after_restore=(
+                    restore_ch if restore_ch is not None else None
+                ),
+            )
         sb = self.statusBar()
         if sb is not None and status_msg:
             sb.showMessage(status_msg, 4000)
@@ -2182,11 +2190,26 @@ class MainWindow(QMainWindow):
             self._reset_favorites_combo_to_placeholder()
         self._apply_local_memory_overrides(ch)
 
-    def _sync_memory_combo_from_radio(self) -> None:
-        """Liest ``MC;`` + ``FA`` und stellt die Combo auf VFO bzw. aktiven Kanal."""
+    def _sync_memory_combo_from_radio(
+        self, *, preferred_memory_after_restore: Optional[int] = None
+    ) -> None:
+        """Liest ``MC;`` + ``FA`` und stellt die Combo auf VFO bzw. aktiven Kanal.
+
+        ``preferred_memory_after_restore``: direkt nach :meth:`_finish_connect_init`
+        programmatisch ``MCnnn`` gesetzt — manche Funkgerät-/Poller-Kombinationen
+        liefern ``MC;`` dann kurzzeitig leer oder ``FA`` weicht noch um einen Tick ab.
+        Wenn gesetzt, wird die Combo zuverlässig auf diesen Kanal gestellt und die
+        heuristische Zuordnung übersprungen.
+        """
         if not self._cat.is_connected():
             return
         self._normalize_memory_combo_vfo_label()
+        hinted = preferred_memory_after_restore
+        if hinted is not None and int(hinted) > 0:
+            self._select_memory_combo_by_channel(
+                int(hinted), reset_favorites_placeholder=True
+            )
+            return
         ft = FT991CAT(self._cat)
         active: Optional[int]
         try:
