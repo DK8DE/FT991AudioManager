@@ -15,6 +15,8 @@ from model.memory_editor_channel import (
     MemoryEditorChannel,
     ShiftDirection,
     editor_mode_from_label,
+    normalize_memory_local_pc_power_value,
+    normalize_memory_local_sql_value,
 )
 def backup_path(base_dir: Path) -> Path:
     base_dir.mkdir(parents=True, exist_ok=True)
@@ -68,6 +70,8 @@ _CSV_FIELDS = [
     "ctcss_tone_hz",
     "dcs_code",
     "local_note",
+    "sql_local",
+    "power_local",
 ]
 
 
@@ -91,6 +95,14 @@ def export_csv(bank: MemoryChannelBank, path: Path) -> None:
                     "ctcss_tone_hz": ch.ctcss_tone_hz,
                     "dcs_code": ch.dcs_code,
                     "local_note": ch.local_note,
+                    "sql_local": (
+                        "" if ch.local_sql is None else str(ch.local_sql)
+                    ),
+                    "power_local": (
+                        ""
+                        if ch.local_pc_power_watts is None
+                        else str(ch.local_pc_power_watts)
+                    ),
                 }
             )
 
@@ -116,6 +128,25 @@ def import_csv(path: Path) -> MemoryChannelBank:
                 str(row.get("shift_direction", ShiftDirection.SIMPLEX.value))
             )
             tone = ToneMode(str(row.get("tone_mode", ToneMode.OFF.value)))
+            sql_cell = row.get("sql_local")
+            local_sql = None
+            if sql_cell not in (None, ""):
+                try:
+                    local_sql = normalize_memory_local_sql_value(
+                        int(str(sql_cell).strip())
+                    )
+                except (TypeError, ValueError):
+                    local_sql = None
+            pw_cell = row.get("power_local")
+            local_pc_power_watts = None
+            if pw_cell not in (None, ""):
+                try:
+                    local_pc_power_watts = normalize_memory_local_pc_power_value(
+                        int(str(pw_cell).strip()),
+                        freq_hz,
+                    )
+                except (TypeError, ValueError):
+                    local_pc_power_watts = None
             ch = MemoryEditorChannel(
                 number=num,
                 enabled=bool(int(row.get("enabled", 1))),
@@ -128,6 +159,8 @@ def import_csv(path: Path) -> MemoryChannelBank:
                 ctcss_tone_hz=float(row.get("ctcss_tone_hz") or 88.5),
                 dcs_code=int(row.get("dcs_code") or 23),
                 local_note=str(row.get("local_note", "")),
+                local_sql=local_sql,
+                local_pc_power_watts=local_pc_power_watts,
             )
             ch.changed = True
             channels.append(ch)

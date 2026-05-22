@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import Any, Dict, Optional, cast
 
 from ._app_paths import app_data_dir
 from .audio_player_settings import AudioPlayerSettings
@@ -86,6 +86,13 @@ class UiSettings:
     #: SSB-„Erweitert" für die meisten Anwender uninteressante Werte
     #: enthält (TX-Bandfilter sitzt schon prominent in den Grundwerten).
     hide_extended_in_ssb: bool = True
+    #: Pro Speicherkanal (001–100 als String-Key „1“ bis „100“): optionaler SQL-
+    #: Wert 0–100 (nur lokal/gespeichert, nicht Teil der Funkgerät-Kanaldaten).
+    #: Werte werden in Schritten von 10 gepflegt.
+    memory_channel_local_sql: Dict[str, int] = field(default_factory=dict)
+    #: Pro Speicherkanal: optionale lokale Sendeleistung (0 bis bandabhängigem Maximum,
+    #: in App/settings.json gespeichert, in 5-W-Schritten — nicht Teil der Geräte-Kanaldaten).
+    memory_channel_local_pc_power: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -161,6 +168,12 @@ class AppSettings:
             show_cat_log=bool(ui_raw.get("show_cat_log", False)),
             log_window_geometry=str(ui_raw.get("log_window_geometry") or ""),
             hide_extended_in_ssb=bool(ui_raw.get("hide_extended_in_ssb", True)),
+            memory_channel_local_sql=_parse_memory_sql_map(
+                ui_raw.get("memory_channel_local_sql")
+            ),
+            memory_channel_local_pc_power=_parse_memory_pc_power_map(
+                ui_raw.get("memory_channel_local_pc_power")
+            ),
         )
         rig_bridge = RigBridgeSettings.from_dict(rig_bridge_raw)
         audio_player = AudioPlayerSettings.from_dict(audio_player_raw)
@@ -200,6 +213,39 @@ class AppSettings:
         with path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
             f.write("\n")
+
+
+def _parse_memory_sql_map(raw: object) -> Dict[str, int]:
+    """JSON-Objekt {\"5\": 50} → genormte Schritte 0..100 in Zehnerschritten."""
+    if not isinstance(raw, dict):
+        return {}
+    result: Dict[str, int] = {}
+    for k, v in raw.items():
+        try:
+            ks = str(int(str(k)))  # „001“ oder 1 akzeptieren
+            vi = int(cast(Any, v))
+            vi = max(0, min(100, (vi // 10) * 10))
+            result[ks] = vi
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _parse_memory_pc_power_map(raw: object) -> Dict[str, int]:
+    """JSON-Objekt {\"5\": 10} → 0..100 in 5-W-Schritten (Hydration klemmt je Kanal weiter)."""
+    if not isinstance(raw, dict):
+        return {}
+    result: Dict[str, int] = {}
+    for k, v in raw.items():
+        try:
+            ks = str(int(str(k)))  # „001“ oder 1 akzeptieren
+            vi = int(cast(Any, v))
+            vi = max(0, min(100, vi))
+            vi = min(100, (vi // 5) * 5)
+            result[ks] = vi
+        except (TypeError, ValueError):
+            continue
+    return result
 
 
 def _clamp_poll(value: object, fallback: int) -> int:

@@ -37,15 +37,25 @@ from gui.memory_editor_io import (
     backup_path,
 )
 from gui.memory_editor_table import (
+    COL_LOCAL_PC_POWER,
+    COL_LOCAL_SQL,
     MemoryEditorTableModel,
     MemoryEditorTableView,
     attach_delegates,
+    memory_pc_power_value_to_combo,
+    memory_sql_value_to_combo,
 )
 from gui.memory_editor_workers import MemoryEditorWorkerHost
 from gui.profile_widget import ProfileWidget
 from mapping.rx_mapping import format_frequency_hz
+from model import AppSettings
 from model._app_paths import app_data_dir
-from model.memory_editor_channel import MemoryChannelBank, MemoryEditorChannel
+from model.memory_editor_channel import (
+    MemoryChannelBank,
+    MemoryEditorChannel,
+    normalize_memory_local_pc_power_value,
+    normalize_memory_local_sql_value,
+)
 
 
 class MemoryEditorWindow(QMainWindow):
@@ -56,6 +66,9 @@ class MemoryEditorWindow(QMainWindow):
         serial_cat: SerialCAT,
         *,
         profile_widget: Optional[ProfileWidget] = None,
+        app_settings: Optional[AppSettings] = None,
+        persist_settings: Optional[Callable[[], None]] = None,
+        apply_local_memory_overrides: Optional[Callable[[int], None]] = None,
         parent: Optional[QWidget] = None,
         on_closed: Optional[Callable[[], None]] = None,
     ) -> None:
@@ -74,6 +87,9 @@ class MemoryEditorWindow(QMainWindow):
         self._write_progress: Optional[QProgressDialog] = None
         self._on_closed = on_closed
         self._closed_notified = False
+        self._app_settings = app_settings
+        self._persist_settings = persist_settings
+        self._apply_local_memory_overrides = apply_local_memory_overrides
 
         self._build_ui()
         self._wire_signals()
@@ -86,7 +102,9 @@ class MemoryEditorWindow(QMainWindow):
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel("Suche:"))
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Name, Frequenz, Notiz …")
+        self.search_edit.setPlaceholderText(
+            "Name, Frequenz, Notiz, SQL/Power (Local) …"
+        )
         self.search_edit.textChanged.connect(self._apply_filter)
         filter_row.addWidget(self.search_edit, 1)
 
@@ -173,10 +191,83 @@ class MemoryEditorWindow(QMainWindow):
         self._host.connection_lost.connect(
             self._on_connection_lost, Qt.QueuedConnection
         )
+        self._model.memory_local_prefs_changed.connect(
+            self._persist_local_memory_mappings
+        )
+
+    def _hydrate_memory_local_prefs_from_app_settings(self) -> None:
+        """Lokale SQL-/Power-Overrides nach Einlesen vom Funkgerät aus settings.json."""
+        if self._app_settings is None:
+            return
+        smap = self._app_settings.ui.memory_channel_local_sql
+        pmap = self._app_settings.ui.memory_channel_local_pc_power
+        for ch in self._bank.channels:
+            ks = str(ch.number)
+            ch.local_sql = normalize_memory_local_sql_value(smap.get(ks))
+            raw_pw = pmap.get(ks)
+            ch.local_pc_power_watts = normalize_memory_local_pc_power_value(
+                raw_pw,
+                ch.rx_frequency_hz,
+            )
+
+    def _persist_local_memory_mappings(self) -> None:
+        """Speichert Kanal-Nr → lokale SQL/Power in AppSettings/settings.json."""
+        if self._app_settings is None:
+            return
+        sm: dict[str, int] = {}
+        pm: dict[str, int] = {}
+        for ch in self._bank.channels:
+            ks = str(ch.number)
+            if ch.local_sql is not None:
+                v = normalize_memory_local_sql_value(ch.local_sql)
+                if v is not None:
+                    sm[ks] = v
+            if ch.local_pc_power_watts is not None:
+                pw = normalize_memory_local_pc_power_value(
+                    ch.local_pc_power_watts,
+                    ch.rx_frequency_hz,
+                )
+                if pw is not None:
+                    pm[ks] = pw
+        self._app_settings.ui.memory_channel_local_sql = sm
+        self._app_settings.ui.memory_channel_local_pc_power = pm
+        if self._persist_settings is not None:
+            self._persist_settings()
+        else:
+            try:
+                self._app_settings.save()
+            except OSError:
+                pass
+
+    def _refresh_memory_local_column_cells(self) -> None:
+        if self._model.rowCount() <= 0:
+            return
+        tl_sql = self._model.index(0, COL_LOCAL_SQL)
+        br_sql = self._model.index(self._model.rowCount() - 1, COL_LOCAL_SQL)
+        self._model.dataChanged.emit(tl_sql, br_sql)
+        tl_pw = self._model.index(0, COL_LOCAL_PC_POWER)
+        br_pw = self._model.index(self._model.rowCount() - 1, COL_LOCAL_PC_POWER)
+        self._model.dataChanged.emit(tl_pw, br_pw)
+
+    def _persist_sql_after_bank_structure_change(self) -> None:
+        """Nach verschieben/import — Mapping an neue Kanal-Nr. anbinden."""
+        self._persist_local_memory_mappings()
+        self._refresh_memory_local_column_cells()
 
     def _selected_rows(self) -> list[int]:
         rows = sorted({i.row() for i in self.table.selectedIndexes()})
         return rows if rows else [self.table.currentIndex().row()]
+
+    def _hydrate_sql_from_app_settings(self) -> None:
+        """Rückwärtskompatibler Aufrufer — nutzt gemeinsame Hydration."""
+        self._hydrate_memory_local_prefs_from_app_settings()
+
+    def _persist_local_sql_mapping(self) -> None:
+        """Rückwärtskompatibel: schreibt SQL+Power."""
+        self._persist_local_memory_mappings()
+
+    def _refresh_sql_local_column_cells(self) -> None:
+        self._refresh_memory_local_column_cells()
 
     def _commit_pending_editor(self) -> None:
         """Offenen Inline-Editor zwingend ins Model schreiben.
@@ -272,6 +363,9 @@ class MemoryEditorWindow(QMainWindow):
             self._bank = bank
             self._bank.layout_changed = False
             self._model.set_bank(self._bank)
+            self._hydrate_sql_from_app_settings()
+            self._persist_local_sql_mapping()
+            self._refresh_sql_local_column_cells()
             self.status_label.setText(
                 f"{sum(1 for c in self._bank.channels if c.enabled)} "
                 f"belegte Kanäle geladen."
@@ -390,6 +484,7 @@ class MemoryEditorWindow(QMainWindow):
         self.status_label.setText(
             f"Kanal in Zeile {new_row + 1} verschoben (Nr. neu vergeben)."
         )
+        self._persist_sql_after_bank_structure_change()
 
     def _select_row(self, row: int) -> None:
         """Zeile markieren und sichtbar scrollen (für Mehrfach-Verschieben)."""
@@ -418,20 +513,24 @@ class MemoryEditorWindow(QMainWindow):
         row = self._selected_rows()[0]
         self._bank.insert_at(row)
         self._model.set_bank(self._bank)
+        self._persist_sql_after_bank_structure_change()
 
     def _clear_row(self) -> None:
         for row in reversed(self._selected_rows()):
             self._bank.clear_at(row)
         self._model.set_bank(self._bank)
+        self._persist_sql_after_bank_structure_change()
 
     def _duplicate_row(self) -> None:
         row = self._selected_rows()[0]
         self._bank.duplicate_at(row)
         self._model.set_bank(self._bank)
+        self._persist_sql_after_bank_structure_change()
 
     def _close_gaps(self) -> None:
         self._bank.close_gaps()
         self._model.set_bank(self._bank)
+        self._persist_sql_after_bank_structure_change()
 
     def _channel_to_vfo(self) -> None:
         row = self._selected_rows()[0]
@@ -466,6 +565,11 @@ class MemoryEditorWindow(QMainWindow):
             ch.mode = ft.read_rx_mode()
             ch.enabled = True
             ch.shift_offset_hz = ch.suggest_shift_offset_hz()
+            if ch.local_pc_power_watts is not None:
+                ch.local_pc_power_watts = normalize_memory_local_pc_power_value(
+                    ch.local_pc_power_watts,
+                    ch.rx_frequency_hz,
+                )
             ch.mark_changed()
             self._model.set_bank(self._bank)
         except CatError as exc:
@@ -483,6 +587,8 @@ class MemoryEditorWindow(QMainWindow):
             self.status_label.setText(
                 f"Funkgerät auf Speicherkanal {ch.number:03d} geschaltet."
             )
+            if self._apply_local_memory_overrides is not None:
+                self._apply_local_memory_overrides(int(ch.number))
         except CatError as exc:
             QMessageBox.warning(self, "Speicherkanal", str(exc))
 
@@ -507,6 +613,8 @@ class MemoryEditorWindow(QMainWindow):
             if text:
                 blob = (
                     f"{ch.name} {ch.rx_frequency_mhz} {ch.local_note}"
+                    f" {memory_sql_value_to_combo(ch.local_sql)}"
+                    f" {memory_pc_power_value_to_combo(ch.local_pc_power_watts, ch.rx_frequency_hz)}"
                 ).lower()
                 if text not in blob:
                     hide = True
@@ -653,6 +761,7 @@ class MemoryEditorWindow(QMainWindow):
                 detail += f", {skipped} nicht übernommen (Speicher voll)"
 
         self._model.set_bank(self._bank)
+        self._persist_sql_after_bank_structure_change()
         self._apply_filter()
         self.status_label.setText(f"Importiert: {path.name} — {detail}")
 
@@ -710,6 +819,8 @@ class MemoryEditorWindow(QMainWindow):
         if self._closed_notified:
             return
         self._closed_notified = True
+        self._commit_pending_editor()
+        self._persist_local_sql_mapping()
         self._host.stop()
         if self._profile_widget is not None:
             self._profile_widget.set_cat_blocked(False)
@@ -735,6 +846,9 @@ def open_memory_editor(
     serial_cat: SerialCAT,
     *,
     profile_widget: Optional[ProfileWidget] = None,
+    app_settings: Optional[AppSettings] = None,
+    persist_settings: Optional[Callable[[], None]] = None,
+    apply_local_memory_overrides: Optional[Callable[[int], None]] = None,
     parent: Optional[QWidget] = None,
     on_closed: Optional[Callable[[], None]] = None,
 ) -> MemoryEditorWindow:
@@ -742,6 +856,9 @@ def open_memory_editor(
     win = MemoryEditorWindow(
         serial_cat,
         profile_widget=profile_widget,
+        app_settings=app_settings,
+        persist_settings=persist_settings,
+        apply_local_memory_overrides=apply_local_memory_overrides,
         parent=parent,
         on_closed=on_closed,
     )

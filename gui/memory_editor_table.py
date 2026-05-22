@@ -16,12 +16,11 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QAbstractItemView, QComboBox, QStyledItemDelegate, QTableView
 
 from mapping.memory_tones import (
-    CTCSS_TONES_HZ,
-    DCS_CODES,
     ToneMode,
     ctcss_labels,
     dcs_labels,
 )
+from mapping.meter_mapping import po_max_watts_for_freq
 from model.memory_editor_channel import (
     EDITOR_MODES,
     MemoryChannelBank,
@@ -30,6 +29,8 @@ from model.memory_editor_channel import (
     ShiftDirection,
     editor_mode_label,
     editor_mode_from_label,
+    normalize_memory_local_pc_power_value,
+    normalize_memory_local_sql_value,
 )
 
 
@@ -44,8 +45,51 @@ COLUMN_HEADERS = [
     "CTCSS Hz",
     "DCS",
     "Notiz",
+    "SQL (Local)",
+    "Power (Local)",
     "Status",
 ]
+
+COL_LOCAL_SQL = 10
+COL_LOCAL_PC_POWER = 11
+COL_STATUS = 12
+MEMORY_SQL_DISPLAY_NONE = "—"
+MEMORY_SQL_COMBO_ITEMS: list[str] = [
+    MEMORY_SQL_DISPLAY_NONE,
+    *[str(v) for v in range(0, 101, 10)],
+]
+
+
+def memory_sql_combo_text_to_value(text: object) -> Optional[int]:
+    s = str(text).strip()
+    if s == MEMORY_SQL_DISPLAY_NONE or s == "":
+        return None
+    return normalize_memory_local_sql_value(int(s))
+
+
+def memory_sql_value_to_combo(local_sql: Optional[int]) -> str:
+    v = normalize_memory_local_sql_value(local_sql)
+    if v is None:
+        return MEMORY_SQL_DISPLAY_NONE
+    return str(v)
+
+
+def memory_pc_power_combo_text_to_value(text: object, rx_frequency_hz: int) -> Optional[int]:
+    s = str(text).strip()
+    if s == MEMORY_SQL_DISPLAY_NONE or s == "":
+        return None
+    return normalize_memory_local_pc_power_value(int(s), int(rx_frequency_hz))
+
+
+def memory_pc_power_value_to_combo(
+    watts: Optional[int],
+    rx_frequency_hz: int,
+) -> str:
+    v = normalize_memory_local_pc_power_value(watts, int(rx_frequency_hz))
+    if v is None:
+        return MEMORY_SQL_DISPLAY_NONE
+    return str(v)
+
 
 # RX-MHz-Zelle bei doppelter Frequenz
 _DUP_FREQ_BG = QColor(255, 210, 210)
@@ -53,6 +97,9 @@ _DUP_FREQ_FG = QColor(0, 0, 0)
 
 
 class MemoryEditorTableModel(QAbstractTableModel):
+    #: Lokale SQL-/Power-Zuordnung geändert → settings.json speichern.
+    memory_local_prefs_changed = Signal()
+
     def __init__(self, bank: MemoryChannelBank, parent=None) -> None:
         super().__init__(parent)
         self._bank = bank
@@ -107,7 +154,7 @@ class MemoryEditorTableModel(QAbstractTableModel):
             | Qt.ItemIsDragEnabled
             | Qt.ItemIsDropEnabled
         )
-        if col in (0, 10):
+        if col in (0, COL_STATUS):
             return base
         return base | Qt.ItemIsEditable
 
@@ -149,7 +196,11 @@ class MemoryEditorTableModel(QAbstractTableModel):
             return str(ch.dcs_code)
         if col == 9:
             return ch.local_note
-        if col == 10:
+        if col == COL_LOCAL_SQL:
+            return memory_sql_value_to_combo(ch.local_sql)
+        if col == COL_LOCAL_PC_POWER:
+            return memory_pc_power_value_to_combo(ch.local_pc_power_watts, ch.rx_frequency_hz)
+        if col == COL_STATUS:
             return ch.change_status.value
         return None
 
@@ -160,12 +211,38 @@ class MemoryEditorTableModel(QAbstractTableModel):
         col = index.column()
         if role != Qt.EditRole:
             return False
+        if col == COL_LOCAL_SQL:
+            try:
+                ch.local_sql = memory_sql_combo_text_to_value(value)
+            except ValueError:
+                return False
+            self.dataChanged.emit(index, index)
+            self.memory_local_prefs_changed.emit()
+            return True
+        if col == COL_LOCAL_PC_POWER:
+            try:
+                ch.local_pc_power_watts = memory_pc_power_combo_text_to_value(
+                    value,
+                    int(ch.rx_frequency_hz),
+                )
+            except ValueError:
+                return False
+            self.dataChanged.emit(index, index)
+            self.memory_local_prefs_changed.emit()
+            return True
         try:
             if col == 1:
                 ch.name = str(value)
                 ch.sanitize_name()
             elif col == 2:
                 ch.rx_frequency_mhz = float(str(value).replace(",", "."))
+                if ch.local_pc_power_watts is not None:
+                    ch.local_pc_power_watts = normalize_memory_local_pc_power_value(
+                        ch.local_pc_power_watts,
+                        ch.rx_frequency_hz,
+                    )
+                    pc_idx = self.index(index.row(), COL_LOCAL_PC_POWER)
+                    self.dataChanged.emit(pc_idx, pc_idx)
             elif col == 3:
                 ch.mode = editor_mode_from_label(str(value))
             elif col == 4:
@@ -185,7 +262,7 @@ class MemoryEditorTableModel(QAbstractTableModel):
             # Ohne "Aktiv"-Spalte gelten bearbeitete Einträge als aktiv.
             ch.enabled = True
             ch.mark_changed()
-            status_idx = self.index(index.row(), 10)
+            status_idx = self.index(index.row(), COL_STATUS)
             self.dataChanged.emit(index, index)
             self.dataChanged.emit(status_idx, status_idx)
             self.refresh_duplicate_highlight()
@@ -272,6 +349,34 @@ class _EditableComboDelegate(QStyledItemDelegate):
 
     def setModelData(self, editor, model, index) -> None:  # noqa: ANN001
         model.setData(index, editor.currentText().strip(), Qt.EditRole)
+
+
+class _MemoryPcPowerComboDelegate(QStyledItemDelegate):
+    """Dropdown: 0..max(W) je RX-Frequenz in 5-W-Schritten, plus „—“ für keinen Override."""
+
+    def createEditor(self, parent, option, index):  # noqa: ANN001
+        model = index.model()
+        if not isinstance(model, MemoryEditorTableModel):
+            return super().createEditor(parent, option, index)
+        ch = model.channel_at_row(index.row())
+        max_w = po_max_watts_for_freq(
+            ch.rx_frequency_hz if ch.rx_frequency_hz > 0 else None
+        )
+        items = [
+            MEMORY_SQL_DISPLAY_NONE,
+            *[str(w) for w in range(0, max_w + 1, 5)],
+        ]
+        combo = QComboBox(parent)
+        combo.addItems(items)
+        return combo
+
+    def setEditorData(self, editor, index) -> None:  # noqa: ANN001
+        text = index.model().data(index, Qt.EditRole)
+        i = editor.findText(str(text))
+        editor.setCurrentIndex(i if i >= 0 else 0)
+
+    def setModelData(self, editor, model, index) -> None:  # noqa: ANN001
+        model.setData(index, editor.currentText(), Qt.EditRole)
 
 
 class _ComboDelegate(QStyledItemDelegate):
@@ -398,3 +503,8 @@ def attach_delegates(table) -> None:  # noqa: ANN001
         8,
         _ComboDelegate(dcs_labels(), table),
     )
+    table.setItemDelegateForColumn(
+        COL_LOCAL_SQL,
+        _ComboDelegate(MEMORY_SQL_COMBO_ITEMS, table),
+    )
+    table.setItemDelegateForColumn(COL_LOCAL_PC_POWER, _MemoryPcPowerComboDelegate(table))

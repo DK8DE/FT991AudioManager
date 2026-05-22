@@ -2933,6 +2933,46 @@ class MeterWidget(QWidget):
             where="SQL schreiben",
         )
 
+    def apply_local_memory_sql(self, value: int) -> None:
+        """Schreibt SQL aus App-Logik (z. B. Speicherkanal-lokal auf Zehnerschritte).
+
+        Aktualisiert den SQL-Slider ohne ``value_chosen`` (kein Doppel-CAT-Schreiben).
+        """
+        raw = max(0, min(100, int(value)))
+        v = (raw // 10) * 10
+        self.sql_slider.set_value(v)
+        self._safe_write(
+            lambda vv=v: self._ft.write_squelch(vv),
+            where="SQL (lokal Kanal)",
+        )
+
+    def apply_local_memory_pc_power(
+        self, watts: int, *, frequency_hz: Optional[int] = None
+    ) -> None:
+        """Schreibt PC (Sendeleistung) aus App-Logik (Speicherkanal-lokal, 5-W-Schritte).
+
+        Aktualisiert den Power-Slider ohne ``value_chosen`` (kein Doppel-CAT-Schreiben).
+        ``watts == 0`` wird am Gerät auf das CAT-Minimum (5 W) abgebildet.
+        """
+        from mapping.meter_mapping import po_max_watts_for_freq
+        from mapping.tx_power_mapping import clamp_pc_power_watts
+
+        hz = (
+            int(frequency_hz)
+            if frequency_hz is not None and int(frequency_hz) > 0
+            else self._last_vfo_a_hz
+        )
+        max_w = po_max_watts_for_freq(hz if hz > 0 else None)
+        cw = clamp_pc_power_watts(int(watts), max_watts=max_w)
+
+        self.power_slider.set_max_watts(max_w)
+        self.power_slider.set_value(cw)
+
+        def _write() -> None:
+            self._ft.set_pc_power_watts(cw, max_watts=max_w, tx_lock=False)
+
+        self._safe_write(_write, where="POWER (lokal Kanal)")
+
     def _apply_power_slider_scale(self) -> None:
         from mapping.meter_mapping import po_max_watts_for_freq
 

@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Optional
 
 from mapping.memory_tones import ToneMode
+from mapping.meter_mapping import po_max_watts_for_freq
 from mapping.rx_mapping import RxMode
 
 MEMORY_EDITOR_MIN: int = 1
@@ -89,6 +90,39 @@ def editor_mode_from_label(label: str) -> RxMode:
 _ASCII_TAG_RE = re.compile(r"^[\x20-\x7E]*$")
 
 
+def normalize_memory_local_sql_value(value: object) -> Optional[int]:
+    """SQL 0–100 in Zehnerschritten oder None („kein Override“).
+
+    Für JSON/settings: fehlende Werte → ``None``.
+    """
+    if value is None:
+        return None
+    try:
+        v = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    v = max(0, min(100, int(v)))
+    return (v // 10) * 10
+
+
+def normalize_memory_local_pc_power_value(value: object, rx_frequency_hz: int) -> Optional[int]:
+    """Lokaler PC-/Leistungs-Override pro Kanal: 0 bis bandabhängigem Maximum in 5-W-Schritten.
+
+    ``None`` = kein lokaler Override. Am Gerät gilt ein CAT-Minimum von 5 W; die Auswahl „0“
+    in der Tabelle wird beim Schreiben ins Gerät dort auf 5 W abgebildet.
+    """
+    if value is None:
+        return None
+    try:
+        v = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    hz = int(rx_frequency_hz) if rx_frequency_hz > 0 else 0
+    max_w = po_max_watts_for_freq(hz if hz > 0 else None)
+    v = max(0, min(max_w, int(v)))
+    return min(max_w, (v // 5) * 5)
+
+
 @dataclass
 class MemoryEditorChannel:
     """Ein bearbeitbarer Speicherkanal (001..100)."""
@@ -108,6 +142,10 @@ class MemoryEditorChannel:
     changed: bool = False
     moved: bool = False
     local_note: str = ""
+    #: Optional lokaler SQL-Override (Schritte 10, nur für die App/settings.json).
+    local_sql: Optional[int] = None
+    #: Optional lokale Sendeleistung (0..max in 5-W-Schritten, bandabhängig; nur App/settings).
+    local_pc_power_watts: Optional[int] = None
 
     @property
     def is_placeholder_empty(self) -> bool:
@@ -221,6 +259,8 @@ class MemoryEditorChannel:
             "raw_cat_response": self.raw_cat_response,
             "raw_mt_body": self.raw_mt_body,
             "local_note": self.local_note,
+            "local_sql": self.local_sql,
+            "local_pc_power_watts": self.local_pc_power_watts,
         }
 
     @classmethod
@@ -248,6 +288,11 @@ class MemoryEditorChannel:
             raw_cat_response=str(data.get("raw_cat_response", "")),
             raw_mt_body=str(data.get("raw_mt_body", "")),
             local_note=str(data.get("local_note", "")),
+            local_sql=normalize_memory_local_sql_value(data.get("local_sql")),
+            local_pc_power_watts=normalize_memory_local_pc_power_value(
+                data.get("local_pc_power_watts"),
+                int(data.get("rx_frequency_hz", 0)),
+            ),
         )
         return ch
 
@@ -353,6 +398,8 @@ class MemoryChannelBank:
         ch.tone_mode = ToneMode.OFF
         ch.raw_mt_body = ""
         ch.raw_cat_response = ""
+        ch.local_sql = None
+        ch.local_pc_power_watts = None
         ch.changed = True
         self.layout_changed = True
 

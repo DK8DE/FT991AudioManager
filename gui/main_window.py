@@ -19,7 +19,7 @@ Neuer schlanker Aufbau (ab 0.5.1):
 from __future__ import annotations
 
 import time
-from typing import Optional, cast
+from typing import Any, Optional, cast
 
 import serial
 
@@ -2065,6 +2065,76 @@ class MainWindow(QMainWindow):
                 continue
         return -1
 
+    def _memory_combo_insert_index_for_channel(self, channel: int) -> int:
+        """Einfügeindex für einen Speicherkanal (>0): VFO bei 0, danach nach Kanalnr. aufsteigend."""
+        ch_i = int(channel)
+        for i in range(1, self.memory_combo.count()):
+            data = self.memory_combo.itemData(i)
+            if data is None:
+                continue
+            try:
+                other = int(data)
+            except (TypeError, ValueError):
+                continue
+            if other <= 0:
+                continue
+            if ch_i < other:
+                return i
+        return self.memory_combo.count()
+
+    def _upsert_memory_combo_channel(self, mem: MemoryChannel) -> None:
+        """Eine Memo-Zeile idempotent nach Kanalnummer: Duplikate entfernen, sortiert einfügen.
+
+        Verhindert doppelte Einträge wenn z. B. :meth:`_select_memory_combo_by_channel`
+        vor Ende des MT-Scans eingreift — der Loader hätte später sonst erneut
+        ``addItem`` aufgerufen.
+        """
+        ch = int(mem.channel)
+        hz = int(mem.frequency_hz)
+        self._memory_slot_frequency_hz[ch] = hz
+        label = self._format_memory_channel_combo_label(mem)
+        for i in range(self.memory_combo.count() - 1, 0, -1):
+            data = self.memory_combo.itemData(i)
+            if data is None:
+                continue
+            try:
+                if int(data) != ch:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            self.memory_combo.removeItem(i)
+        insert_at = self._memory_combo_insert_index_for_channel(ch)
+        self.memory_combo.insertItem(insert_at, label, ch)
+
+    def _apply_local_memory_overrides(self, channel: int) -> None:
+        """Lokale SQL-/Power-Werte für Speicherkanal ``channel`` (settings.json) ans Gerät."""
+        if not self._cat.is_connected():
+            return
+        ch = int(channel)
+        if ch <= 0:
+            return
+
+        raw_sql = self._settings.ui.memory_channel_local_sql.get(str(ch))
+        if raw_sql is not None:
+            try:
+                sql = int(cast(Any, raw_sql))
+            except (TypeError, ValueError):
+                pass
+            else:
+                self.meter_widget.apply_local_memory_sql(sql)
+
+        raw_pw = self._settings.ui.memory_channel_local_pc_power.get(str(ch))
+        if raw_pw is not None:
+            try:
+                watts = int(cast(Any, raw_pw))
+            except (TypeError, ValueError):
+                pass
+            else:
+                hz = int(self._memory_slot_frequency_hz.get(ch, 0))
+                self.meter_widget.apply_local_memory_pc_power(
+                    watts, frequency_hz=hz if hz > 0 else None
+                )
+
     def _select_memory_combo_by_channel(
         self, channel: int, *, reset_favorites_placeholder: bool = True
     ) -> None:
@@ -2080,7 +2150,9 @@ class MainWindow(QMainWindow):
             self.memory_combo.setCurrentIndex(idx)
             if reset_favorites_placeholder:
                 self._reset_favorites_combo_to_placeholder()
+            self._apply_local_memory_overrides(ch)
             return
+
         label: str
         mem: Optional[MemoryChannel] = None
         if self._cat.is_connected():
@@ -2088,15 +2160,27 @@ class MainWindow(QMainWindow):
                 mem = FT991CAT(self._cat).read_memory_channel_tag(ch)
             except CatError:
                 mem = None
-        if mem is not None:
-            self._memory_slot_frequency_hz[int(mem.channel)] = int(mem.frequency_hz)
-            label = self._format_memory_channel_combo_label(mem)
-        else:
-            label = f"{ch:03d} — (aktuell aktiv)"
-        self.memory_combo.addItem(label, ch)
-        self.memory_combo.setCurrentIndex(self.memory_combo.count() - 1)
+
+        self.memory_combo.blockSignals(True)
+        try:
+            if mem is not None:
+                self._upsert_memory_combo_channel(mem)
+                idx = self._memory_combo_index_for_channel(ch)
+                if idx >= 0:
+                    self.memory_combo.setCurrentIndex(idx)
+            else:
+                label = f"{ch:03d} — (aktuell aktiv)"
+                insert_at = self._memory_combo_insert_index_for_channel(ch)
+                self.memory_combo.insertItem(insert_at, label, ch)
+                idx = self._memory_combo_index_for_channel(ch)
+                if idx >= 0:
+                    self.memory_combo.setCurrentIndex(idx)
+        finally:
+            self.memory_combo.blockSignals(False)
+
         if reset_favorites_placeholder:
             self._reset_favorites_combo_to_placeholder()
+        self._apply_local_memory_overrides(ch)
 
     def _sync_memory_combo_from_radio(self) -> None:
         """Liest ``MC;`` + ``FA`` und stellt die Combo auf VFO bzw. aktiven Kanal."""
@@ -2135,13 +2219,9 @@ class MainWindow(QMainWindow):
         """Wird vom Loader pro gefundenem Speicherkanal aufgerufen."""
         if not isinstance(channel, MemoryChannel):
             return
-        self._memory_slot_frequency_hz[int(channel.channel)] = int(
-            channel.frequency_hz
-        )
-        label = self._format_memory_channel_combo_label(channel)
         self.memory_combo.blockSignals(True)
         try:
-            self.memory_combo.addItem(label, int(channel.channel))
+            self._upsert_memory_combo_channel(channel)
         finally:
             self.memory_combo.blockSignals(False)
 
@@ -2192,6 +2272,7 @@ class MainWindow(QMainWindow):
                 self._try_clear_fm_repeater_shift_simplex()
             elif isinstance(data, int):
                 ft.select_memory_channel(int(data))
+                self._apply_local_memory_overrides(int(data))
         except CatConnectionLostError:
             self._on_connection_lost()
         except CatError as exc:
@@ -2607,6 +2688,9 @@ class MainWindow(QMainWindow):
         self._memory_editor = open_memory_editor(
             self._cat,
             profile_widget=self.profile_widget,
+            app_settings=self._settings,
+            persist_settings=self._persist_settings,
+            apply_local_memory_overrides=self._apply_local_memory_overrides,
             parent=self,
             on_closed=self._on_memory_editor_closed,
         )
