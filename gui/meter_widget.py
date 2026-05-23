@@ -115,6 +115,7 @@ from mapping.sh_width_mapping import (
     sh_display_hz,
     sh_snap_p2_to_supported,
 )
+from model.app_settings import TxPollSettings
 
 
 def _invoke_poller_slot(receiver: QObject, method_name: str, *args: object) -> None:
@@ -232,6 +233,7 @@ class MeterPoller(QObject):
         tx_interval_ms: int = DEFAULT_INTERVAL_TX_MS,
         rx_interval_ms: int = DEFAULT_INTERVAL_RX_MS,
         *,
+        tx_poll: Optional[TxPollSettings] = None,
         cat_yield_checker: Optional[Callable[[], bool]] = None,
         cat_catchup_limit_checker: Optional[Callable[[], bool]] = None,
     ) -> None:
@@ -241,6 +243,7 @@ class MeterPoller(QObject):
         self._cat_catchup_limit_checker = cat_catchup_limit_checker
         self._tx_interval_ms = self._clamp(tx_interval_ms)
         self._rx_interval_ms = max(self._tx_interval_ms, self._clamp(rx_interval_ms))
+        self._tx_poll = tx_poll if tx_poll is not None else TxPollSettings()
         self._active = False
         self._error_streak = 0
         self._last_tx: Optional[bool] = None
@@ -277,6 +280,38 @@ class MeterPoller(QObject):
     @Slot(int)
     def set_rx_interval_ms(self, ms: int) -> None:
         self._rx_interval_ms = max(self._tx_interval_ms, self._clamp(ms))
+
+    @Slot(bool, bool, bool, bool, bool, bool, bool)
+    def set_tx_poll(
+        self,
+        comp: bool,
+        alc: bool,
+        po: bool,
+        swr: bool,
+        frequency_a: bool,
+        frequency_b: bool,
+        pc_power: bool,
+    ) -> None:
+        self._tx_poll = TxPollSettings(
+            comp=bool(comp),
+            alc=bool(alc),
+            po=bool(po),
+            swr=bool(swr),
+            frequency_a=bool(frequency_a),
+            frequency_b=bool(frequency_b),
+            pc_power=bool(pc_power),
+        )
+
+    def _tx_poll_meter_enabled(self, kind: MeterKind) -> bool:
+        if kind == MeterKind.COMP:
+            return self._tx_poll.comp
+        if kind == MeterKind.ALC:
+            return self._tx_poll.alc
+        if kind == MeterKind.PO:
+            return self._tx_poll.po
+        if kind == MeterKind.SWR:
+            return self._tx_poll.swr
+        return True
 
     def _reset_freq_priority_state(self) -> None:
         self._last_polled_freq_a = None
@@ -454,6 +489,8 @@ class MeterPoller(QObject):
         log = self._cat.get_log()
         values: Dict[MeterKind, int] = {}
         for kind in (MeterKind.COMP, MeterKind.ALC, MeterKind.PO, MeterKind.SWR):
+            if not self._tx_poll_meter_enabled(kind):
+                continue
             try:
                 values[kind] = ft.read_meter(kind)
             except CatConnectionLostError:
@@ -468,26 +505,29 @@ class MeterPoller(QObject):
                 continue
         freq_hz: Optional[int] = None
         freq_b_hz: Optional[int] = None
-        try:
-            freq_hz = ft.read_frequency()
-            self._note_polled_frequency_a(freq_hz)
-        except CatConnectionLostError:
-            raise
-        except CatError:
-            pass
-        try:
-            freq_b_hz = ft.read_frequency_b()
-        except CatConnectionLostError:
-            raise
-        except CatError:
-            pass
+        if self._tx_poll.frequency_a:
+            try:
+                freq_hz = ft.read_frequency()
+                self._note_polled_frequency_a(freq_hz)
+            except CatConnectionLostError:
+                raise
+            except CatError:
+                pass
+        if self._tx_poll.frequency_b:
+            try:
+                freq_b_hz = ft.read_frequency_b()
+            except CatConnectionLostError:
+                raise
+            except CatError:
+                pass
         pc_power: Optional[int] = None
-        try:
-            pc_power = ft.read_pc_power_watts()
-        except CatConnectionLostError:
-            raise
-        except CatError:
-            pass
+        if self._tx_poll.pc_power:
+            try:
+                pc_power = ft.read_pc_power_watts()
+            except CatConnectionLostError:
+                raise
+            except CatError:
+                pass
         # Auch wenn nicht alle 4 Meter gelesen werden konnten: das
         # Sample muss raus, damit die GUI weiss, dass das Radio sendet
         # (TX-LED rot, Bars aktiv eingefaerbt).
@@ -2208,6 +2248,7 @@ class MeterWidget(QWidget):
         tx_interval_ms: int = DEFAULT_INTERVAL_TX_MS,
         rx_interval_ms: int = DEFAULT_INTERVAL_RX_MS,
         *,
+        tx_poll: Optional[TxPollSettings] = None,
         integrated_main_layout: bool = False,
         parent: Optional[QWidget] = None,
     ) -> None:
@@ -2226,6 +2267,7 @@ class MeterWidget(QWidget):
         self._tx_interval_ms = max(MIN_INTERVAL_MS, min(MAX_INTERVAL_MS, int(tx_interval_ms)))
         self._rx_interval_ms = max(self._tx_interval_ms,
                                    min(MAX_INTERVAL_MS, int(rx_interval_ms)))
+        self._tx_poll = tx_poll if tx_poll is not None else TxPollSettings()
         self._last_tx: Optional[bool] = None
         self._last_tx_state: Optional[int] = None
         #: Letzte vom Radio gemeldete VFO-A-Frequenz (Hz). Wird aus dem
@@ -2555,6 +2597,21 @@ class MeterWidget(QWidget):
                 Q_ARG(int, self._rx_interval_ms),
             )
 
+    def set_tx_poll_settings(self, settings: TxPollSettings) -> None:
+        self._tx_poll = settings
+        if self._poller is not None:
+            _invoke_poller_slot(
+                self._poller,
+                "set_tx_poll",
+                Q_ARG(bool, settings.comp),
+                Q_ARG(bool, settings.alc),
+                Q_ARG(bool, settings.po),
+                Q_ARG(bool, settings.swr),
+                Q_ARG(bool, settings.frequency_a),
+                Q_ARG(bool, settings.frequency_b),
+                Q_ARG(bool, settings.pc_power),
+            )
+
     def set_cat_yield_checker(
         self, checker: Optional[Callable[[], bool]]
     ) -> None:
@@ -2576,6 +2633,7 @@ class MeterWidget(QWidget):
             self._cat,
             tx_interval_ms=self._tx_interval_ms,
             rx_interval_ms=self._rx_interval_ms,
+            tx_poll=self._tx_poll,
             cat_yield_checker=self._cat_yield_checker,
             cat_catchup_limit_checker=self._cat_catchup_limit_checker,
         )

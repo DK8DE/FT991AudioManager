@@ -1,6 +1,6 @@
 """Datenmodelle."""
 
-from .app_settings import AppSettings, CatSettings, PollingSettings, UiSettings
+from .app_settings import AppSettings, CatSettings, PollingSettings, TxPollSettings, UiSettings
 from .audio_player_settings import (
     AudioPlayerSettings,
     encode_pause_token_seconds,
@@ -42,6 +42,7 @@ __all__ = [
     "EQSettings",
     "ExtendedSettings",
     "PollingSettings",
+    "TxPollSettings",
     "PresetStore",
     "UiSettings",
     "RigBridgeSettings",

@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QStatusBar,
@@ -538,6 +539,7 @@ class MainWindow(QMainWindow):
             self._cat,
             tx_interval_ms=self._settings.polling.tx_interval_ms,
             rx_interval_ms=self._settings.polling.rx_interval_ms,
+            tx_poll=self._settings.polling.tx_poll,
             integrated_main_layout=True,
         )
 
@@ -2773,18 +2775,44 @@ class MainWindow(QMainWindow):
         return w
 
     def _on_live_action(self) -> None:
-        win = self._ensure_live_window()
-        rf = getattr(win, "reload_from_app_settings", None)
-        if callable(rf):
-            rf()
-        led_sync = getattr(win, "_update_tx_rx_led", None)
-        if callable(led_sync):
-            last = getattr(self.meter_widget, "_last_tx_state", None)
-            if last is not None:
-                led_sync(int(last))
-        win.show()
-        win.raise_()
-        win.activateWindow()
+        loading: Optional[QProgressDialog] = None
+        win = self._live_window
+        try:
+            if win is None:
+                loading = QProgressDialog(
+                    "Live-Fenster wird geladen…\n"
+                    "Audio-Geräte und DSP werden initialisiert — bitte einen Moment.",
+                    "",
+                    0,
+                    0,
+                    self,
+                )
+                loading.setWindowTitle("Live")
+                loading.setWindowModality(Qt.WindowModality.WindowModal)
+                loading.setMinimumDuration(0)
+                loading.setCancelButton(None)
+                loading.setAutoClose(False)
+                loading.setAutoReset(False)
+                loading.show()
+                QApplication.processEvents()
+
+            win = self._ensure_live_window()
+            rf = getattr(win, "reload_from_app_settings", None)
+            if callable(rf):
+                rf()
+            led_sync = getattr(win, "_update_tx_rx_led", None)
+            if callable(led_sync):
+                last = getattr(self.meter_widget, "_last_tx_state", None)
+                if last is not None:
+                    led_sync(int(last))
+        finally:
+            if loading is not None:
+                loading.close()
+
+        if win is not None:
+            win.show()
+            win.raise_()
+            win.activateWindow()
 
     def _ensure_sound_settings_window(self) -> SoundSettingsWindow:
         if self._sound_settings_window is None:
@@ -3069,6 +3097,7 @@ class MainWindow(QMainWindow):
             self._settings.polling.tx_interval_ms,
             self._settings.polling.rx_interval_ms,
         )
+        self.meter_widget.set_tx_poll_settings(self._settings.polling.tx_poll)
         # Sichtbarkeit der "Erweiterte Einstellungen"-Sektion synchron halten.
         self.profile_widget.set_hide_extended_in_ssb(
             self._settings.ui.hide_extended_in_ssb

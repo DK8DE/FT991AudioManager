@@ -1,14 +1,17 @@
 # FT-991/A Audiomanager
 
-**Version 1.0** — Desktop-Tool zur komfortablen Steuerung des Yaesu **FT-991 / FT-991A**
+**Version 1.7** — Desktop-Tool zur komfortablen Steuerung des Yaesu **FT-991 / FT-991A**
 über die CAT-Schnittstelle. Die Anwendung deckt alle audiobezogenen TX-Parameter
 (MIC Gain, Speech Processor, parametrischer Equalizer pro Modus,
 SSB-Bandbreite, Cut-Filter, Mic-Quelle …) ab und zeigt parallel die
 relevanten RX- und TX-Pegel live an.
 
-Zusätzlich: **CAT-Audio-Player** (MP3/WAV mit PTT), **Rig-Bridge** für WSJT-X
-und andere CAT-Clients, **Speicherkanal-Editor**, **PO-Kalibrierung** und
-direkte Bedienung von VFO, Band und Kanal aus der Hauptoberfläche.
+Zusätzlich: **Live‑PC Funk** (Mikrofon → DSP → Funk über PC-Headset),
+**Audio-Recorder** (MP3-Aufnahme + Replay über CAT-TX), **CAT-Audio-Player**
+(MP3/WAV mit PTT), **Favoriten** (Funk- und Audioprofil-Snapshots),
+**Rig-Bridge** für WSJT-X und andere CAT-Clients, **Speicherkanal-Editor**,
+**S-Meter- und PO-Kalibrierung** sowie direkte Bedienung von VFO, Band und
+Kanal aus der Hauptoberfläche.
 
 Die App wurde von Anfang an darauf ausgelegt, **gefahrlos im laufenden
 Betrieb** benutzt zu werden: Während TX werden EQ-Profile und Menüs nicht
@@ -45,9 +48,8 @@ geschrieben.
 - Pro Betriebsart (SSB / AM / FM / DATA / CW / RTTY / C4FM) wird nur das
   angezeigt, was im jeweiligen Modus auch wirkt — der Rest wird komplett
   ausgeblendet.
-- **Profile** speichern, laden, exportieren, löschen — in der Entwicklung
-  unter `data/presets.json`, in der installierten EXE unter
-  `%APPDATA%\FT991AudioManager\presets.json`.
+- **Profile** speichern, laden, exportieren, löschen — beim ersten Start
+  automatisch angelegt im User-Datenordner (`presets.json`, siehe unten).
 - **Auto-Sync**: GUI-Änderungen werden debounced ans Radio geschrieben,
   Diffs gegen den Baseline-Profilstand vermeiden überflüssige Befehle.
   Beim Wechsel der Mode-Gruppe in der GUI wird automatisch der Operating
@@ -72,6 +74,54 @@ geschrieben.
 
 *Abhängigkeit:* `PySide6-Addons` (in `requirements.txt`) für Qt-Multimedia.
 
+### Audio-Recorder (MP3-Aufnahme + Replay)
+
+- Eigenes Fenster **Funktionen → Audio-Recorder…** (`Ctrl+Shift+R`)
+- **Aufnahme** vom Funk-USB-CODEC (Stereo-RX) als **MP3** mit wählbarer
+  Bitrate; interne Normalisierung (Soft-Compressor + Limiter) vor dem Encode
+- **Replay** der Aufnahmen über **CAT-TX** im DATA-Mode (wie der Audio-Player)
+- Aufnahme-Ordner wählbar, Liste der Mitschnitte (neueste oben)
+- Schnellzugriff-Button **Audiorecorder** in der Funksteuerungsleiste
+
+*Abhängigkeit:* `lameenc` (in `requirements.txt`) für MP3-Encoding.
+
+### Live‑PC Funk (Mikrofon → Funk über PC)
+
+- Eigenes Fenster **Funktionen → Live‑PC Funk…** (`Ctrl+Shift+L`)
+- **PC-Mikrofon** über PortAudio/sounddevice in Echtzeit auf den
+  **Funk-Ausgang** (USB-CODEC / SCU-17) — getrennt vom Qt-Multimedia-Pfad
+  des Audio-Players
+- **Siebenband-EQ**, Pegelregler für Mikrofon, Monitor und Funk-Eingang
+- **Funk mithören**: RX-Audio optional auf den Monitor/Kopfhörer
+- **CAT-PTT**: Tasten **PTT** / **PTT halten**, Tastatur **Strg+Y**
+  (Push-to-Talk) und **Strg+X** (PTT halten)
+- **RX/TX-LED** wie im Hauptfenster; während Live-TX kann der Funkeingang
+  stummgeschaltet werden
+- Geräte und Mithören auch unter **Funktionen → Soundeinstellung…**
+  (`Ctrl+Shift+S`, Abschnitt Live-Monitoring)
+- Schnellzugriff-Button **Live** in der Funksteuerungsleiste
+
+*Abhängigkeiten:* `sounddevice`, `numpy`, `scipy` (in `requirements.txt`).
+
+> **Wichtig — Audio-Anschluss beim Funken über PC-Headset:** Wenn Sie über
+> die Software mit einem **PC-Headset** funken möchten (Live‑PC Funk oder
+> vergleichbare Audio-Pfade zwischen PC und Transceiver), sollte das Funkgerät
+> **galvanisch getrennt** vom PC angeschlossen werden — z. B. über ein
+> Audio-Transformator-Interface, ein dediziertes Funk-USB-Interface mit
+> Trennung oder vergleichbare Schutzmaßnahmen. Ohne Trennung entstehen leicht
+> **Brummschleifen**, Pegelprobleme oder in Extremfällen **Schäden** an PC
+> und/oder Funkgerät durch unterschiedliche Massepotenziale. Die CAT-Leitung
+> (seriell) bleibt davon unberührt; betroffen sind die **Audio-Leitungen**
+> zwischen PC-Soundkarte/Headset und Funk-USB-CODEC.
+
+### Favoriten (Funk-Snapshots)
+
+- Eigener Bereich **Favoriten** unter der unteren Leiste des Hauptfensters
+- Speichert **Frequenz**, **Mode**, **EQ-Profil**, **Squelch**, **AF/RF-Gain**
+  und **Sendeleistung (PC)** als benannten Snapshot
+- Favorit **anwenden**, **überschreiben**, **neu anlegen** oder **löschen**
+- Persistiert in `favorites.json` im User-Datenordner
+
 ### Live-Anzeige (RX + TX)
 
 - **S-Meter** (vertikal, S-Punkt-Skala) mit Squelch-Linien-Overlay
@@ -91,7 +141,9 @@ geschrieben.
   Einheiten; **PO** nutzt optional **Kalibrierkurven** (siehe unten)
 - **VFO-A / VFO-B** editierbar (MHz/kHz/Hertz), **VFO A↔B**, **Mode** in
   der Kopfzeile, **RX/TX-LED** grün (Empfang) bzw. rot (Sendung)
-- **Funksteuerung**: Tune, Speicherkanal ±, Amateurband ± (CAT)
+- **Funksteuerung**: Tune, **Simp / RPT± / REV**, **T.CALL** (1750-Hz-Rufton,
+  Taste gedrückt halten), Schnellzugriff auf Audio-Player, Recorder, Live und
+  Soundeinstellungen; Speicherkanal ±, **Amateurband** ± und Band-Auswahl (CAT)
 
 ### Speicherkanäle
 
@@ -100,12 +152,14 @@ geschrieben.
 - **Speicherkanal-Auswahl** in der unteren Leiste des Hauptfensters;
   Kanalliste wird nach Verbindung im Hintergrund geladen
 
-### PO-Kalibrierung (Sendeleistung)
+### Kalibrierung (S-Meter und PO)
 
-- **Datei → Einstellungen → Kalibrierung** (PO-Meter): geführte Messung auf **10 m** (FM),
-  Stützpunkte **Watt ↔ CAT-Rohwert** für die **POWER**-Anzeige und den
-  POWER-Slider
-- Ergebnis in `po_calibration.json` im User-Datenordner (siehe unten)
+- **Datei → Einstellungen → Kalibrierung**
+- **S-Meter**: SM0-Rohwerte → Anzeige-Skala, getrennt für KW und VHF/UHF
+- **PO-Meter**: geführte Messung auf **10 m** (FM), Stützpunkte
+  **Watt ↔ CAT-Rohwert** für die **POWER**-Anzeige und den POWER-Slider
+- Ergebnisse in `smeter_calibration.json` bzw. `po_calibration.json` im
+  User-Datenordner (siehe unten)
 
 ### Rig-Bridge (für andere CAT-Programme)
 
@@ -137,10 +191,18 @@ Radio parallel nutzen (über FLRig), während der Audiomanager läuft.
 
 - **Dark Mode** als Standard (eigenes Theme, optional Light Mode),
   persistiert in `settings.json` im User-Datenordner.
+- **Soundeinstellung** (**Funktionen → Soundeinstellung…**, `Ctrl+Shift+S`):
+  globale Audio-Rollen (Sende/PC/Input), Windows-Mixer-Integration,
+  Live-Monitoring-Geräte (PortAudio)
 - **Einstellungs-Dialog** (wie RotorTcpBridge): linke Tab-Liste, rechter Inhalt
   - **CAT-Verbindung**: COM-Port, Baudrate, Timeout, Auto-Connect,
     TX-/RX-Polling, EQ-Profil-Anzeige
+  - **Kalibrierung**: S-Meter und PO (siehe oben)
   - **Rig-Bridge**: FLRig (siehe oben)
+- **Tastenkürzel** (Auswahl): `Ctrl+Shift+E` Equalizer, `Ctrl+Shift+A`
+  Audio-Player, `Ctrl+Shift+R` Audio-Recorder, `Ctrl+Shift+L` Live‑PC Funk,
+  `Ctrl+Shift+K` Speicherkanäle, `Ctrl+Shift+S` Soundeinstellung,
+  `Ctrl+L` CAT-Log, `Ctrl+D` Dark Mode
 - **Hilfe → Version**: About-Fenster mit Versionsnummer und Lizenz
 - **Hilfe → Update prüfen**: Vergleich mit dem neuesten Release auf
   [GitHub Releases](https://github.com/DK8DE/FT991AudioManager/releases)
@@ -148,6 +210,21 @@ Radio parallel nutzen (über FLRig), während der Audiomanager läuft.
 - Spaltenbreiten/Fenster-Geometrie bleiben über Neustarts erhalten.
 
 ## Geräte-Spezifika und Hinweise
+
+### Galvanische Trennung (PC-Headset / Audio-Pfade)
+
+Für **Live‑PC Funk**, Headset-Monitoring oder jeden Betrieb, bei dem
+**Audio-Leitungen** zwischen PC und FT-991/SCU-17 geschlossen werden,
+empfehlen wir eine **galvanische Trennung** auf dem Audio-Pfad. Typische
+Lösungen: Audio-Transformator-Box, Interface mit integrierter Trennung oder
+ein sauber getrenntes Funk-USB-Interface — nicht nur ein einfaches
+Klinken-Kabel PC ↔ Funk.
+
+Gründe: unterschiedliche **Massepotenziale** (Brummschleifen, Rauschen),
+**Pegelanpassung** und Schutz vor **Überspannung** zwischen Geräten. Die
+serielle **CAT-Verbindung** ersetzt keine Audio-Trennung.
+
+### CAT und Funkgerät
 
 - **Werks-Baudrate** des CAT-Ports: **38400**. Im Menü 031 (`CAT RATE`)
   kann auf 4800/9600/19200/38400 umgestellt werden.
@@ -212,13 +289,16 @@ Nützliche Schalter:
 `%APPDATA%\FT991AudioManager\`
 
 - `settings.json` (Defaults: Dark Mode an, Polling 100 ms, …)
-- `presets.json` (wird beim ersten Start angelegt)
-- optional: `po_calibration.json`, `memory_backups\`, `memory_exports\`
+- `presets.json`, `favorites.json` (beim ersten Start angelegt)
+- optional: `po_calibration.json`, `smeter_calibration.json`,
+  `memory_backups\`, `memory_exports\`, Speicherkanal-Caches
 
 Liegt noch ein alter Ordner `data\` neben der EXE (frühere Versionen),
 werden vorhandene Dateien beim ersten Start nach AppData **kopiert**.
 
-In der **Entwicklung** bleibt alles unter `<Projekt-Root>\data\`.
+In der **Entwicklung** (nicht gefroren) liegt der gleiche Ordner unter
+`<Projekt-Root>\data\`. Im Repository ist nur `data/.gitkeep` versioniert —
+persönliche Konfigurationen gehören nicht ins Git.
 
 ### Inno-Setup-Installer (`installer.ps1`)
 
@@ -273,14 +353,13 @@ ft991_audio_manager/
 ├── FT991AudioManager.spec   # PyInstaller + Windows-Versionsinfo
 ├── requirements.txt
 ├── cat/                     # Serielle CAT-Schicht (Threadsafe, Log)
-├── audio/                   # Audio-Player, PTT-Worker, Funk-Umschaltung
+├── audio/                   # Player, Recorder, PTT, T-Call, Funk-Umschaltung
+├── live/                    # Live-DSP und PortAudio-Engine (sounddevice)
 ├── rig_bridge/              # FLRig-TCP-Server
 ├── mapping/                 # Encoder/Decoder für alle CAT-Kommandos
-├── model/                   # Settings, Profile, Persistierung
-├── gui/                     # PySide6-Widgets (Main, Meter, Player, …)
-├── data/
-│   ├── presets.json         # Default-Profile (Beispiele)
-│   └── po_calibration.json  # optional, nach Kalibrierung
+├── model/                   # Settings, Profile, Favoriten, Persistierung
+├── gui/                     # PySide6-Widgets (Main, Meter, Live, Player, …)
+├── data/                    # User-Daten (Dev); nur .gitkeep im Repo
 └── tests/                   # 340+ Unit-Tests (unittest)
 ```
 

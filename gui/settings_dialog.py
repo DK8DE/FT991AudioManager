@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -45,6 +46,7 @@ from .settings_layout import (
     hint_label,
     narrow_panel,
     wrap_checkbox,
+    WrappingCheckBox,
 )
 
 from cat import (
@@ -56,7 +58,7 @@ from cat import (
     SerialCAT,
 )
 from model import AppSettings
-from model.app_settings import POLL_MAX_MS, POLL_MIN_MS
+from model.app_settings import POLL_MAX_MS, POLL_MIN_MS, TxPollSettings
 from rig_bridge.manager import RigBridgeManager
 
 from .po_calibration_widget import PoCalibrationWidget
@@ -433,7 +435,61 @@ class ConnectionSettingsDialog(QDialog):
         form.addRow("TX-Intervall:", self.poll_tx_spin)
         form.addRow("RX-Intervall:", self.poll_rx_spin)
         outer.addLayout(form)
+        outer.addWidget(self._build_tx_poll_diag_group())
         return box
+
+    def _build_tx_poll_diag_group(self) -> QGroupBox:
+        box = QGroupBox("TX-Polling")
+        outer = QVBoxLayout(box)
+        outer.setContentsMargins(10, 14, 10, 10)
+        outer.setSpacing(6)
+
+        outer.addWidget(
+            hint_label(
+                "Haken = CAT-Abfrage während TX aktiv. Siehe Quickinfo an dem Frequenz-Häkchen.\n "
+                "Betrifft nur den TX-Poll; der TX-Status (TX;) wird weiterhin abgefragt."
+            )
+        )
+
+        tp = self._settings.polling.tx_poll
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(6)
+
+        _freq_tooltip = (
+            "QRG während Sendung per CAT abfragen (FA bzw. FB).\n"
+            "Das Lesen der Frequenz unter TX kann ein hörbares Knacken im\n "
+            "Sendesignal verursachen — deshalb ist der Standard aus. Nur aktivieren,\n "
+            "wenn die QRG-Anzeige während TX live mitlaufen soll.\n"
+        )
+        _default_tooltip = "Während Sendung per CAT abfragen."
+
+        self._tx_poll_checks: dict[str, WrappingCheckBox] = {}
+        items = (
+            ("comp", "COMP (RM3)"),
+            ("alc", "ALC (RM4)"),
+            ("po", "PO / Leistung (RM5)"),
+            ("swr", "SWR (RM6)"),
+            ("frequency_a", "Frequenz VFO-A (FA)"),
+            ("frequency_b", "Frequenz VFO-B (FB)"),
+            ("pc_power", "Sendeleistung PC (PC)"),
+        )
+        for idx, (key, label) in enumerate(items):
+            chk = wrap_checkbox(label)
+            chk.setChecked(bool(getattr(tp, key)))
+            if key in ("frequency_a", "frequency_b"):
+                chk.setToolTip(_freq_tooltip)
+            else:
+                chk.setToolTip(f"„{label}“ — {_default_tooltip}")
+            self._tx_poll_checks[key] = chk
+            grid.addWidget(chk, idx // 2, idx % 2)
+        outer.addLayout(grid)
+        return box
+
+    def _read_tx_poll_settings(self) -> TxPollSettings:
+        return TxPollSettings(
+            **{key: chk.isChecked() for key, chk in self._tx_poll_checks.items()}
+        )
 
     def _build_profile_view_group(self) -> QGroupBox:
         box = QGroupBox("EQ-Profil-Anzeige")
@@ -622,6 +678,7 @@ class ConnectionSettingsDialog(QDialog):
             rx_ms = tx_ms
         self._settings.polling.tx_interval_ms = tx_ms
         self._settings.polling.rx_interval_ms = rx_ms
+        self._settings.polling.tx_poll = self._read_tx_poll_settings()
 
         self._settings.ui.hide_extended_in_ssb = bool(
             self.hide_extended_ssb_check.isChecked()

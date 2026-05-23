@@ -53,6 +53,38 @@ class CatSettings:
 
 
 @dataclass
+class TxPollSettings:
+    """Einzelne CAT-Reads in :meth:`MeterPoller._poll_tx` (nur unter Sendung).
+
+    Standard: alle Reads an, **QRG (VFO-A/B) aus** — FA/FB während TX
+    kann Knacken im Sendesignal verursachen.
+    """
+
+    comp: bool = True
+    alc: bool = True
+    po: bool = True
+    swr: bool = True
+    frequency_a: bool = False
+    frequency_b: bool = False
+    pc_power: bool = True
+
+    @classmethod
+    def from_dict(cls, raw: object) -> "TxPollSettings":
+        if not isinstance(raw, dict):
+            return cls()
+        defaults = cls()
+        return cls(
+            comp=bool(raw.get("comp", defaults.comp)),
+            alc=bool(raw.get("alc", defaults.alc)),
+            po=bool(raw.get("po", defaults.po)),
+            swr=bool(raw.get("swr", defaults.swr)),
+            frequency_a=bool(raw.get("frequency_a", defaults.frequency_a)),
+            frequency_b=bool(raw.get("frequency_b", defaults.frequency_b)),
+            pc_power=bool(raw.get("pc_power", defaults.pc_power)),
+        )
+
+
+@dataclass
 class PollingSettings:
     """Polling-Intervalle für die Live-Meter.
 
@@ -64,6 +96,7 @@ class PollingSettings:
 
     tx_interval_ms: int = DEFAULT_POLL_TX_MS
     rx_interval_ms: int = DEFAULT_POLL_RX_MS
+    tx_poll: TxPollSettings = field(default_factory=TxPollSettings)
 
 
 @dataclass
@@ -165,6 +198,7 @@ class AppSettings:
                 polling_raw.get("rx_interval_ms", DEFAULT_POLL_RX_MS),
                 DEFAULT_POLL_RX_MS,
             ),
+            tx_poll=TxPollSettings.from_dict(polling_raw.get("tx_poll")),
         )
         # RX-Intervall darf nicht kürzer als TX-Intervall sein.
         if polling.rx_interval_ms < polling.tx_interval_ms:
