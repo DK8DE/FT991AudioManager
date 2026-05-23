@@ -189,6 +189,62 @@ class LiveBtRemapTest(unittest.TestCase):
         self.assertEqual((mic, mon), (1, 8))
 
 
+class LiveEndpointRemapRankTest(unittest.TestCase):
+    @patch.object(LiveAudioEngine, "_max_working_samplerate")
+    @patch.object(LiveAudioEngine, "_pa_endpoint_siblings")
+    @patch("live.live_audio_engine._hostapi_name_for_device")
+    @patch("live.live_audio_engine.sd")
+    def test_prefers_wasapi_over_wdm_when_both_work(
+        self,
+        mock_sd: MagicMock,
+        mock_api: MagicMock,
+        mock_siblings: MagicMock,
+        mock_max_sr: MagicMock,
+    ) -> None:
+        mock_siblings.return_value = [5, 12]
+        all_devices: list[dict[str, object] | None] = [None] * 13
+        all_devices[5] = {
+            "name": "Speakers (Realtek)",
+            "hostapi": 0,
+            "max_output_channels": 2,
+        }
+        all_devices[12] = {
+            "name": "Speakers (Realtek)",
+            "hostapi": 1,
+            "max_output_channels": 2,
+        }
+
+        def _query(dev: object | None = None, kind: object | None = None) -> object:
+            del kind
+            if dev is None:
+                return all_devices
+            return all_devices[int(dev)]
+
+        mock_sd.query_devices.side_effect = _query
+
+        def _api(_sd: object, info: dict) -> str:
+            return "Windows WASAPI" if int(info.get("hostapi", 0)) == 0 else "Windows WDM-KS"
+
+        mock_api.side_effect = _api
+
+        def _max_sr(_bs: int, _cin: object, cout: object) -> float:
+            outs = [d for d, _ch in cout]
+            if 5 in outs:
+                return 48000.0
+            if 12 in outs:
+                return 96000.0
+            return 0.0
+
+        mock_max_sr.side_effect = _max_sr
+        mon = LiveAudioEngine._remap_endpoint_sibling(
+            5,
+            for_input=False,
+            mic_dev=1,
+            monitor_dev=5,
+        )
+        self.assertEqual(mon, 5)
+
+
 class LiveListenRemapTest(unittest.TestCase):
     @patch.object(LiveAudioEngine, "_max_working_samplerate")
     @patch.object(LiveAudioEngine, "_pa_endpoint_siblings")

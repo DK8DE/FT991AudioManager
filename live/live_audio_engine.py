@@ -94,6 +94,7 @@ class LiveAudioEngine:
         self._stream_out_funk: Optional[_SdStream] = None
         self._stream_in_listen: Optional[_SdStream] = None
         self._stream_idle_listen_in: Optional[_SdStream] = None
+        self._stream_idle_mic_in: Optional[_SdStream] = None
         self._stream_idle_mon_out: Optional[_SdStream] = None
         self._stream_mic_preview_in: Optional[_SdStream] = None
         self._boxed: LiveSettings = LiveSettings()
@@ -123,14 +124,20 @@ class LiveAudioEngine:
         return bool(self._mic_preview_running)
 
     def push_idle_listen_settings(self, live: LiveSettings) -> None:
-        """Lautheit (Lin‑Mit) / SR-Anpassungen ohne Streams neu zu starten."""
+        """Idle‑Monitor: Lin‑Mit, Mic‑Send‑Abhör und Pegel ohne Streams neu zu starten."""
         if not self._idle_listen_running:
             return
         live.clamp_recursive()
-        self._idle_listen_snap = LiveSettings.from_dict(live.to_dict())
+        snap = LiveSettings.from_dict(live.to_dict())
+        self._idle_listen_snap = snap
+        if self._mic_preview_running:
+            self._mic_preview_snap = LiveSettings.from_dict(snap.to_dict())
 
     def push_mic_preview_settings(self, live: LiveSettings) -> None:
-        """Mic‑Gain o. Ä. ohne Preview‑Stream neu zu starten."""
+        """Mic‑Gain / Gate / Kompressor — Idle‑Monitor oder reine Pegel‑Vorschau."""
+        if self._idle_listen_running:
+            self.push_idle_listen_settings(live)
+            return
         if not self._mic_preview_running:
             return
         live.clamp_recursive()
@@ -154,12 +161,19 @@ class LiveAudioEngine:
             self.mic_meter_db = float(-120.0)
 
     def stop_idle_listen_monitor(self) -> None:
-        """Nur Idle‑Monitor stoppen (:meth:`stop` lässt das unberührt)."""
+        """Idle‑Offline‑Monitor stoppen (:meth:`stop` lässt das unberührt)."""
         self._idle_listen_running = False
+        self._mic_preview_running = False
         self.funk_listen_meter_db = float(-120.0)
         self.monitor_meter_db = float(-120.0)
+        if not self._running:
+            self.mic_meter_db = float(-120.0)
         objs: list[_SdStream] = []
-        for attr in ("_stream_idle_mon_out", "_stream_idle_listen_in"):
+        for attr in (
+            "_stream_idle_mon_out",
+            "_stream_idle_listen_in",
+            "_stream_idle_mic_in",
+        ):
             s = getattr(self, attr)
             setattr(self, attr, None)
             if s is not None:
@@ -183,7 +197,7 @@ class LiveAudioEngine:
 
     input_meter_db: float = -120.0
     output_meter_db: float = -120.0
-    #: Peakanzeige Mikro‑Pfad zum Monitor (inkl. Stummschaltung beim Mithören‑Aus).
+    #: Peakanzeige Sende‑Mic nach Gate/EQ/Kompressor/Limiter (vor Funk‑Gain).
     mic_meter_db: float = -120.0
     #: Signal am Monitor‑Device (DSP‑Mit + Funk‑Eing nach Summe und Monitor‑Gain).
     monitor_meter_db: float = -120.0
@@ -223,6 +237,13 @@ class LiveAudioEngine:
         inv = np.float32(max(0.0, min(2.0, float(ls.input_gain))))
         scaled = mono_in * inv
         return LiveAudioEngine._fit_mono_to_frames(scaled, int(frames))
+
+    def _mic_dsp_peak_dbfs(self, indata: object, ls: LiveSettings, frames: int) -> float:
+        """Peak dBFS nach Gate/EQ/Kompressor — wie der Sendepfad zum Funkgerät."""
+        y = self._dsp_mono_without_output_gain(ls, indata)
+        return LiveAudioEngine._mono_peak_dbfs(
+            LiveAudioEngine._fit_mono_to_frames(y, int(frames))
+        )
 
     def peek_meters_db(self) -> tuple[float, float]:
         """Kurzüberblick DSP für Textzeile („Eing./Ausg.“) — entspricht Live‑Strip‑Pegeln."""
@@ -396,10 +417,11 @@ class LiveAudioEngine:
             ls = weak_self._read_snap()
             y_dsp = weak_self._dsp_mono_without_output_gain(ls, safe_in)
             gv = np.float32(max(0.0, min(2.0, float(ls.output_gain))))
-            mic_trim = LiveAudioEngine._mono_mic_after_input_gain_fit(
-                safe_in, ls, nf,
+            weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(
+                LiveAudioEngine._fit_mono_to_frames(
+                    np.asarray(y_dsp, dtype=np.float32).reshape(-1), nf
+                )
             )
-            weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(mic_trim)
 
             mic_sig = np.zeros(nf, dtype=np.float32)
             if not bool(ls.suppress_live_monitor_mic):
@@ -477,11 +499,12 @@ class LiveAudioEngine:
             else:
                 safe_in = np.asarray(indata, dtype=np.float32)
             ls = weak_self._read_snap()
-            fit_trim = LiveAudioEngine._mono_mic_after_input_gain_fit(
-                safe_in, ls, nf_f,
-            )
-            weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_trim)
             y_dsp = weak_self._dsp_mono_without_output_gain(ls, safe_in)
+            weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(
+                LiveAudioEngine._fit_mono_to_frames(
+                    np.asarray(y_dsp, dtype=np.float32).reshape(-1), nf_f
+                )
+            )
             gv_f = np.float32(max(0.0, min(2.0, float(ls.funk_output_gain))))
             # Gesamt-Lautheit auf dem Monitor-Device: später in ``output_cb_monitor``
             # (summe Mic + Funk-Eing × ``output_gain``), sonst betrifft der Regler nicht
@@ -664,9 +687,10 @@ class LiveAudioEngine:
         self._stream_out_funk = o_fnk_obj
 
     def start_idle_listen_monitor(self, live: LiveSettings) -> tuple[bool, str]:
-        """Nur Lin‑Mit → Monitor‑Ausgang (DSP/EQ ohne Live‑Mic).
+        """Offline‑Monitor: Mic‑Send‑Pegel/Abhör (Gate/EQ/Komp.) + optional Funk‑Eingang.
 
-        Wird automatisch beim Wechsel in :meth:`start` gestoppt.
+        „Eigene NF abhören“ spielt den Sendepfad (Ende der DSP‑Kette) auf den Monitor,
+        auch ohne PTX — gemischt mit Funk‑Eingang wie im Live‑Betrieb.
         """
         ok0, msg0 = self.prerequisites_ok()
         if not ok0:
@@ -674,37 +698,71 @@ class LiveAudioEngine:
         assert sd is not None
 
         live.clamp_recursive()
+        mic_sid = str(live.input_device_id or "").strip()
         listen_sid = str(live.funk_listen_input_device_id or "").strip()
         mon_sid = str(live.output_device_id or "").strip()
-        if not listen_sid or not mon_sid:
+        want_mic_meter = bool(mic_sid)
+        want_rx_listen = bool(listen_sid)
+        want_mic_monitor = not bool(live.suppress_live_monitor_mic)
+        want_monitor_out = bool(mon_sid) and (
+            want_rx_listen or (want_mic_meter and want_mic_monitor)
+        )
+
+        if not want_mic_meter and not want_rx_listen and not want_monitor_out:
             self.stop_idle_listen_monitor()
             return True, ""
 
         allowed_in = tuple(x for x, _ in self._enumerate_input_indices())
         allowed_out = tuple(x for x, _ in self._enumerate_output_indices())
-        in_listen = LiveAudioEngine._parse_input_device_index(
-            listen_sid, allowed_in
-        )
-        out_mon = LiveAudioEngine._parse_output_device_index(mon_sid, allowed_out)
-        if in_listen is None or out_mon is None:
-            self.stop_idle_listen_monitor()
-            return False, (
-                "Lin‑Mit Idle‑Monitor: ungültiges Aufnahme- oder Ausgangsgerät."
+
+        in_mic: Optional[int] = None
+        if want_mic_meter:
+            in_mic = LiveAudioEngine._parse_input_device_index(mic_sid, allowed_in)
+            if in_mic is None:
+                self.stop_idle_listen_monitor()
+                return False, "Idle‑Monitor: ungültiges PC‑Mikrofon."
+
+        in_listen: Optional[int] = None
+        if want_rx_listen:
+            in_listen = LiveAudioEngine._parse_input_device_index(
+                listen_sid, allowed_in
             )
+            if in_listen is None:
+                self.stop_idle_listen_monitor()
+                return False, "Idle‑Monitor: ungültiger Funk‑Eingang."
+
+        out_mon: Optional[int] = None
+        if want_monitor_out:
+            out_mon = LiveAudioEngine._parse_output_device_index(mon_sid, allowed_out)
+            if out_mon is None:
+                self.stop_idle_listen_monitor()
+                return False, "Idle‑Monitor: ungültiger Monitor‑Ausgang."
 
         _mic, out_mon, _funk, in_listen = LiveAudioEngine._apply_stream_device_remapping(
-            None,
+            in_mic,
             out_mon,
             listen_in_dev=in_listen,
         )
+        if want_mic_meter and in_mic is not None and _mic is not None:
+            in_mic = _mic
 
         self.stop_idle_listen_monitor()
+        self.stop_mic_preview_monitor()
 
-        in_ch_l = max(1, int(self._in_channels_hint(in_listen)))
-        out_ch_mon = max(1, int(self._out_channels_hint(out_mon)))
+        in_ch_mic = (
+            max(1, int(self._in_channels_hint(in_mic))) if in_mic is not None else 1
+        )
+        in_ch_l = (
+            max(1, int(self._in_channels_hint(in_listen)))
+            if in_listen is not None
+            else 1
+        )
+        out_ch_mon = (
+            max(1, int(self._out_channels_hint(out_mon))) if out_mon is not None else 1
+        )
         sr, bs = self._resolve_stream_params(
             live,
-            mic_dev=None,
+            mic_dev=in_mic,
             monitor_dev=out_mon,
             listen_in_dev=in_listen,
         )
@@ -712,13 +770,49 @@ class LiveAudioEngine:
         live.samplerate = int(round(sr))
         live.blocksize = int(bs)
 
+        if want_mic_meter:
+            dsp = self._get_dsp()
+            tpl = tuple(
+                LiveEqBandSettings.from_dict(b.to_dict()) for b in live.eq_bands
+            )
+            dsp.reset(float(sr), tpl)
+
         import numpy as np
 
         weak_self = self
         lock = Lock()
+        q_mic: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
         q_listen: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
 
-        def input_cb_idle(
+        def input_cb_idle_mic(
+            indata: object,
+            frames: int,
+            time_info: object,
+            status: object,
+        ) -> None:
+            del time_info
+            if not weak_self._idle_listen_running:
+                return
+            nf_i = int(frames)
+            if _portaudio_cb_status_problematic(status):
+                safe_in = np.zeros((nf_i, in_ch_mic), dtype=np.float32)
+            else:
+                safe_in = np.asarray(indata, dtype=np.float32)
+            ls = weak_self._idle_listen_snap
+            y_dsp = weak_self._dsp_mono_without_output_gain(ls, safe_in)
+            weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(
+                LiveAudioEngine._fit_mono_to_frames(
+                    np.asarray(y_dsp, dtype=np.float32).reshape(-1), nf_i
+                )
+            )
+            if not want_monitor_out or not want_mic_monitor:
+                return
+            ym = np.asarray(y_dsp, dtype=np.float32).reshape(-1)
+            fit_m = LiveAudioEngine._fit_mono_to_frames(ym, nf_i)
+            with lock:
+                q_mic.append(fit_m.astype(np.float32, copy=True))
+
+        def input_cb_idle_listen(
             indata: object,
             frames: int,
             time_info: object,
@@ -741,6 +835,8 @@ class LiveAudioEngine:
             yr = mono_rx.reshape(-1) * gv_l
             fit_r = LiveAudioEngine._fit_mono_to_frames(yr, nf_i)
             weak_self.funk_listen_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_r)
+            if not want_monitor_out:
+                return
             with lock:
                 q_listen.append(fit_r.astype(np.float32, copy=True))
 
@@ -758,52 +854,79 @@ class LiveAudioEngine:
                 )
                 return
             with lock:
-                chunk_r = (
-                    q_listen.popleft()
-                    if q_listen
-                    else np.zeros(nf, dtype=np.float32)
-                )
+                if want_mic_monitor and q_mic:
+                    chunk_m = q_mic.popleft()
+                else:
+                    chunk_m = np.zeros(nf, dtype=np.float32)
+                if want_rx_listen and q_listen:
+                    chunk_r = q_listen.popleft()
+                else:
+                    chunk_r = np.zeros(nf, dtype=np.float32)
             ls = weak_self._idle_listen_snap
-            gv_mon = np.float32(max(0.0, min(2.0, float(ls.output_gain))))
+            ym = LiveAudioEngine._fit_mono_to_frames(chunk_m, nf)
             yrx = LiveAudioEngine._fit_mono_to_frames(chunk_r, nf)
-            y_out = yrx * gv_mon
-            np.clip(y_out, -1.0, 1.0, out=y_out)
+            gv_mon = np.float32(max(0.0, min(2.0, float(ls.output_gain))))
+            mix = (ym + yrx) * gv_mon
+            np.clip(mix, -1.0, 1.0, out=mix)
             weak_self.funk_meter_db = float(-120.0)
-            weak_self.monitor_meter_db = LiveAudioEngine._mono_peak_dbfs(y_out)
-            LiveAudioEngine._stereo_fill_mono(outdata, y_out)
+            weak_self.monitor_meter_db = LiveAudioEngine._mono_peak_dbfs(mix)
+            LiveAudioEngine._stereo_fill_mono(outdata, mix)
 
         try:
-            istream = sd.InputStream(
-                device=in_listen,
-                channels=in_ch_l,
-                dtype="float32",
-                samplerate=sr,
-                blocksize=bs,
-                latency="low",
-                callback=input_cb_idle,
-            )
-            ostream = sd.OutputStream(
-                device=out_mon,
-                channels=out_ch_mon,
-                dtype="float32",
-                samplerate=sr,
-                blocksize=bs,
-                latency="low",
-                callback=output_cb_idle,
-            )
-            self._idle_listen_snap = LiveSettings.from_dict(live.to_dict())
-            self._stream_idle_listen_in = istream
-            self._stream_idle_mon_out = ostream
+            snap = LiveSettings.from_dict(live.to_dict())
+            self._idle_listen_snap = snap
+            self._mic_preview_snap = LiveSettings.from_dict(snap.to_dict())
             self._idle_listen_running = True
-            istream.start()
-            ostream.start()
+            self._mic_preview_running = bool(want_mic_meter)
+
+            if in_mic is not None:
+                istream_mic = sd.InputStream(
+                    device=in_mic,
+                    channels=in_ch_mic,
+                    dtype="float32",
+                    samplerate=sr,
+                    blocksize=bs,
+                    latency="low",
+                    callback=input_cb_idle_mic,
+                )
+                self._stream_idle_mic_in = istream_mic
+                istream_mic.start()
+
+            if in_listen is not None:
+                istream_rx = sd.InputStream(
+                    device=in_listen,
+                    channels=in_ch_l,
+                    dtype="float32",
+                    samplerate=sr,
+                    blocksize=bs,
+                    latency="low",
+                    callback=input_cb_idle_listen,
+                )
+                self._stream_idle_listen_in = istream_rx
+                istream_rx.start()
+
+            if want_monitor_out and out_mon is not None:
+                ostream = sd.OutputStream(
+                    device=out_mon,
+                    channels=out_ch_mon,
+                    dtype="float32",
+                    samplerate=sr,
+                    blocksize=bs,
+                    latency="low",
+                    callback=output_cb_idle,
+                )
+                self._stream_idle_mon_out = ostream
+                ostream.start()
+
             return True, ""
         except BaseException as exc:
             self.stop_idle_listen_monitor()
             return False, self._friendly_sd_error(exc)
 
     def start_mic_preview_monitor(self, live: LiveSettings) -> tuple[bool, str]:
-        """PC‑Mikrofon nur für Pegelanzeige (ohne PTT / vollen Live‑Pfad)."""
+        """Nur Pegel — wird vom Idle‑Monitor abgedeckt; Fallback ohne Monitor‑Gerät."""
+        if self._idle_listen_running:
+            return True, ""
         ok0, msg0 = self.prerequisites_ok()
         if not ok0:
             return False, msg0
@@ -833,6 +956,12 @@ class LiveAudioEngine:
         live.samplerate = int(round(sr))
         live.blocksize = int(bs)
 
+        dsp = self._get_dsp()
+        tpl = tuple(
+            LiveEqBandSettings.from_dict(b.to_dict()) for b in live.eq_bands
+        )
+        dsp.reset(float(sr), tpl)
+
         import numpy as np
 
         weak_self = self
@@ -852,10 +981,7 @@ class LiveAudioEngine:
             else:
                 safe_in = np.asarray(indata, dtype=np.float32)
             ls = weak_self._mic_preview_snap
-            fit_trim = LiveAudioEngine._mono_mic_after_input_gain_fit(
-                safe_in, ls, nf_f,
-            )
-            weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_trim)
+            weak_self.mic_meter_db = weak_self._mic_dsp_peak_dbfs(safe_in, ls, nf_f)
 
         try:
             istream = sd.InputStream(
@@ -1136,7 +1262,9 @@ class LiveAudioEngine:
 
         all_d = sd.query_devices()
         best_dev = dev
-        best_score: Optional[tuple[float, float, int]] = None
+        # Host-API zuerst (WASAPI wie Qt/Audio-Player), dann Samplerate, dann
+        # ursprüngliche Auswahl — verhindert stumme WDM-KS-Wahl trotz höherer Rate.
+        best_score: Optional[tuple[int, float, int]] = None
 
         for cand in siblings:
             try:
@@ -1148,11 +1276,11 @@ class LiveAudioEngine:
                 continue
             try:
                 info = all_d[cand]
-                rank = _hostapi_rank(_hostapi_name_for_device(sd, info))
+                rank = int(_hostapi_rank(_hostapi_name_for_device(sd, info)))
             except Exception:
-                rank = 9.0
-            score = (max_sr, -rank, -cand)
-            if best_score is None or score > best_score:
+                rank = 9
+            score = (rank, -max_sr, abs(cand - int(dev)))
+            if best_score is None or score < best_score:
                 best_score = score
                 best_dev = cand
 

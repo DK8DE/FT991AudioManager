@@ -170,6 +170,7 @@ def _best_pa_row_for_qt_name(
     qt_desc: str,
     *,
     want_input: bool,
+    min_score: float = _QT_PA_MATCH_MIN_SCORE,
 ) -> Optional[Tuple[int, str, str]]:
     """Beste PortAudio-Zeile (index, pa_name, tooltip) für einen Qt-Anzeigenamen."""
     qkey = _norm_match_key(qt_desc)
@@ -189,7 +190,7 @@ def _best_pa_row_for_qt_name(
 
         pa_name = str(d.get("name", f"Gerät {i}")).strip() or f"Gerät {i}"
         score = _match_score(qkey, pa_name)
-        if score < _QT_PA_MATCH_MIN_SCORE:
+        if score < min_score:
             continue
 
         api = _hostapi_name_for_device(sd, d)
@@ -205,8 +206,14 @@ def _best_pa_row_for_qt_name(
 
     if best is None:
         return None
-    _rank, idx, _score, pa_name, api = best
-    return idx, pa_name, _pa_row_tip(sd, idx, api)
+    _rank, idx, match_score, pa_name, api = best
+    tip = _pa_row_tip(sd, idx, api)
+    if match_score < _QT_PA_MATCH_MIN_SCORE:
+        tip = (
+            f"{tip}\nHinweis: Gerätezuordnung unsicher "
+            f"(Score {match_score:.2f}) — ggf. „Geräte neu laden“."
+        )
+    return idx, pa_name, tip
 
 
 def _raw_pa_device_rows(
@@ -241,6 +248,13 @@ def _device_rows(
         out: List[Tuple[int, str, str]] = []
         for qdesc in qt_labels:
             row = _best_pa_row_for_qt_name(sd, qdesc, want_input=want_input)
+            if row is None:
+                row = _best_pa_row_for_qt_name(
+                    sd,
+                    qdesc,
+                    want_input=want_input,
+                    min_score=0.30,
+                )
             if row is None:
                 continue
             idx, pa_label, tip = row

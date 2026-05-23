@@ -652,6 +652,11 @@ class LiveWindow(QMainWindow):
         df = QFormLayout(dev)
         self._c_in = QComboBox()
         self._c_out = QComboBox()
+        self._c_out.setToolTip(
+            "Monitor‑Ausgang (PortAudio/sounddevice — getrennt vom Audio‑Player).\n"
+            "Tooltip zeigt den zugeordneten PortAudio‑Index und Host‑API.\n"
+            "„Eigene NF abhören“ muss aktiv sein, um das bearbeitete Mikro zu hören."
+        )
         self._c_funk = QComboBox()
         df.addRow("PC‑Mikrofon:", self._c_in)
         df.addRow("Monitor:", self._c_out)
@@ -685,7 +690,8 @@ class LiveWindow(QMainWindow):
         bf.addSpacing(14)
         self._chk_live_mithoren = QCheckBox("Eigene NF abhören")
         self._chk_live_mithoren.setToolTip(
-            "Bearbeitetes PC-Mikrofon auf dem Monitor-Ausgang abhören."
+            "Bearbeitetes PC‑Mikrofon (nach Gate, EQ, Kompressor) auf dem "
+            "Monitor‑Ausgang abhören — auch ohne Sendung / offline."
         )
         self._chk_live_mithoren.toggled.connect(
             self._on_suppress_live_monitor_toggled
@@ -783,7 +789,11 @@ class LiveWindow(QMainWindow):
         _pfl = make_live_level_bar()
         self._live_level_bars = [_pm, _pmon, _pf, _pfl]
 
-        self._sl_mic_v, self._lb_mic_pct = _mk_v_col("Mic", _pm)
+        self._sl_mic_v, self._lb_mic_pct = _mk_v_col("Mic · Send", _pm)
+        _pm.setToolTip(
+            "Sendepegel nach Noise Gate, EQ und Kompressor "
+            "(wie zum Funkgerät — auch ohne PTT zum Einstellen)."
+        )
         self._sl_mon_v, self._lb_mon_pct = _mk_v_col("Monitor", _pmon)
         self._sl_funk_v, self._lb_funk_pct = _mk_v_col("Funk", _pf)
         self._sl_flisten_v, self._lb_flisten_pct = _mk_v_col("Funk‑Eingang", _pfl)
@@ -1634,7 +1644,7 @@ class LiveWindow(QMainWindow):
             self._refresh_ptt_button_appearance()
 
     def _refresh_idle_listen_monitor(self, liv: Optional[LiveSettings] = None) -> None:
-        """Funk‑Eingang → Monitor, solange „Start Live“ aus ist."""
+        """Offline: Mic‑Send‑Pegel/Abhör, optional Funk‑Eingang → Monitor."""
         if getattr(self, "_suppress_idle_listen_monitor", False):
             return
 
@@ -1646,97 +1656,77 @@ class LiveWindow(QMainWindow):
 
         if not self.isVisible():
             self._engine.stop_idle_listen_monitor()
-            self._idle_monitor_fp_key = None
-            return
-
-        if self._engine.is_running():
-            self._idle_monitor_fp_key = None
-            return
-
-        prereq_ok, _ = self._engine.prerequisites_ok()
-        if not prereq_ok:
-            self._engine.stop_idle_listen_monitor()
-            self._idle_monitor_fp_key = None
-            return
-
-        listen_sid = str(ref.funk_listen_input_device_id or "").strip()
-        mon_sid = str(ref.output_device_id or "").strip()
-        if not listen_sid or not mon_sid:
-            self._engine.stop_idle_listen_monitor()
-            self._idle_monitor_fp_key = None
-            return
-
-        fp_key: tuple[object, ...] = (
-            listen_sid,
-            mon_sid,
-        )
-        if fp_key == self._idle_monitor_fp_key and self._engine.is_idle_listen_monitor_running():
-            self._engine.push_idle_listen_settings(ref)
-            self._c_funk_listen.setToolTip(
-                "Funkeingabe wird immer auf den Monitor‑Ausgang gemischt (Mithören)."
-            )
-            return
-
-        self._idle_monitor_fp_key = fp_key
-        ok, msg = self._engine.start_idle_listen_monitor(ref)
-        if not ok:
-            self._idle_monitor_fp_key = None
-            self._engine.stop_idle_listen_monitor()
-            tip = (
-                "Funkeingabe wird immer auf den Monitor‑Ausgang gemischt (Mithören).\n\n"
-                f"Mithören konnte nicht starten: {msg}"
-            )
-            self._c_funk_listen.setToolTip(tip)
-            return
-        self._c_funk_listen.setToolTip(
-            "Funkeingabe wird immer auf den Monitor‑Ausgang gemischt (Mithören)."
-        )
-
-    def _refresh_mic_preview_monitor(self, liv: Optional[LiveSettings] = None) -> None:
-        """PC‑Mikrofon‑Pegel, solange das Fenster offen ist und kein Live‑Stream läuft."""
-        ref = liv
-        if ref is None:
-            ref = LiveSettings.from_dict(self._gather_live_from_ui().to_dict())
-        else:
-            ref = LiveSettings.from_dict(ref.to_dict())
-
-        if not self.isVisible():
             self._engine.stop_mic_preview_monitor()
+            self._idle_monitor_fp_key = None
             self._mic_preview_fp_key = None
             return
 
         if self._engine.is_running():
-            self._engine.stop_mic_preview_monitor()
+            self._idle_monitor_fp_key = None
             self._mic_preview_fp_key = None
             return
 
         prereq_ok, _ = self._engine.prerequisites_ok()
         if not prereq_ok:
+            self._engine.stop_idle_listen_monitor()
             self._engine.stop_mic_preview_monitor()
+            self._idle_monitor_fp_key = None
             self._mic_preview_fp_key = None
             return
 
         mic_sid = str(ref.input_device_id or "").strip()
-        if not mic_sid:
+        listen_sid = str(ref.funk_listen_input_device_id or "").strip()
+        mon_sid = str(ref.output_device_id or "").strip()
+        if not mic_sid and not listen_sid:
+            self._engine.stop_idle_listen_monitor()
             self._engine.stop_mic_preview_monitor()
+            self._idle_monitor_fp_key = None
             self._mic_preview_fp_key = None
             return
 
         fp_key: tuple[object, ...] = (
             mic_sid,
+            listen_sid,
+            mon_sid,
             int(ref.samplerate),
             int(ref.blocksize),
             round(float(ref.input_gain), 4),
+            bool(ref.suppress_live_monitor_mic),
         )
-        if fp_key == self._mic_preview_fp_key and self._engine.is_mic_preview_running():
-            self._engine.push_mic_preview_settings(ref)
+        if fp_key == self._idle_monitor_fp_key and self._engine.is_idle_listen_monitor_running():
+            self._engine.push_idle_listen_settings(ref)
+            self._c_funk_listen.setToolTip(
+                "Funkeingabe wird auf den Monitor‑Ausgang gemischt (Mithören)."
+            )
             return
 
+        self._idle_monitor_fp_key = fp_key
         self._mic_preview_fp_key = fp_key
-        ok, _msg = self._engine.start_mic_preview_monitor(ref)
+        ok, msg = self._engine.start_idle_listen_monitor(ref)
         if not ok:
+            self._idle_monitor_fp_key = None
             self._mic_preview_fp_key = None
-            self._engine.stop_mic_preview_monitor()
+            self._engine.stop_idle_listen_monitor()
+            err_tip = f"Monitor/Mithören konnte nicht starten:\n{msg}"
+            if mon_sid or listen_sid:
+                self._c_funk_listen.setToolTip(
+                    "Funkeingabe wird auf den Monitor‑Ausgang gemischt (Mithören).\n\n"
+                    + err_tip
+                )
+            if mon_sid:
+                base = str(self._c_out.toolTip() or "").split("\n\nMonitor/Mithören")[0]
+                self._c_out.setToolTip(f"{base}\n\n{err_tip}".strip())
+            return
+        self._c_funk_listen.setToolTip(
+            "Funkeingabe wird auf den Monitor‑Ausgang gemischt (Mithören)."
+        )
+        mon_base = str(self._c_out.toolTip() or "").split("\n\nMonitor/Mithören")[0]
+        if mon_base:
+            self._c_out.setToolTip(mon_base)
+
+    def _refresh_mic_preview_monitor(self, liv: Optional[LiveSettings] = None) -> None:
+        """Wird über :meth:`_refresh_idle_listen_monitor` mit abgedeckt."""
+        self._refresh_idle_listen_monitor(liv)
 
     def _defer_refresh_idle_listen_monitor(self) -> None:
         if not self.isVisible():
