@@ -32,6 +32,7 @@ class RadioControlBar(QWidget):
     audio_player_clicked = Signal()
     audio_recorder_clicked = Signal()
     sound_settings_clicked = Signal()
+    live_clicked = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -132,6 +133,13 @@ class RadioControlBar(QWidget):
         )
         self._sound_btn.clicked.connect(self.sound_settings_clicked.emit)
 
+        self._live_btn = QPushButton("Live")
+        self._live_btn.setMinimumWidth(64)
+        self._live_btn.setToolTip(
+            "Live‑Monitoring und über den PC funken"
+        )
+        self._live_btn.clicked.connect(self.live_clicked.emit)
+
         ctrl_frame = QFrame(self)
         ctrl_frame.setObjectName("panelFrame")
         ctrl_frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -144,6 +152,7 @@ class RadioControlBar(QWidget):
         ctrl_layout.addWidget(self._tcall_btn)
         ctrl_layout.addWidget(self._audio_btn)
         ctrl_layout.addWidget(self._recorder_btn)
+        ctrl_layout.addWidget(self._live_btn)
         ctrl_layout.addWidget(self._sound_btn)
         ctrl_layout.addStretch(1)
 
@@ -288,3 +297,5 @@ class RadioControlBar(QWidget):
             self.set_repeater_minus_checked(False)
         self._audio_btn.setEnabled(True)
         self._recorder_btn.setEnabled(True)
+        self._live_btn.setEnabled(True)
+        self._sound_btn.setEnabled(True)

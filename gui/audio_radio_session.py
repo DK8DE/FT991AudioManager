@@ -1,9 +1,9 @@
-"""Gemeinsame CAT-Session für Audio-Player und Audio-Recorder.
+"""Gemeinsame CAT-Session für Audio-Player, Audio-Recorder und Live-Monitoring.
 
 Beim Öffnen eines Fensters werden die Menüs EX048/070/072/077/109 sofort
 für PC-Audio gesetzt und der Vormerkzustand für :meth:`restore` geladen; die
-Betriebsart (DATA-FM / …) wechselt erst bei Start von Wiedergabe, Replay oder
-Aufnahme. Sind beide Fenster zu, wird per :meth:`RadioPlaybackSetup.restore`
+Betriebsart (DATA-FM / …) wechselt erst bei Start von Wiedergabe, Replay,
+Aufnahme oder Live‑Sendung. Sind alle zugehörigen Fenster zu, wird per :meth:`RadioPlaybackSetup.restore`
 wiederhergestellt.
 """
 
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 
 class AudioRadioSessionHost(QObject):
-    """Ein :class:`RadioPlaybackSetup` + Worker-Thread für Player und Recorder."""
+    """Ein :class:`RadioPlaybackSetup` + Worker-Thread für Player, Recorder und Live."""
 
     def __init__(
         self,
@@ -71,7 +71,7 @@ class AudioRadioSessionHost(QObject):
 
     @property
     def has_open_audio_windows(self) -> bool:
-        """True, wenn Audio-Player oder -Recorder die Session nutzen."""
+        """True, wenn Player, Recorder oder Live die Session nutzt."""
         return bool(self._open_ids)
 
     def reload_data_mode_from_settings(self) -> None:
@@ -87,7 +87,7 @@ class AudioRadioSessionHost(QObject):
         QMetaObject.invokeMethod(
             self.worker,
             "run_apply_pc_menus",
-            Qt.ConnectionType.QueuedConnection,
+            Qt.QueuedConnection,
         )
 
     def on_window_hidden(self, window: QWidget) -> None:
@@ -115,7 +115,7 @@ class AudioRadioSessionHost(QObject):
         QMetaObject.invokeMethod(
             self.worker,
             "run_restore",
-            Qt.ConnectionType.QueuedConnection,
+            Qt.QueuedConnection,
         )
 
     def shutdown(self) -> None:

@@ -27,6 +27,7 @@ from ._app_paths import app_data_dir
 from .audio_player_settings import AudioPlayerSettings
 from .audio_recorder_settings import AudioRecorderSettings
 from .global_audio_settings import GlobalAudioSettings, sync_global_to_legacy
+from .live_settings import LiveSettings
 from .rig_bridge_settings import RigBridgeSettings
 from .smeter_calibration_settings import SmeterCalibrationSettings
 
@@ -110,6 +111,7 @@ class AppSettings:
     audio_player: AudioPlayerSettings = field(default_factory=AudioPlayerSettings)
     audio_recorder: AudioRecorderSettings = field(default_factory=AudioRecorderSettings)
     global_audio: GlobalAudioSettings = field(default_factory=GlobalAudioSettings)
+    live: LiveSettings = field(default_factory=LiveSettings)
     smeter_calibration: SmeterCalibrationSettings = field(
         default_factory=SmeterCalibrationSettings
     )
@@ -145,6 +147,7 @@ class AppSettings:
         audio_player_raw = data.get("audio_player", {}) or {}
         audio_recorder_raw = data.get("audio_recorder", {}) or {}
         global_audio_raw = data.get("global_audio")
+        live_raw = data.get("live")
         smeter_cal_raw = data.get("smeter_calibration", {}) or {}
 
         cat = CatSettings(
@@ -197,6 +200,7 @@ class AppSettings:
                 audio_player, audio_recorder
             )
         sync_global_to_legacy(global_audio, audio_player, audio_recorder)
+        live = LiveSettings.from_dict(live_raw) if live_raw else LiveSettings()
         smeter_calibration = SmeterCalibrationSettings.from_dict(smeter_cal_raw)
         return cls(
             cat=cat,
@@ -206,6 +210,7 @@ class AppSettings:
             audio_player=audio_player,
             audio_recorder=audio_recorder,
             global_audio=global_audio,
+            live=live,
             smeter_calibration=smeter_calibration,
         )
 
@@ -220,6 +225,7 @@ class AppSettings:
             "audio_player": self.audio_player.to_dict(),
             "audio_recorder": self.audio_recorder.to_dict(),
             "global_audio": self.global_audio.to_dict(),
+            "live": self.live.to_dict(),
             "smeter_calibration": self.smeter_calibration.to_dict(),
         }
         with path.open("w", encoding="utf-8") as f:

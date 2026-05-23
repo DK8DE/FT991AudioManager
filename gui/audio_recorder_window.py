@@ -1456,7 +1456,7 @@ class AudioRecorderWindow(QMainWindow):
         QMetaObject.invokeMethod(
             self._setup_worker,
             "run_set_data_mode",
-            Qt.ConnectionType.QueuedConnection,
+            Qt.QueuedConnection,
             Q_ARG(str, data_mode.value),
         )
 
@@ -1471,7 +1471,7 @@ class AudioRecorderWindow(QMainWindow):
             QMetaObject.invokeMethod(
                 self._setup_worker,
                 "run_apply",
-                Qt.ConnectionType.QueuedConnection,
+                Qt.QueuedConnection,
             )
             return
         if not self._radio_setup.in_data_mode:
@@ -1481,7 +1481,7 @@ class AudioRecorderWindow(QMainWindow):
             QMetaObject.invokeMethod(
                 self._setup_worker,
                 "run_engage_data",
-                Qt.ConnectionType.QueuedConnection,
+                Qt.QueuedConnection,
             )
             return
         # Bereits im richtigen Zustand → direkt weiter.
@@ -1504,7 +1504,7 @@ class AudioRecorderWindow(QMainWindow):
         QMetaObject.invokeMethod(
             self._setup_worker,
             "run_engage_plain",
-            Qt.ConnectionType.QueuedConnection,
+            Qt.QueuedConnection,
         )
 
     def _request_radio_restore(self) -> None:
@@ -1515,7 +1515,7 @@ class AudioRecorderWindow(QMainWindow):
         QMetaObject.invokeMethod(
             self._setup_worker,
             "run_restore",
-            Qt.ConnectionType.QueuedConnection,
+            Qt.QueuedConnection,
         )
 
     def _radio_transmit_activity_busy(self) -> bool:
@@ -1626,7 +1626,7 @@ class AudioRecorderWindow(QMainWindow):
                 QMetaObject.invokeMethod(
                     self._setup_worker,
                     "run_engage_plain_forced",
-                    Qt.ConnectionType.QueuedConnection,
+                    Qt.QueuedConnection,
                 )
             return
         if state == TX_STATE_RX and self._mic_ptt_interrupted:
@@ -1634,7 +1634,7 @@ class AudioRecorderWindow(QMainWindow):
                 QMetaObject.invokeMethod(
                     self._setup_worker,
                     "run_verify_plain",
-                    Qt.ConnectionType.QueuedConnection,
+                    Qt.QueuedConnection,
                 )
             elif self._radio_setup.in_data_mode:
                 self._request_engage_plain()
@@ -1735,7 +1735,7 @@ class AudioRecorderWindow(QMainWindow):
             QMetaObject.invokeMethod(
                 self._setup_worker,
                 "run_apply_pc_menus",
-                Qt.ConnectionType.QueuedConnection,
+                Qt.QueuedConnection,
             )
 
     def closeEvent(self, event) -> None:  # type: ignore[override]

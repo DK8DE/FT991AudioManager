@@ -107,23 +107,19 @@ _PLAYLIST_TOKEN_ROLE = Qt.ItemDataRole.UserRole
 _CAT_PLAY_RADIO_SETTLE_MS = 200
 
 
-def _invoke_worker_slot(receiver: QObject, method_name: bytes) -> None:
-    QMetaObject.invokeMethod(
-        receiver,
-        method_name,
-        Qt.ConnectionType.QueuedConnection,
-    )
+def _invoke_worker_slot(receiver: QObject, method_name: str) -> None:
+    QMetaObject.invokeMethod(receiver, method_name, Qt.QueuedConnection)
 
 
 def _invoke_worker_slot_qarg_str(
     receiver: QObject,
-    method_name: bytes,
+    method_name: str,
     arg: str,
 ) -> None:
     QMetaObject.invokeMethod(
         receiver,
         method_name,
-        Qt.ConnectionType.QueuedConnection,
+        Qt.QueuedConnection,
         Q_ARG(str, arg),
     )
 
@@ -991,7 +987,7 @@ class AudioPlayerWindow(QMainWindow):
         self.lbl_status.setText(f"Funkgerät wird auf {data_mode.value} geschaltet …")
         _invoke_worker_slot_qarg_str(
             self._setup_worker,
-            b"run_set_data_mode",
+            "run_set_data_mode",
             data_mode.value,
         )
 
@@ -1669,7 +1665,7 @@ class AudioPlayerWindow(QMainWindow):
             self.lbl_status.setText(
                 f"Schalte zurück auf {self._radio_setup.data_mode.value} …"
             )
-            _invoke_worker_slot(self._setup_worker, b"run_engage_data")
+            _invoke_worker_slot(self._setup_worker, "run_engage_data")
             return
         self._start_cat_play_when_ready(idx)
 
@@ -1680,7 +1676,7 @@ class AudioPlayerWindow(QMainWindow):
             self._defer_contest_pre_roll_until_engage_data = True
             target = self._radio_setup.data_mode.value
             self.lbl_status.setText(f"Loop-Restart — schalte auf {target} …")
-            _invoke_worker_slot(self._setup_worker, b"run_engage_data")
+            _invoke_worker_slot(self._setup_worker, "run_engage_data")
             return
         self._controller.begin_pre_roll_now()
 
@@ -1753,7 +1749,7 @@ class AudioPlayerWindow(QMainWindow):
             return
         voice = self._radio_setup.voice_mode.value
         self.lbl_status.setText(f"Schalte auf {voice} …")
-        _invoke_worker_slot(self._setup_worker, b"run_engage_plain")
+        _invoke_worker_slot(self._setup_worker, "run_engage_plain")
 
     def _handle_contest_state_transition(self, state: PlayerState) -> None:
         """Mode-Wechsel bei Kontest-Loop und Hörpause.
@@ -1771,7 +1767,7 @@ class AudioPlayerWindow(QMainWindow):
                 self.lbl_status.setText(
                     f"Kontest-Hörpause — schalte auf {voice} …"
                 )
-                _invoke_worker_slot(self._setup_worker, b"run_engage_plain")
+                _invoke_worker_slot(self._setup_worker, "run_engage_plain")
             return
 
     def _update_transport_buttons(self) -> None:
@@ -1969,7 +1965,7 @@ class AudioPlayerWindow(QMainWindow):
             self._audio_radio_session.on_window_shown(self)
             return
         if self._cat.is_connected():
-            _invoke_worker_slot(self._setup_worker, b"run_apply_pc_menus")
+            _invoke_worker_slot(self._setup_worker, "run_apply_pc_menus")
 
     def _on_pc_menus_finished(self, ok: bool, message: str) -> None:
         if message:
@@ -1984,12 +1980,12 @@ class AudioPlayerWindow(QMainWindow):
         self.lbl_status.setText(
             f"Funkgerät wird auf {target} / 048+077+109→USB, 070→REAR, 072→USB geschaltet …"
         )
-        _invoke_worker_slot(self._setup_worker, b"run_apply")
+        _invoke_worker_slot(self._setup_worker, "run_apply")
 
     def _request_radio_restore(self) -> None:
         if not self._radio_setup.is_applied:
             return
-        _invoke_worker_slot(self._setup_worker, b"run_restore")
+        _invoke_worker_slot(self._setup_worker, "run_restore")
 
     def _radio_transmit_activity_busy(self) -> bool:
         """CAT-Sendung / Replay läuft noch (PTT oder Wiedergabe-Pipeline)."""
@@ -2119,7 +2115,7 @@ class AudioPlayerWindow(QMainWindow):
                 )
                 _invoke_worker_slot(
                     self._setup_worker,
-                    b"run_engage_plain_forced",
+                    "run_engage_plain_forced",
                 )
             return
         if state == TX_STATE_RX and self._mic_ptt_interrupted:
@@ -2127,9 +2123,9 @@ class AudioPlayerWindow(QMainWindow):
             # ggf. nochmal sauber setzen (Force-Write während TX wird vom
             # FT-991 nicht immer angenommen).
             if self._radio_setup.needs_plain_verify:
-                _invoke_worker_slot(self._setup_worker, b"run_verify_plain")
+                _invoke_worker_slot(self._setup_worker, "run_verify_plain")
             elif self._radio_setup.in_data_mode:
-                _invoke_worker_slot(self._setup_worker, b"run_engage_plain")
+                _invoke_worker_slot(self._setup_worker, "run_engage_plain")
 
     def force_close(self) -> None:
         self._force_close = True

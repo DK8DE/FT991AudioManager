@@ -36,12 +36,12 @@ AfterRx = Literal[
 
 
 def _invoke_ptt_worker_set_transmit(worker: QObject, on: bool) -> None:
-    """Queued ``invokeMethod`` mit ``bytes``-Slot (PySide6-Stub-kompatibel)."""
+    """Queued ``invokeMethod`` (PySide6 6.x: ``str``-Slot + ``Qt.QueuedConnection``)."""
 
     QMetaObject.invokeMethod(
         worker,
-        b"set_transmit",
-        Qt.ConnectionType.QueuedConnection,
+        "set_transmit",
+        Qt.QueuedConnection,
         Q_ARG(bool, on),
     )
 

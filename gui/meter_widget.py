@@ -1762,6 +1762,67 @@ def make_smeter_bar(*, flex_horizontal: bool = False) -> ScaledMeterBar:
     return bar
 
 
+#: Rohwert 0–255 für :func:`live_dbfs_peak_to_raw` / Live‑Peak‑Strip.
+LIVE_LEVEL_RAW_MAX = 255
+
+
+def live_level_db_from_raw(raw: int) -> float:
+    r = max(0, min(LIVE_LEVEL_RAW_MAX, int(raw)))
+    return float(-120.0 + (r / float(LIVE_LEVEL_RAW_MAX)) * 120.0)
+
+
+def live_dbfs_peak_to_raw(db: float) -> int:
+    """dBFS (≈ Peak, Referenz ±1) zu Balken‑Rohwert für :class:`ScaledMeterBar`."""
+    if db is None or db != db:  # NaN guard
+        return 0
+    d = float(db)
+    if d <= -120.0:
+        return 0
+    frac = (d + 120.0) / 120.0
+    return max(0, min(LIVE_LEVEL_RAW_MAX, int(round(frac * LIVE_LEVEL_RAW_MAX))))
+
+
+def _format_live_level_raw(raw: int) -> str:
+    if raw <= 0:
+        return "—"
+    db = live_level_db_from_raw(raw)
+    sign = "+" if db > 0 else ""
+    return f"{sign}{db:.0f}"
+
+
+def live_level_ticks() -> List[tuple]:
+    ticks: List[tuple] = []
+    for db_lbl in (-96, -72, -48, -24, 0):
+        r = int(round((db_lbl + 120.0) / 120.0 * LIVE_LEVEL_RAW_MAX))
+        ticks.append((r, str(db_lbl)))
+    return ticks
+
+
+def make_live_level_bar(*, bar_min_height: int = 260) -> ScaledMeterBar:
+    """Vertikaler Peak‑Balken im S‑Meter‑Look, etwa halbe Breite gegenüber dem Haupt‑S‑Meter."""
+    bw, sw = 11, 24
+    bar = ScaledMeterBar(
+        label_text="",
+        unit_text="",
+        raw_max=LIVE_LEVEL_RAW_MAX,
+        ticks=live_level_ticks(),
+        warn=0.65,
+        danger=0.82,
+        value_formatter=_format_live_level_raw,
+        show_squelch=False,
+        bar_width=bw,
+        scale_width=sw,
+        bar_min_height=bar_min_height,
+        header_font_scale=1.0,
+        value_font_scale=0.75,
+        tick_font_scale=0.66,
+        flex_horizontal=False,
+    )
+    wfix = sw + bw + 8
+    bar.setFixedWidth(wfix)
+    return bar
+
+
 def make_tx_meter_bar(
     kind: MeterKind, *, flex_horizontal: bool = False
 ) -> ScaledMeterBar:

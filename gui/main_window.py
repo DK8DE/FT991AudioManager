@@ -203,6 +203,8 @@ class MainWindow(QMainWindow):
         self._sound_settings_window: Optional[SoundSettingsWindow] = None
         self._audio_player_window: Optional[AudioPlayerWindow] = None
         self._audio_recorder_window: Optional[AudioRecorderWindow] = None
+        self._live_window: Optional[QWidget] = None
+        self._live_tx_meter_bridge: bool = False
         self._memory_editor: Optional[QWidget] = None
         self._application_shutting_down = False
         self._last_identity_info: str = ""
@@ -395,8 +397,28 @@ class MainWindow(QMainWindow):
         """Aktuelle Betriebsart aus der Hauptfenster-Mode-Combo."""
         return rx_mode_from_selection(self.profile_widget.mode_combo.currentText())
 
+    def _live_transmit_blocked_by_other_windows(self) -> str:
+        """Leer wenn Live starten darf — sonst kurzer deutschsprachiger Grund."""
+        p = self._audio_player_window
+        if p is not None:
+            ctl = getattr(p, "_controller", None)
+            if ctl is not None and ctl.is_busy():
+                return (
+                    "Audio‑Player aktiv (Wiedergabe/Vorlauf …) — bitte zuerst stoppen,"
+                    " dann „Start Live“."
+                )
+        r = self._audio_recorder_window
+        if r is not None:
+            rec = getattr(r, "_recorder", None)
+            if rec is not None and rec.is_busy():
+                return "Audio‑Recorder: Aufnahme läuft — bitte zuerst beenden."
+            pl = getattr(r, "_player", None)
+            if pl is not None and pl.is_busy():
+                return "Audio‑Recorder: Replay läuft — bitte zuerst stoppen."
+        return ""
+
     def _on_main_operating_mode_changed(self, _text: str) -> None:
-        """DSP-Anzeige + Audio-Player/Recorder-DATA-Modus anpassen."""
+        """DSP-Anzeige + Audio-Player/Recorder/Live-DATA-Modus anpassen."""
         self._sync_meter_dsp_mode_visibility()
         mode = self._main_operating_mode()
         player = self._audio_player_window
@@ -405,6 +427,11 @@ class MainWindow(QMainWindow):
         recorder = self._audio_recorder_window
         if recorder is not None and recorder.isVisible():
             recorder.sync_data_mode_from_main(mode)
+        live_win = self._live_window
+        if live_win is not None and live_win.isVisible():
+            sync = getattr(live_win, "sync_data_mode_from_main", None)
+            if callable(sync):
+                sync(mode)
 
     def _sync_meter_dsp_mode_visibility(self) -> None:
         """DSP-Slider ausblenden, wenn die Betriebsart sie am FT-991 nicht nutzt."""
@@ -602,6 +629,7 @@ class MainWindow(QMainWindow):
         self._radio_control_bar.audio_recorder_clicked.connect(
             self._on_audio_recorder_action
         )
+        self._radio_control_bar.live_clicked.connect(self._on_live_action)
         self._radio_control_bar.sound_settings_clicked.connect(
             self._on_sound_settings_action
         )
@@ -793,6 +821,11 @@ class MainWindow(QMainWindow):
         audio_recorder_action.setShortcut("Ctrl+Shift+R")
         audio_recorder_action.triggered.connect(self._on_audio_recorder_action)
         edit_menu.addAction(audio_recorder_action)
+
+        live_audio_action = QAction("&Live‑Monitoring…", self)
+        live_audio_action.setShortcut("Ctrl+Shift+L")
+        live_audio_action.triggered.connect(self._on_live_action)
+        edit_menu.addAction(live_audio_action)
 
         # === Ansicht ==================================================
         view_menu = menu.addMenu("&Ansicht")
@@ -1192,7 +1225,7 @@ class MainWindow(QMainWindow):
             QMetaObject.invokeMethod(
                 worker,
                 "run_engage_data",
-                Qt.ConnectionType.QueuedConnection,
+                Qt.QueuedConnection,
             )
             return
 
@@ -1202,7 +1235,7 @@ class MainWindow(QMainWindow):
         QMetaObject.invokeMethod(
             worker,
             "run_apply",
-            Qt.ConnectionType.QueuedConnection,
+            Qt.QueuedConnection,
         )
 
     def _on_tcall_radio_apply_finished(self, ok: bool, message: str) -> None:
@@ -1243,13 +1276,13 @@ class MainWindow(QMainWindow):
             QMetaObject.invokeMethod(
                 self._audio_radio_session.worker,
                 "run_restore",
-                Qt.ConnectionType.QueuedConnection,
+                Qt.QueuedConnection,
             )
         elif self._tcall_release_engage_plain:
             QMetaObject.invokeMethod(
                 self._audio_radio_session.worker,
                 "run_engage_plain",
-                Qt.ConnectionType.QueuedConnection,
+                Qt.QueuedConnection,
             )
         self._tcall_release_restore_full = False
         self._tcall_release_engage_plain = False
@@ -1309,13 +1342,13 @@ class MainWindow(QMainWindow):
             QMetaObject.invokeMethod(
                 worker,
                 "run_restore",
-                Qt.ConnectionType.QueuedConnection,
+                Qt.QueuedConnection,
             )
         elif self._tcall_release_engage_plain:
             QMetaObject.invokeMethod(
                 worker,
                 "run_engage_plain",
-                Qt.ConnectionType.QueuedConnection,
+                Qt.QueuedConnection,
             )
         self._tcall_release_restore_full = False
         self._tcall_release_engage_plain = False
@@ -2725,6 +2758,39 @@ class MainWindow(QMainWindow):
     def _on_equalizer_window_closed(self) -> None:
         pass
 
+    def _ensure_live_window(self):  # type: ignore[no-untyped-def]
+        """Live-DSP Fenster lazy laden (heavy deps: scipy/sounddevice)."""
+        win = self._live_window
+        if win is not None:
+            return win
+        from gui.live_window import LiveWindow as _LiveWin
+
+        w = _LiveWin(
+            self._settings,
+            persist_settings=self._persist_settings,
+            serial_cat=self._cat,
+            audio_radio_session=self._audio_radio_session,
+            operating_mode_provider=self._main_operating_mode,
+            other_audio_blocking=self._live_transmit_blocked_by_other_windows,
+            parent=self,
+        )
+        if not self._live_tx_meter_bridge:
+            h = getattr(w, "handle_tx_state_changed", None)
+            if callable(h):
+                self.meter_widget.tx_state_changed.connect(h)
+                self._live_tx_meter_bridge = True
+        self._live_window = w
+        return w
+
+    def _on_live_action(self) -> None:
+        win = self._ensure_live_window()
+        rf = getattr(win, "reload_from_app_settings", None)
+        if callable(rf):
+            rf()
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
     def _ensure_sound_settings_window(self) -> SoundSettingsWindow:
         if self._sound_settings_window is None:
             self._sound_settings_window = SoundSettingsWindow(
@@ -3048,6 +3114,16 @@ class MainWindow(QMainWindow):
         if self._audio_player_window is not None:
             self._audio_player_window.force_close()
             self._audio_player_window = None
+        if self._live_window is not None:
+            lw = getattr(self._live_window, "force_close", None)
+            if callable(lw):
+                lw()
+            try:
+                self._live_window.close()
+            except Exception:
+                pass
+            self._live_window = None
+            self._live_tx_meter_bridge = False
         if self._audio_recorder_window is not None:
             self._audio_recorder_window.force_close()
             self._audio_recorder_window = None
