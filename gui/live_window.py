@@ -26,7 +26,12 @@ from PySide6.QtWidgets import (
 
 from gui.app_icon import app_icon
 from gui.live_eq_editor_widget import LiveEqEditorWidget
-from gui.meter_widget import ScaledMeterBar, live_dbfs_peak_to_raw, make_live_level_bar
+from gui.meter_widget import (
+    LIVE_LEVEL_VISIBLE_MIN_DB,
+    ScaledMeterBar,
+    live_dbfs_peak_to_raw,
+    make_live_level_bar,
+)
 from audio.cat_ptt_worker import CatPttWorker
 from audio.player_controller import _invoke_ptt_worker_set_transmit
 from audio.radio_playback_setup import data_mode_for_rx_mode
@@ -48,15 +53,45 @@ if TYPE_CHECKING:
 
 
 _YAESU_GREEN = "#52c41a"
+
+# PTT-Buttons: identische Padding-/Rahmenwerte für Ruhezustand und aktiv, sonst „wächst“
+# der Knopf beim Umschalten (Systemstil ≠ explizites QSS).
+_LIVE_PTT_BTN_PAD = "6px 16px"
+_LIVE_PTT_BTN_RADIUS = "4px"
+_LIVE_PTT_BTN_BORDER = "2px"
+
+
+def _live_ptt_idle_button_style() -> str:
+    return (
+        "QPushButton {"
+        " background-color: palette(button); color: palette(button-text);"
+        " font-weight: 600;"
+        f" padding: {_LIVE_PTT_BTN_PAD}; border-radius: {_LIVE_PTT_BTN_RADIUS};"
+        f" border: {_LIVE_PTT_BTN_BORDER} solid palette(mid);"
+        "}"
+    )
+
+
+def _live_ptt_active_button_style(green_hex: str = _YAESU_GREEN) -> str:
+    return (
+        f"QPushButton {{ background-color:{green_hex}; color:#141414;"
+        " font-weight: 600;"
+        f" padding: {_LIVE_PTT_BTN_PAD}; border-radius: {_LIVE_PTT_BTN_RADIUS};"
+        f" border: {_LIVE_PTT_BTN_BORDER} solid {green_hex}; }}"
+    )
+
+
 # Kurzer Puffer nach DATA/Menüs, bevor Audio‑Stream und TX1; kommen —
 # kleiner als beim Player/Rekorder, Latenz beim „Start Live“ senken.
 _CAT_LIVE_RADIO_SETTLE_MS = 75
 
 
-def _fmt_db(raw: float) -> str:
-    if not math.isfinite(raw):
+def _live_peak_summary_text(db_v: float) -> str:
+    """Wie die Live‑Balkenskala: ≤ untere Grenze → Ruhestellung („—“)."""
+    if not math.isfinite(db_v) or db_v <= LIVE_LEVEL_VISIBLE_MIN_DB:
         return "—"
-    return f"{raw:+.1f}"
+    clipped = max(LIVE_LEVEL_VISIBLE_MIN_DB, min(0.0, float(db_v)))
+    return f"{clipped:+.1f} dBFS"
 
 
 class LiveWindow(QMainWindow):
@@ -139,6 +174,10 @@ class LiveWindow(QMainWindow):
         self._suppress_idle_listen_monitor = False
         self._idle_monitor_fp_key: Optional[tuple[object, ...]] = None
         self._suppress_funk_listen_while_live_tx_active = False
+        #: Fester Taste „PTT“ (gedrückt = Live‑Transport an).
+        self._live_ptt_momentary_held = False
+        self._refresh_ptt_button_appearance()
+        self._refresh_ptt_controls_enabled()
 
     def _live_engine_runtime_settings_overlay(self, liv: LiveSettings) -> LiveSettings:
         """Übergabe an Audio-Engine — Funk-Eing.-Mithören während Sendung ausblenden."""
@@ -171,6 +210,148 @@ class LiveWindow(QMainWindow):
         if hold:
             self._suppress_funk_listen_while_live_tx_active = False
             self._push_live_engine_runtime_settings(self._gather_live_from_ui())
+
+    # --- PTT: Live‑Transport („gedrückt halten“ / „PTT halten“) -----------------
+
+    def _desired_live_transport_on(self) -> bool:
+        latch_on = bool(
+            getattr(self, "_b_ptt_latch", None)
+            and self._b_ptt_latch.isChecked(),
+        )
+        return bool(self._live_ptt_momentary_held or latch_on)
+
+    def _refresh_ptt_button_appearance(self) -> None:
+        latched = bool(
+            getattr(self, "_b_ptt_latch", None)
+            and self._b_ptt_latch.isChecked(),
+        )
+        active_style = _live_ptt_active_button_style()
+        idle_style = _live_ptt_idle_button_style()
+        if getattr(self, "_b_ptt", None):
+            self._b_ptt.setStyleSheet(
+                active_style if self._live_ptt_momentary_held else idle_style
+            )
+        if getattr(self, "_b_ptt_latch", None):
+            self._b_ptt_latch.setStyleSheet(active_style if latched else idle_style)
+
+    def _refresh_ptt_controls_enabled(self) -> None:
+        busy = bool(self._cat_live_start_busy)
+        if getattr(self, "_b_ptt_latch", None):
+            self._b_ptt_latch.setEnabled(not busy)
+
+    def _clear_live_ptt_wants(self) -> None:
+        self._live_ptt_momentary_held = False
+        if getattr(self, "_b_ptt_latch", None) is None:
+            return
+        self._b_ptt_latch.blockSignals(True)
+        self._b_ptt_latch.setChecked(False)
+        self._b_ptt_latch.blockSignals(False)
+        self._refresh_ptt_button_appearance()
+        self._refresh_ptt_controls_enabled()
+
+    def _clear_live_transport_pending_flags(self) -> None:
+        """Läufiger Funk/CAT‑Anlauf abbrechen (ohne zweifelsfrei bereits laufenden Stream)."""
+        self._live_cat_settle.stop()
+        self._suppress_funk_listen_while_live_tx_active = False
+        self._cat_live_start_busy = False
+        self._pending_live_after_pc_then_engage = False
+        self._live_cat_waiting_engage_finish = False
+
+    def _sync_ptt_live_transport(self) -> None:
+        want = self._desired_live_transport_on()
+        running = self._engine.is_running()
+        pending = bool(self._cat_live_start_busy)
+
+        if not want:
+            self._stop_live_via_ptt(clear_ptt_wants=False)
+        elif want and (not pending) and (not running):
+            self._start_live_via_ptt()
+
+        self._refresh_ptt_controls_enabled()
+        self._refresh_ptt_button_appearance()
+
+    def _on_live_ptt_momentary_pressed(self) -> None:
+        self._live_ptt_momentary_held = True
+        self._sync_ptt_live_transport()
+
+    def _on_live_ptt_momentary_released(self) -> None:
+        self._live_ptt_momentary_held = False
+        self._sync_ptt_live_transport()
+
+    def _on_live_ptt_latch_toggled(self, _checked: bool) -> None:
+        del _checked
+        self._sync_ptt_live_transport()
+
+    def _stop_live_via_ptt(
+        self,
+        *,
+        clear_ptt_wants: bool = False,
+        invoke_release_voice_after_live: bool = True,
+    ) -> None:
+        self._clear_live_transport_pending_flags()
+        self._mic_ptt_interrupted_live = False
+        self._push_live_engine_runtime_settings(
+            LiveSettings.from_dict(self._live_snapshot.to_dict()),
+        )
+        if self._engine.is_running():
+            self._engine.stop()
+        self._safe_live_cat_tx_off()
+        if invoke_release_voice_after_live:
+            self._release_voice_plain_after_stop_live_if_not_mithoren()
+        QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
+        if clear_ptt_wants:
+            self._clear_live_ptt_wants()
+        else:
+            self._refresh_ptt_controls_enabled()
+            self._refresh_ptt_button_appearance()
+
+    def _start_live_via_ptt(self) -> None:
+        self._pull_sliders_into_snapshot()
+        liv = LiveSettings.from_dict(self._gather_live_from_ui().to_dict())
+        self._live_snapshot = liv
+        self._settings.live = liv
+        self._persist()
+
+        prereq_ok, err = self._engine.prerequisites_ok()
+        if not prereq_ok:
+            QMessageBox.warning(self, "Live", err)
+            self._clear_live_ptt_wants()
+            QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
+            self._refresh_ptt_controls_enabled()
+            self._refresh_ptt_button_appearance()
+            return
+
+        if self._radio_setup is None or self._setup_worker is None:
+            ok, msg = self._engine.start(LiveSettings.from_dict(liv.to_dict()))
+            if not ok:
+                QMessageBox.warning(
+                    self,
+                    "Live konnte nicht starten",
+                    msg,
+                )
+                self._clear_live_ptt_wants()
+                QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
+                self._refresh_ptt_controls_enabled()
+                self._refresh_ptt_button_appearance()
+                return
+            if self._ptt_worker is not None:
+                _invoke_ptt_worker_set_transmit(self._ptt_worker, True)
+                self._suppress_funk_listen_while_live_tx_active = bool(
+                    self._chk_funk_listen.isChecked()
+                )
+                self._push_live_engine_runtime_settings(
+                    LiveSettings.from_dict(liv.to_dict())
+                )
+            self._refresh_ptt_controls_enabled()
+            self._refresh_ptt_button_appearance()
+            return
+
+        self._cat_live_start_busy = True
+        self._live_cat_waiting_engage_finish = False
+        self._pending_live_after_pc_then_engage = False
+        self._refresh_ptt_controls_enabled()
+        self._refresh_ptt_button_appearance()
+        self._begin_live_cat_radio_path()
 
     def _build_ui(self) -> None:
         cen = QWidget()
@@ -437,13 +618,30 @@ class LiveWindow(QMainWindow):
         root.addWidget(meter)
 
         row_btn = QHBoxLayout()
-        self._b_start = QPushButton("Start Live")
-        self._b_stop = QPushButton("Stop Live")
-        self._b_stop.setEnabled(False)
-        self._b_start.clicked.connect(self._do_start)
-        self._b_stop.clicked.connect(self._do_stop)
-        row_btn.addWidget(self._b_start)
-        row_btn.addWidget(self._b_stop)
+        self._b_ptt = QPushButton("PTT")
+        self._b_ptt.setToolTip(
+            "Gedrückt halten: Live aktiv. Loslassen: Live stoppt "
+            "(wenn „PTT halten“ nicht eingerastet ist)."
+        )
+        self._b_ptt.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._b_ptt.pressed.connect(self._on_live_ptt_momentary_pressed)
+        self._b_ptt.released.connect(self._on_live_ptt_momentary_released)
+
+        self._b_ptt_latch = QPushButton("PTT halten")
+        self._b_ptt_latch.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._b_ptt_latch.setCheckable(True)
+        self._b_ptt_latch.setToolTip(
+            "Einrasten: Live bleibt an (erneut drücken zum Beenden)."
+        )
+        self._b_ptt_latch.toggled.connect(self._on_live_ptt_latch_toggled)
+        row_btn.addWidget(self._b_ptt)
+        row_btn.addWidget(self._b_ptt_latch)
         row_btn.addStretch(1)
         root.addLayout(row_btn)
         root.addStretch()
@@ -515,20 +713,8 @@ class LiveWindow(QMainWindow):
         if state == TX_STATE_MIC_PTT:
             if not self._engine.is_running() and not self._radio_setup.in_data_mode:
                 return
-            self._live_cat_settle.stop()
-            if self._cat_live_start_busy:
-                self._pending_live_after_pc_then_engage = False
-                self._live_cat_waiting_engage_finish = False
-                self._cat_live_start_busy = False
-                self._b_start.setEnabled(True)
-                self._b_stop.setEnabled(False)
-
+            self._stop_live_via_ptt(clear_ptt_wants=True)
             self._mic_ptt_interrupted_live = True
-            if self._engine.is_running():
-                self._engine.stop()
-                self._safe_live_cat_tx_off()
-            self._b_start.setEnabled(True)
-            self._b_stop.setEnabled(False)
 
             if self._radio_setup.in_data_mode:
                 QMetaObject.invokeMethod(
@@ -586,13 +772,8 @@ class LiveWindow(QMainWindow):
         )
 
     def _abort_live_cat_start(self, detail: str) -> None:
-        self._live_cat_settle.stop()
-        self._suppress_funk_listen_while_live_tx_active = False
-        self._cat_live_start_busy = False
-        self._pending_live_after_pc_then_engage = False
-        self._live_cat_waiting_engage_finish = False
-        self._b_start.setEnabled(True)
-        self._b_stop.setEnabled(False)
+        self._clear_live_transport_pending_flags()
+        self._clear_live_ptt_wants()
         QMessageBox.warning(self, "Live", detail)
         QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
 
@@ -620,8 +801,8 @@ class LiveWindow(QMainWindow):
         self._suppress_funk_listen_while_live_tx_active = bool(self._chk_funk_listen.isChecked())
         self._push_live_engine_runtime_settings(LiveSettings.from_dict(liv.to_dict()))
         self._cat_live_start_busy = False
-        self._b_start.setEnabled(False)
-        self._b_stop.setEnabled(True)
+        self._refresh_ptt_controls_enabled()
+        self._refresh_ptt_button_appearance()
 
     def _begin_live_cat_radio_path(self) -> None:
         assert self._radio_setup is not None
@@ -632,12 +813,8 @@ class LiveWindow(QMainWindow):
         if callable(fn):
             blocked = str(fn()).strip()
         if blocked:
-            self._live_cat_settle.stop()
-            self._cat_live_start_busy = False
-            self._pending_live_after_pc_then_engage = False
-            self._live_cat_waiting_engage_finish = False
-            self._b_start.setEnabled(True)
-            self._b_stop.setEnabled(False)
+            self._clear_live_transport_pending_flags()
+            self._clear_live_ptt_wants()
             QMessageBox.information(self, "Live", blocked)
             return
 
@@ -739,8 +916,8 @@ class LiveWindow(QMainWindow):
 
     def _meter_tick(self) -> None:
         indb, outdb = self._engine.peek_meters_db()
-        self._m_in.setText(f"Eing.: {_fmt_db(indb)} dBFS")
-        self._m_out.setText(f"Ausg.: {_fmt_db(outdb)} dBFS")
+        self._m_in.setText(f"Eing.: {_live_peak_summary_text(indb)}")
+        self._m_out.setText(f"Ausg.: {_live_peak_summary_text(outdb)}")
         for peak_bar, dbv in zip(
             self._live_level_bars,
             self._engine.peek_live_strip_meters_db(),
@@ -1034,11 +1211,11 @@ class LiveWindow(QMainWindow):
         self._persist()
         self._push_live_engine_runtime_settings(liv)
         if self._engine.is_running():
-            self._do_stop()
+            self._stop_live_via_ptt(clear_ptt_wants=True)
             QMessageBox.information(
                 self,
                 "Gerät geändert",
-                "Gerätewahl wurde gespeichert. Ein neuer „Start Live“ lädt sie.",
+                "Gerätewahl wurde gespeichert — Live wurde beendet.",
             )
         else:
             QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
@@ -1062,8 +1239,7 @@ class LiveWindow(QMainWindow):
         ok, txt = self._engine.start(LiveSettings.from_dict(self._live_snapshot.to_dict()))
         if not ok:
             QMessageBox.warning(self, "Live", txt)
-            self._b_stop.setEnabled(False)
-            self._b_start.setEnabled(True)
+            self._clear_live_ptt_wants()
             self._release_voice_plain_after_stop_live_if_not_mithoren()
             QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
             return
@@ -1075,68 +1251,8 @@ class LiveWindow(QMainWindow):
             self._push_live_engine_runtime_settings(
                 LiveSettings.from_dict(self._live_snapshot.to_dict())
             )
-
-    def _do_start(self) -> None:
-        self._pull_sliders_into_snapshot()
-        liv = LiveSettings.from_dict(self._gather_live_from_ui().to_dict())
-        self._live_snapshot = liv
-        self._settings.live = liv
-        self._persist()
-
-        prereq_ok, err = self._engine.prerequisites_ok()
-        if not prereq_ok:
-            QMessageBox.warning(self, "Live", err)
-            QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
-            return
-
-        if self._radio_setup is None or self._setup_worker is None:
-            ok, msg = self._engine.start(LiveSettings.from_dict(liv.to_dict()))
-            if not ok:
-                QMessageBox.warning(
-                    self,
-                    "Live konnte nicht starten",
-                    msg,
-                )
-                self._b_start.setEnabled(True)
-                self._b_stop.setEnabled(False)
-                QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
-                return
-            self._b_start.setEnabled(False)
-            self._b_stop.setEnabled(True)
-            if self._ptt_worker is not None:
-                _invoke_ptt_worker_set_transmit(self._ptt_worker, True)
-                self._suppress_funk_listen_while_live_tx_active = bool(
-                    self._chk_funk_listen.isChecked()
-                )
-                self._push_live_engine_runtime_settings(
-                    LiveSettings.from_dict(liv.to_dict())
-                )
-            return
-
-        self._cat_live_start_busy = True
-        self._live_cat_waiting_engage_finish = False
-        self._pending_live_after_pc_then_engage = False
-        self._b_start.setEnabled(False)
-        self._b_stop.setEnabled(False)
-        self._begin_live_cat_radio_path()
-
-    def _do_stop(self) -> None:
-        self._live_cat_settle.stop()
-        self._cat_live_start_busy = False
-        self._pending_live_after_pc_then_engage = False
-        self._live_cat_waiting_engage_finish = False
-        self._mic_ptt_interrupted_live = False
-        self._suppress_funk_listen_while_live_tx_active = False
-        self._push_live_engine_runtime_settings(
-            LiveSettings.from_dict(self._live_snapshot.to_dict())
-        )
-        if self._engine.is_running():
-            self._engine.stop()
-        self._safe_live_cat_tx_off()
-        self._release_voice_plain_after_stop_live_if_not_mithoren()
-        self._b_start.setEnabled(True)
-        self._b_stop.setEnabled(False)
-        QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
+            self._refresh_ptt_controls_enabled()
+            self._refresh_ptt_button_appearance()
 
     def _refresh_idle_listen_monitor(self, liv: Optional[LiveSettings] = None) -> None:
         """Funk‑Eingang → Monitor nur wenn „Mithören“ an und „Start Live“ aus."""
@@ -1223,15 +1339,16 @@ class LiveWindow(QMainWindow):
 
         if self._audio_radio_session is not None:
             self._audio_radio_session.on_window_hidden(self)
-            if self._engine.is_running():
-                self._do_stop()
-            else:
-                self._safe_live_cat_tx_off()
-            self._audio_radio_session.request_restore_if_no_windows()
+
+        if self._engine.is_running() or self._cat_live_start_busy:
+            self._stop_live_via_ptt(clear_ptt_wants=True)
         else:
-            if self._engine.is_running():
-                self._engine.stop()
-                self._safe_live_cat_tx_off()
+            self._clear_live_transport_pending_flags()
+            self._clear_live_ptt_wants()
+            self._safe_live_cat_tx_off()
+
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.request_restore_if_no_windows()
 
         # Live-Fenster endgültig — DATA/Sprache wie vor Live wiederherstellen,
         # auch wenn „Mithören“ beim Stop die Umschaltung unterdrückt hat.

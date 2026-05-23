@@ -12,6 +12,7 @@ from mapping.repeater_offset import SHIFT_MINUS, SHIFT_PLUS, SHIFT_SIMPLEX
 from .led_widget import Led
 from .menu_icons import (
     control_bar_icon_size,
+    control_bar_live_green_led_icon,
     control_bar_play_green_icon,
     control_bar_record_red_icon,
     control_bar_speaker_white_icon,
@@ -134,7 +135,9 @@ class RadioControlBar(QWidget):
         self._sound_btn.clicked.connect(self.sound_settings_clicked.emit)
 
         self._live_btn = QPushButton("Live")
-        self._live_btn.setMinimumWidth(64)
+        self._live_btn.setMinimumWidth(70)
+        self._live_btn.setIcon(control_bar_live_green_led_icon())
+        self._live_btn.setIconSize(icon_size)
         self._live_btn.setToolTip(
             "Live‑Monitoring und über den PC funken"
         )

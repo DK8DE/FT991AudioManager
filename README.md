@@ -52,13 +52,13 @@ geschrieben.
   Diffs gegen den Baseline-Profilstand vermeiden überflüssige Befehle.
   Beim Wechsel der Mode-Gruppe in der GUI wird automatisch der Operating
   Mode am Radio gesetzt und der Stand für den neuen Modus eingelesen.
-- **Equalizer-Editor** in eigenem Fenster (**Bearbeiten → Equalizer…**,
-  `Ctrl+E`): Grundwerte, EQ-Kurve, erweiterte Menüs — das Hauptfenster
+- **Equalizer-Editor** in eigenem Fenster (**Funktionen → Equalizer…**,
+  `Ctrl+Shift+E`): Grundwerte, EQ-Kurve, erweiterte Menüs — das Hauptfenster
   bleibt auf Meter und Profilauswahl fokussiert.
 
 ### CAT-Audio-Player (MP3 / WAV)
 
-- Eigenes Fenster **Bearbeiten → Audio-Player…**
+- Eigenes Fenster **Funktionen → Audio-Player…**
 - Ordner mit **MP3**- und **WAV**-Dateien scannen, **Playlist per Drag & Drop**
   sortieren
 - **Vorlauf** und **Pause zwischen Dateien** (ms), Modi *nach jeder Datei
@@ -95,7 +95,7 @@ geschrieben.
 
 ### Speicherkanäle
 
-- **Bearbeiten → Speicherkanäle…** (`Ctrl+K`): Tabellen-Editor für alle
+- **Funktionen → Speicherkanäle…** (`Ctrl+Shift+K`): Tabellen-Editor für alle
   Kanäle (Frequenz, Mode, Name, Töne …), Import/Export als JSON
 - **Speicherkanal-Auswahl** in der unteren Leiste des Hauptfensters;
   Kanalliste wird nach Verbindung im Hintergrund geladen

@@ -1,7 +1,7 @@
 """Siebenband-Live‑EQ‑Kurve — gleiches Bedienkonzept wie im Equalizer (EqCurveView).
 
 * Center **ziehen** → Frequenz (X) und Level (Y), wie am FT‑991‑Parametric‑EQ
-* Hellblaue **BW‑Kanten** → Q/Bandbreite (Zahl 1…10 wie im Funkgerät)
+* Hellblaue **BW‑Kanten** → Q/Bandbreite (kontinuierlich 0,5…10, mit feinem Raster beim Ziehen)
 * **Rechtsklick** auf Punkt → Band an/aus
 
 Die Kurve ist eine Gauss‑Näherung zur Anzeige; der DSP verwendet echte Peak‑Filters.
@@ -28,7 +28,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from mapping.eq_mapping import BW_MAX, BW_MIN, LEVEL_DB_MAX, LEVEL_DB_MIN
+from mapping.eq_mapping import LEVEL_DB_MAX, LEVEL_DB_MIN
 from model.live_settings import DEFAULT_LIVE_EQ_FREQ_HZ, LiveEqBandSettings
 
 _NUM_LIVE_BANDS = len(DEFAULT_LIVE_EQ_FREQ_HZ)
@@ -62,9 +62,35 @@ _HIT_RADIUS_CENTER = 11
 _HIT_RADIUS_EDGE = 8
 
 
-def _half_width_oct_for_bw(bw: int) -> float:
-    b = max(BW_MIN, min(BW_MAX, int(bw)))
-    return 1.25 / float(b)
+# Ziehen der hellblauen Kanten — feines Raster (Live DSP: echtes Q in LiveEqBandSettings).
+_LIVE_Q_MIN = 0.5
+_LIVE_Q_MAX = 10.0
+_LIVE_Q_DRAG_STEP = 0.05
+
+
+def _clamp_live_eq_q(q: float) -> float:
+    return max(_LIVE_Q_MIN, min(_LIVE_Q_MAX, float(q)))
+
+
+def _snap_live_eq_q_drag(raw_q: float) -> float:
+    """Rastern auf feste Schritte, damit viele wiederholbare Stufen ohne Gleitkomma‑Glitch."""
+    step = _LIVE_Q_DRAG_STEP
+    lo_i = round(_LIVE_Q_MIN / step)
+    hi_i = round(_LIVE_Q_MAX / step)
+    qi = round(float(raw_q) / step)
+    qi_int = max(int(lo_i), min(int(hi_i), int(qi)))
+    # 0.05 ist binär nicht exakt — auf 6 Dezimal runden gegen Anzeige‑/Persistenz‑Glitch.
+    return round(float(qi_int) * step, 6)
+
+
+def _half_width_oct_for_q(q_val: float) -> float:
+    q = _clamp_live_eq_q(q_val)
+    return 1.25 / q
+
+
+def _visual_width_oct(q_val: float) -> float:
+    q = _clamp_live_eq_q(q_val)
+    return 1.5 / q
 
 
 def _live_band_visual_db(b: LiveEqBandSettings, freq_hz: float) -> float:
@@ -73,8 +99,7 @@ def _live_band_visual_db(b: LiveEqBandSettings, freq_hz: float) -> float:
     f0 = float(b.freq_hz)
     if f0 <= 0 or freq_hz <= 0:
         return 0.0
-    bw_i = max(BW_MIN, min(BW_MAX, int(round(float(b.q)))))
-    width_oct = 1.5 / bw_i
+    width_oct = _visual_width_oct(float(b.q))
     dist_oct = math.log2(freq_hz / f0)
     falloff = math.exp(-(dist_oct / width_oct) ** 2)
     return float(b.gain_db) * falloff
@@ -196,7 +221,7 @@ class _LiveEqCurveCanvas(QWidget):
             if not band.enabled:
                 continue
             f0 = float(band.freq_hz)
-            half = _half_width_oct_for_bw(int(round(float(band.q))))
+            half = _half_width_oct_for_q(float(band.q))
             left_f = f0 * (2 ** -half)
             right_f = f0 * (2 ** half)
             left_x = self._x_for_freq(max(_F_MIN, left_f), plot_x, plot_w)
@@ -282,12 +307,12 @@ class _LiveEqCurveCanvas(QWidget):
             if dist_oct < 1e-3:
                 dist_oct = 1e-3
             bw_raw = 1.25 / dist_oct
-            new_bw = int(round(max(BW_MIN, min(BW_MAX, bw_raw))))
+            new_q = _snap_live_eq_q_drag(bw_raw)
             nb = LiveEqBandSettings(
                 freq_hz=float(band.freq_hz),
                 enabled=band.enabled,
                 gain_db=float(band.gain_db),
-                q=float(new_bw),
+                q=float(new_q),
             )
             nb.clamp()
             self._bands[idx] = nb
@@ -372,8 +397,7 @@ class _LiveEqCurveCanvas(QWidget):
             if not band.enabled:
                 continue
             f0 = float(band.freq_hz)
-            bw_i = int(round(float(band.q)))
-            half = _half_width_oct_for_bw(bw_i)
+            half = _half_width_oct_for_q(float(band.q))
             f_left_hz = f0 * (2 ** -half)
             f_right_hz = f0 * (2 ** half)
             lx = self._x_for_freq(max(_F_MIN, f_left_hz), plot_x, plot_w)

@@ -1764,22 +1764,30 @@ def make_smeter_bar(*, flex_horizontal: bool = False) -> ScaledMeterBar:
 
 #: Rohwert 0–255 für :func:`live_dbfs_peak_to_raw` / Live‑Peak‑Strip.
 LIVE_LEVEL_RAW_MAX = 255
+#: Untere Grenze der sichtbaren Skala (~Rauschen „Ruhe“, voller Ausschlag erst darüber bis 0 dBFS).
+LIVE_LEVEL_VISIBLE_MIN_DB = -65.0
 
 
 def live_level_db_from_raw(raw: int) -> float:
     r = max(0, min(LIVE_LEVEL_RAW_MAX, int(raw)))
-    return float(-120.0 + (r / float(LIVE_LEVEL_RAW_MAX)) * 120.0)
+    span = -float(LIVE_LEVEL_VISIBLE_MIN_DB)
+    return float(LIVE_LEVEL_VISIBLE_MIN_DB + (r / float(LIVE_LEVEL_RAW_MAX)) * span)
 
 
 def live_dbfs_peak_to_raw(db: float) -> int:
-    """dBFS (≈ Peak, Referenz ±1) zu Balken‑Rohwert für :class:`ScaledMeterBar`."""
+    """dBFS (≈ Peak, Referenz ±1) zu Balken‑Rohwert; nur :data:`LIVE_LEVEL_VISIBLE_MIN_DB`…0 ausgesteuert."""
     if db is None or db != db:  # NaN guard
         return 0
     d = float(db)
-    if d <= -120.0:
+    if d <= LIVE_LEVEL_VISIBLE_MIN_DB:
         return 0
-    frac = (d + 120.0) / 120.0
-    return max(0, min(LIVE_LEVEL_RAW_MAX, int(round(frac * LIVE_LEVEL_RAW_MAX))))
+    d = min(0.0, d)
+    span = -LIVE_LEVEL_VISIBLE_MIN_DB  # z. B. 70
+    frac = (d - LIVE_LEVEL_VISIBLE_MIN_DB) / span
+    return max(
+        0,
+        min(LIVE_LEVEL_RAW_MAX, int(round(frac * LIVE_LEVEL_RAW_MAX))),
+    )
 
 
 def _format_live_level_raw(raw: int) -> str:
@@ -1792,8 +1800,10 @@ def _format_live_level_raw(raw: int) -> str:
 
 def live_level_ticks() -> List[tuple]:
     ticks: List[tuple] = []
-    for db_lbl in (-96, -72, -48, -24, 0):
-        r = int(round((db_lbl + 120.0) / 120.0 * LIVE_LEVEL_RAW_MAX))
+    span = -LIVE_LEVEL_VISIBLE_MIN_DB
+    for db_lbl in (-70, -56, -42, -28, -14, 0):
+        frac = float(db_lbl - LIVE_LEVEL_VISIBLE_MIN_DB) / span
+        r = int(round(frac * LIVE_LEVEL_RAW_MAX))
         ticks.append((r, str(db_lbl)))
     return ticks
 

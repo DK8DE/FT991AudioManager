@@ -40,8 +40,16 @@ try:
 except ImportError:
     _HAVE_DSP = False
 
-_SPLIT_QUEUE_BLOCKS = 32
+_SPLIT_QUEUE_BLOCKS = 128
 
+
+def _portaudio_cb_status_problematic(status: object) -> bool:
+    """True, wenn ``sounddevice`` im Callback Status-Flags setzt (Über-/Unterlauf u. Ä.).
+
+    In solchen Blöcken sind Eingangs-Samples oft **nicht zuverlässig** — siehe Hinweise in
+    der ``sounddevice``-Doku zu :class:`~sounddevice.CallbackFlags`.
+    """
+    return bool(status)
 if TYPE_CHECKING:
     from live.live_dsp import LiveDSPChain
 
@@ -306,6 +314,7 @@ class LiveAudioEngine:
     ) -> None:
         assert sd is not None
 
+        in_ch = max(1, int(self._in_channels_hint(in_dev)))
         weak_self = self
 
         def callback(
@@ -315,15 +324,19 @@ class LiveAudioEngine:
             time_info: object,
             status: object,
         ) -> None:
-            del frames, status, time_info
-            ls = weak_self._read_snap()
-            y_dsp = weak_self._dsp_mono_without_output_gain(ls, indata)
+            del time_info
             import numpy as np
 
-            nf = int(np.asarray(indata).shape[0])
+            nf = int(frames)
+            if _portaudio_cb_status_problematic(status):
+                safe_in = np.zeros((nf, in_ch), dtype=np.float32)
+            else:
+                safe_in = np.asarray(indata, dtype=np.float32)
+            ls = weak_self._read_snap()
+            y_dsp = weak_self._dsp_mono_without_output_gain(ls, safe_in)
             gv = np.float32(max(0.0, min(2.0, float(ls.output_gain))))
             mic_trim = LiveAudioEngine._mono_mic_after_input_gain_fit(
-                indata, ls, nf,
+                safe_in, ls, nf,
             )
             weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(mic_trim)
 
@@ -336,8 +349,6 @@ class LiveAudioEngine:
             weak_self.funk_meter_db = float(-120.0)
             weak_self.funk_listen_meter_db = float(-120.0)
             LiveAudioEngine._stereo_fill_mono(outdata, y_mono)
-
-        in_ch = max(1, int(self._in_channels_hint(in_dev)))
         stream = sd.Stream(
             samplerate=float(live.samplerate),
             blocksize=int(live.blocksize),
@@ -376,6 +387,11 @@ class LiveAudioEngine:
         out_ch_mon = max(1, int(self._out_channels_hint(out_mon)))
         dual_funk = out_funk is not None
         dual_listen_in = in_listen is not None
+        listen_in_ch = (
+            max(1, int(self._in_channels_hint(in_listen)))
+            if in_listen is not None
+            else 1
+        )
 
         lock = Lock()
         weak_self = self
@@ -390,29 +406,34 @@ class LiveAudioEngine:
             time_info: object,
             status: object,
         ) -> None:
-            del time_info, status
+            del time_info
             if not weak_self._running:
                 return
+            nf_f = int(frames)
+            if _portaudio_cb_status_problematic(status):
+                safe_in = np.zeros((nf_f, in_ch), dtype=np.float32)
+            else:
+                safe_in = np.asarray(indata, dtype=np.float32)
             ls = weak_self._read_snap()
             fit_trim = LiveAudioEngine._mono_mic_after_input_gain_fit(
-                indata, ls, int(frames),
+                safe_in, ls, nf_f,
             )
             weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_trim)
-            y_dsp = weak_self._dsp_mono_without_output_gain(ls, indata)
+            y_dsp = weak_self._dsp_mono_without_output_gain(ls, safe_in)
             gv_f = np.float32(max(0.0, min(2.0, float(ls.funk_output_gain))))
             # Gesamt-Lautheit auf dem Monitor-Device: später in ``output_cb_monitor``
             # (summe Mic + Funk-Eing × ``output_gain``), sonst betrifft der Regler nicht
             # den Funk‑Eing‑Anteil bzw. wirk „tot“, wenn nur dieser auf dem Pfad liegt.
             if bool(ls.suppress_live_monitor_mic):
-                ym = np.zeros(int(frames), dtype=np.float32)
+                ym = np.zeros(nf_f, dtype=np.float32)
             else:
                 ym = np.asarray(y_dsp, dtype=np.float32).reshape(-1)
-            fit_m = LiveAudioEngine._fit_mono_to_frames(ym, int(frames))
+            fit_m = LiveAudioEngine._fit_mono_to_frames(ym, nf_f)
 
             ff: Optional[np.ndarray] = None
             if dual_funk:
                 yf = np.asarray(y_dsp, dtype=np.float32).reshape(-1) * gv_f
-                ff = LiveAudioEngine._fit_mono_to_frames(yf, int(frames))
+                ff = LiveAudioEngine._fit_mono_to_frames(yf, nf_f)
 
             with lock:
                 q_mon.append(fit_m.astype(np.float32, copy=True))
@@ -427,7 +448,7 @@ class LiveAudioEngine:
             time_info: object,
             status: object,
         ) -> None:
-            del time_info, status
+            del time_info
             if not weak_self._running:
                 return
             ls = weak_self._read_snap()
@@ -440,13 +461,16 @@ class LiveAudioEngine:
                     q_listen_in.append(fit_r.astype(np.float32, copy=True))
                 return
             gv_l = np.float32(max(0.0, min(2.0, float(ls.funk_listen_gain))))
-            raw = np.asarray(indata)
+            if _portaudio_cb_status_problematic(status):
+                raw = np.zeros((nf_i, listen_in_ch), dtype=np.float32)
+            else:
+                raw = np.asarray(indata, dtype=np.float32)
             if raw.ndim == 2 and raw.shape[1] >= 2:
                 mono_rx = np.mean(raw.astype(np.float32), axis=1).astype(np.float32)
             else:
                 mono_rx = raw[..., 0].astype(np.float32)
             yr = mono_rx.reshape(-1) * gv_l
-            fit_r = LiveAudioEngine._fit_mono_to_frames(yr, int(frames))
+            fit_r = LiveAudioEngine._fit_mono_to_frames(yr, nf_i)
             weak_self.funk_listen_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_r)
             with lock:
                 q_listen_in.append(fit_r.astype(np.float32, copy=True))
@@ -532,10 +556,9 @@ class LiveAudioEngine:
         objs: list[Any] = [istream_main, o_mon]
         i_listen_obj: Optional[Any] = None
         if dual_listen_in and in_listen is not None:
-            in_ch_l = max(1, int(self._in_channels_hint(in_listen)))
             i_listen_obj = sd.InputStream(
                 device=in_listen,
-                channels=in_ch_l,
+                channels=listen_in_ch,
                 dtype="float32",
                 samplerate=sr,
                 blocksize=bs,
@@ -626,18 +649,22 @@ class LiveAudioEngine:
             time_info: object,
             status: object,
         ) -> None:
-            del time_info, status
+            del time_info
             if not weak_self._idle_listen_running:
                 return
             ls = weak_self._idle_listen_snap
+            nf_i = int(frames)
             gv_l = np.float32(max(0.0, min(2.0, float(ls.funk_listen_gain))))
-            raw = np.asarray(indata)
+            if _portaudio_cb_status_problematic(status):
+                raw = np.zeros((nf_i, in_ch_l), dtype=np.float32)
+            else:
+                raw = np.asarray(indata, dtype=np.float32)
             if raw.ndim == 2 and raw.shape[1] >= 2:
                 mono_rx = np.mean(raw.astype(np.float32), axis=1).astype(np.float32)
             else:
                 mono_rx = raw[..., 0].astype(np.float32)
             yr = mono_rx.reshape(-1) * gv_l
-            fit_r = LiveAudioEngine._fit_mono_to_frames(yr, int(frames))
+            fit_r = LiveAudioEngine._fit_mono_to_frames(yr, nf_i)
             weak_self.funk_listen_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_r)
             with lock:
                 q_listen.append(fit_r.astype(np.float32, copy=True))

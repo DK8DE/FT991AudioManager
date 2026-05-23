@@ -1,4 +1,4 @@
-"""Globales Fenster: Soundeinstellungen (Bearbeiten → Soundeinstellung)."""
+"""Globales Fenster: Soundeinstellungen (Funktionen → Soundeinstellung)."""
 
 from __future__ import annotations
 

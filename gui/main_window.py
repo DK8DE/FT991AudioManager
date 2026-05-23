@@ -8,10 +8,10 @@ Neuer schlanker Aufbau (ab 0.5.1):
   **EQ-Profil**, **Speicherkanal** und **Band**; darunter ein eigener Bereich
   **Favoriten** (persistente Soll-Vorgaben).
 - **EQ-Profil- und Mode-Auswahl** bleiben im Hauptfenster; der Equalizer-Editor
-  (Grundwerte, EQ, Erweitert, Speichern) liegt in **Bearbeiten → Equalizer**.
+  (Grundwerte, EQ, Erweitert, Speichern) liegt unter **Funktionen → Equalizer**.
 - Verbindung: **Datei → Verbinden** / **Datei → Trennen**.
 - Die Verbindungs-Konfiguration liegt unter **Datei → Einstellungen**.
-- Speicherkanäle unter **Bearbeiten → Speicherkanäle**.
+- Speicherkanäle unter **Funktionen → Speicherkanäle**.
 - Das CAT-Log liegt unter **Ansicht → CAT-Log anzeigen** (eigenes Fenster).
 - **Hilfe → Update prüfen**: Abgleich mit dem neuesten Release auf GitHub.
 """
@@ -77,7 +77,11 @@ from version import APP_NAME, APP_VERSION
 
 from .about_window import AboutWindow
 from .app_icon import app_icon
-from .menu_icons import menu_action_icon, menu_speaker_white_icon
+from .menu_icons import (
+    control_bar_live_green_led_icon,
+    menu_action_icon,
+    menu_speaker_white_icon,
+)
 from .audio_radio_session import AudioRadioSessionHost
 from .audio_player_window import AudioPlayerWindow
 from .audio_recorder_window import AudioRecorderWindow
@@ -767,8 +771,8 @@ class MainWindow(QMainWindow):
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
 
-        # === Bearbeiten ===============================================
-        edit_menu = menu.addMenu("&Bearbeiten")
+        # === Funktionen =============================================
+        functions_menu = menu.addMenu("&Funktionen")
 
         memory_action = QAction("&Speicherkanäle…", self)
         memory_action.setIcon(
@@ -777,11 +781,11 @@ class MainWindow(QMainWindow):
                 theme_name="folder-open",
             )
         )
-        memory_action.setShortcut("Ctrl+K")
+        memory_action.setShortcut("Ctrl+Shift+K")
         memory_action.triggered.connect(self._on_memory_editor_action)
-        edit_menu.addAction(memory_action)
+        functions_menu.addAction(memory_action)
 
-        edit_menu.addSeparator()
+        functions_menu.addSeparator()
 
         equalizer_action = QAction("&Equalizer…", self)
         equalizer_action.setIcon(
@@ -792,13 +796,13 @@ class MainWindow(QMainWindow):
         )
         equalizer_action.setShortcut("Ctrl+Shift+E")
         equalizer_action.triggered.connect(self._on_equalizer_action)
-        edit_menu.addAction(equalizer_action)
+        functions_menu.addAction(equalizer_action)
 
         sound_settings_action = QAction("&Soundeinstellung…", self)
         sound_settings_action.setIcon(menu_speaker_white_icon())
         sound_settings_action.setShortcut("Ctrl+Shift+S")
         sound_settings_action.triggered.connect(self._on_sound_settings_action)
-        edit_menu.addAction(sound_settings_action)
+        functions_menu.addAction(sound_settings_action)
 
         audio_player_action = QAction("&Audio-Player…", self)
         audio_player_action.setIcon(
@@ -809,7 +813,7 @@ class MainWindow(QMainWindow):
         )
         audio_player_action.setShortcut("Ctrl+Shift+A")
         audio_player_action.triggered.connect(self._on_audio_player_action)
-        edit_menu.addAction(audio_player_action)
+        functions_menu.addAction(audio_player_action)
 
         audio_recorder_action = QAction("Audio-&Recorder…", self)
         audio_recorder_action.setIcon(
@@ -820,12 +824,13 @@ class MainWindow(QMainWindow):
         )
         audio_recorder_action.setShortcut("Ctrl+Shift+R")
         audio_recorder_action.triggered.connect(self._on_audio_recorder_action)
-        edit_menu.addAction(audio_recorder_action)
+        functions_menu.addAction(audio_recorder_action)
 
-        live_audio_action = QAction("&Live‑Monitoring…", self)
+        live_audio_action = QAction("&Live‑PC Funk…", self)
+        live_audio_action.setIcon(control_bar_live_green_led_icon())
         live_audio_action.setShortcut("Ctrl+Shift+L")
         live_audio_action.triggered.connect(self._on_live_action)
-        edit_menu.addAction(live_audio_action)
+        functions_menu.addAction(live_audio_action)
 
         # === Ansicht ==================================================
         view_menu = menu.addMenu("&Ansicht")

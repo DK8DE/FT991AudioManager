@@ -111,7 +111,7 @@ class TCallController(QObject):
         send_id = self._device_id(ROLE_SEND)
         if not send_id:
             self.error.emit(
-                "Keine Sende-Ausgabe gewählt — unter Bearbeiten → "
+                "Keine Sende-Ausgabe gewählt — unter Funktionen → "
                 "Soundeinstellung die Funk-USB-Karte (nicht „System-Standard“) wählen."
             )
             return

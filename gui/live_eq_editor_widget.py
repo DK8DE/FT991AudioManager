@@ -55,7 +55,11 @@ def _format_level(b: LiveEqBandSettings) -> str:
 def _format_q(b: LiveEqBandSettings) -> str:
     if not b.enabled:
         return "—"
-    return f"Q = {int(round(float(b.q)))}"
+    q = float(b.q)
+    if abs(q - round(q)) < 1e-5:
+        return f"Q = {int(round(q))}"
+    text = f"{q:.2f}".rstrip("0").rstrip(".")
+    return f"Q = {text}"
 
 
 class LiveEqEditorWidget(QWidget):
@@ -98,7 +102,7 @@ class LiveEqEditorWidget(QWidget):
             name_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             value_label = QLabel("Q = 5")
             value_label.setStyleSheet(_VALUE_LABEL_STYLE)
-            value_label.setMinimumWidth(52)
+            value_label.setMinimumWidth(64)
             value_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             col = QVBoxLayout()
             col.setSpacing(2)
@@ -124,7 +128,8 @@ class LiveEqEditorWidget(QWidget):
         plot_row.addWidget(self._build_db_stack())
 
         hint = QLabel(
-            "Punkt ziehen = Frequenz/Level · hellblauer Rand ziehen = Bandbreite (Q) · "
+            "Punkt ziehen = Frequenz/Level · hellblauer Rand ziehen = Bandbreite (Q "
+            "in feinen Raster‑Schritten) · "
             "Rechtsklick = an/aus"
         )
         hint.setStyleSheet(_CAPTION_STYLE)

@@ -101,6 +101,22 @@ def control_bar_record_red_icon() -> QIcon:
     return _control_bar_icon(_draw_record_red)
 
 
+def _draw_live_green_led(p: QPainter, size: int) -> None:
+    # Gleicher Aufbau wie roter Rekorder‑Punkt, Farbe näher Yaesu-/Live‑Grün (#52c41a).
+    green = QColor(82, 196, 26)
+    border = QColor(30, 30, 30)
+    m = size * 0.24
+    rect = QRectF(m, m, size - 2 * m, size - 2 * m)
+    p.setPen(border)
+    p.setBrush(green)
+    p.drawEllipse(rect)
+
+
+def control_bar_live_green_led_icon() -> QIcon:
+    """Grüne LED wie Rekorder‑Punkt — Live‑Monitoring-Schaltfläche."""
+    return _control_bar_icon(_draw_live_green_led)
+
+
 def volume_role_icon_size() -> QSize:
     """Icon-Größe vor Lautstärkeregler in Soundeinstellungen."""
     return QSize(_TRANSPORT_BTN_ICON_PX, _TRANSPORT_BTN_ICON_PX)
