@@ -168,6 +168,25 @@ try {
     Write-Step "Installiere PyInstaller"
     Invoke-Checked "PyInstaller-Install fehlgeschlagen" $VenvPython "-m" "pip" "install" "pyinstaller>=6.0"
 
+    Write-Step "Pruefe Live-Abhaengigkeiten (numpy, scipy, sounddevice)"
+    $liveDepsCheck = @'
+import importlib
+import sys
+
+missing = []
+for name in ("numpy", "scipy", "sounddevice"):
+    try:
+        importlib.import_module(name)
+    except ImportError:
+        missing.append(name)
+if missing:
+    print("FEHLEND im Build-venv:", ", ".join(missing), file=sys.stderr)
+    print("Tipp: pip install -r requirements.txt", file=sys.stderr)
+    sys.exit(1)
+print("Live-Abhaengigkeiten OK")
+'@
+    Invoke-Checked "Live-Abhaengigkeiten fehlen im Build-venv" $VenvPython "-c" $liveDepsCheck
+
     # ------------------------------------------------------------------
     # Build
     # ------------------------------------------------------------------
@@ -259,7 +278,8 @@ try {
     Copy-Item -Path $IconIco -Destination (Join-Path $OutDir "logo.ico") -Force
     Write-Host " Icon  : $(Join-Path $OutDir 'logo.ico') (neben EXE, fuer Installer/Shell)" -ForegroundColor Green
 
-    $mmPluginDir = Join-Path $OutDir '_internal\PySide6\plugins\multimedia'
+    $internalDir = Join-Path $OutDir '_internal'
+    $mmPluginDir = Join-Path $internalDir 'PySide6\plugins\multimedia'
     if (-not (Test-Path $mmPluginDir)) {
         Write-Host ' WARNUNG: Qt-Multimedia-Plugins fehlen - Audio-Player defekt!' -ForegroundColor Yellow
     } else {
@@ -267,6 +287,18 @@ try {
         $hasWmf = Test-Path (Join-Path $mmPluginDir 'windowsmediaplugin.dll')
         if (-not $hasFfmpeg -and -not $hasWmf) {
             Write-Host ' WARNUNG: ffmpegmediaplugin.dll / windowsmediaplugin.dll fehlen!' -ForegroundColor Yellow
+        }
+    }
+
+    $liveBundleChecks = @(
+        @{ Rel = 'numpy'; Label = 'numpy (Live DSP)' },
+        @{ Rel = 'scipy'; Label = 'scipy (Live EQ/Filter)' },
+        @{ Rel = '_sounddevice_data\portaudio-binaries\libportaudio64bit.dll'; Label = 'PortAudio (sounddevice)' }
+    )
+    foreach ($check in $liveBundleChecks) {
+        $target = Join-Path $internalDir $check.Rel
+        if (-not (Test-Path $target)) {
+            Write-Host (" WARNUNG: {0} fehlt im Bundle - Live-Fenster defekt!" -f $check.Label) -ForegroundColor Yellow
         }
     }
     Write-Host ""

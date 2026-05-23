@@ -27,8 +27,28 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller>=6.0
 
+      - name: Verify Live dependencies in build environment
+        run: python -c "import numpy, scipy, sounddevice; print('Live deps OK')"
+
       - name: Build with PyInstaller
         run: pyinstaller --noconfirm --clean FT991AudioManager.spec
+
+      - name: Verify Live bundle in dist
+        shell: pwsh
+        run: |
+          $internal = Join-Path $env:GITHUB_WORKSPACE "dist\FT991AudioManager\_internal"
+          $checks = @(
+            "numpy",
+            "scipy",
+            "_sounddevice_data\portaudio-binaries\libportaudio64bit.dll"
+          )
+          foreach ($rel in $checks) {
+            $p = Join-Path $internal $rel
+            if (-not (Test-Path $p)) {
+              throw "Live-Bundle unvollstaendig: fehlt $rel"
+            }
+          }
+          Write-Host "Live-Bundle OK (numpy, scipy, PortAudio)"
 
       - name: Trim PySide6 bundle
         shell: pwsh
@@ -83,8 +103,28 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller>=6.0
 
+      - name: Verify Live dependencies in build environment
+        run: python -c "import numpy, scipy, sounddevice; print('Live deps OK')"
+
       - name: Build with PyInstaller
         run: pyinstaller --noconfirm --clean FT991AudioManager.spec
+
+      - name: Verify Live bundle in dist
+        shell: pwsh
+        run: |
+          $internal = Join-Path $env:GITHUB_WORKSPACE "dist\FT991AudioManager\_internal"
+          $checks = @(
+            "numpy",
+            "scipy",
+            "_sounddevice_data\portaudio-binaries\libportaudio64bit.dll"
+          )
+          foreach ($rel in $checks) {
+            $p = Join-Path $internal $rel
+            if (-not (Test-Path $p)) {
+              throw "Live-Bundle unvollstaendig: fehlt $rel"
+            }
+          }
+          Write-Host "Live-Bundle OK (numpy, scipy, PortAudio)"
 
       - name: Trim PySide6 bundle
         shell: pwsh

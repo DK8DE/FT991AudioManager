@@ -2,6 +2,8 @@
 import os
 import re
 
+from PyInstaller.utils.hooks import collect_dynamic_libs
+
 # ── Version aus version.py lesen ──────────────────────────────────────────
 _spec_dir = os.path.dirname(os.path.abspath(SPEC))
 _ver_src = open(os.path.join(_spec_dir, "version.py"), encoding="utf-8").read()
@@ -45,13 +47,38 @@ with open(os.path.join(_spec_dir, "_version_info.txt"), "w", encoding="utf-8") a
 
 # Nur tatsaechlich genutzte Qt-Module (Widgets-GUI + Multimedia fuer Audio-Player).
 # NICHT collect_submodules("PySide6") — das zieht alle ~136 Qt-DLLs (~600 MB).
+# Live-Fenster: PortAudio/sounddevice + NumPy/scipy — auch wenn try/except-Imports
+# in live_*.py die statische Analyse nicht zuverlaessig erreichen.
+_LIVE_HIDDENIMPORTS = [
+    "numpy",
+    "scipy",
+    "scipy.signal",
+    "sounddevice",
+    "_sounddevice_data",
+    "live",
+    "live.live_devices",
+    "live.live_audio_engine",
+    "live.live_dsp",
+    "gui.live_window",
+    "gui.live_eq_editor_widget",
+    "gui.live_eq_curve_view",
+    "model.live_settings",
+    "model.live_volume_curve",
+]
+
 hiddenimports = [
     "serial.tools.list_ports",
     "PySide6.QtMultimedia",
     "PySide6.QtMultimediaWidgets",  # von PyInstaller-Qt-Hook fuer Multimedia-Plugins
     "shiboken6",
     "PySide6.support.deprecated",
-]
+] + _LIVE_HIDDENIMPORTS
+
+_binaries: list[tuple[str, str]] = []
+try:
+    _binaries += collect_dynamic_libs("sounddevice")
+except Exception:
+    pass
 
 # Unbenutzte PySide6-Bindings von der Analyse ausschliessen.
 excludes = [
@@ -114,7 +141,7 @@ if not os.path.isfile(_tcall_wav):
 a = Analysis(
     [_main_py],
     pathex=[_spec_dir],
-    binaries=[],
+    binaries=_binaries,
     datas=[
         (_icon_ico, "."),
         (_tcall_wav, "audio"),
