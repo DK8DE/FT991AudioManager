@@ -1541,7 +1541,14 @@ class LiveWindow(QMainWindow):
     def _defer_refresh_idle_listen_monitor(self) -> None:
         if not self.isVisible():
             return
-        self._refresh_idle_listen_monitor()
+        try:
+            self._refresh_idle_listen_monitor()
+        except Exception:
+            self._idle_monitor_fp_key = None
+            try:
+                self._engine.stop_idle_listen_monitor()
+            except Exception:
+                pass
 
     def _restore_geometry(self) -> None:
         raw = self._settings.live.window_geometry or self._live_snapshot.window_geometry

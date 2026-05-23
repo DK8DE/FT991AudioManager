@@ -637,10 +637,17 @@ class LiveAudioEngine:
 
         self.stop_idle_listen_monitor()
 
-        sr = float(live.samplerate)
-        bs = int(live.blocksize)
         in_ch_l = max(1, int(self._in_channels_hint(in_listen)))
         out_ch_mon = max(1, int(self._out_channels_hint(out_mon)))
+        bs = int(live.blocksize)
+        sr = self._resolve_samplerate(
+            float(live.samplerate),
+            in_dev=in_listen,
+            in_ch=in_ch_l,
+            out_dev=out_mon,
+            out_ch=out_ch_mon,
+            blocksize=bs,
+        )
 
         import numpy as np
 
@@ -703,29 +710,28 @@ class LiveAudioEngine:
             weak_self.monitor_meter_db = LiveAudioEngine._mono_peak_dbfs(y_out)
             LiveAudioEngine._stereo_fill_mono(outdata, y_out)
 
-        istream = sd.InputStream(
-            device=in_listen,
-            channels=in_ch_l,
-            dtype="float32",
-            samplerate=sr,
-            blocksize=bs,
-            latency="low",
-            callback=input_cb_idle,
-        )
-        ostream = sd.OutputStream(
-            device=out_mon,
-            channels=out_ch_mon,
-            dtype="float32",
-            samplerate=sr,
-            blocksize=bs,
-            latency="low",
-            callback=output_cb_idle,
-        )
-
-        self._idle_listen_snap = LiveSettings.from_dict(live.to_dict())
-        self._stream_idle_listen_in = istream
-        self._stream_idle_mon_out = ostream
         try:
+            istream = sd.InputStream(
+                device=in_listen,
+                channels=in_ch_l,
+                dtype="float32",
+                samplerate=sr,
+                blocksize=bs,
+                latency="low",
+                callback=input_cb_idle,
+            )
+            ostream = sd.OutputStream(
+                device=out_mon,
+                channels=out_ch_mon,
+                dtype="float32",
+                samplerate=sr,
+                blocksize=bs,
+                latency="low",
+                callback=output_cb_idle,
+            )
+            self._idle_listen_snap = LiveSettings.from_dict(live.to_dict())
+            self._stream_idle_listen_in = istream
+            self._stream_idle_mon_out = ostream
             self._idle_listen_running = True
             istream.start()
             ostream.start()
@@ -868,6 +874,105 @@ class LiveAudioEngine:
         if d is None and sid:
             d = parse_device_id(sid, None)
         return d
+
+    @staticmethod
+    def _device_default_samplerate(device_index: Optional[int]) -> Optional[float]:
+        if not _HAVE_SD or sd is None or device_index is None:
+            return None
+        try:
+            info = sd.query_devices(device_index)
+            if isinstance(info, dict):
+                dsr = float(info.get("default_samplerate", 0) or 0)
+                if dsr > 0:
+                    return dsr
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _stream_params_ok(
+        sr: float,
+        *,
+        in_dev: Optional[int],
+        in_ch: int,
+        out_dev: Optional[int],
+        out_ch: int,
+        blocksize: int,
+    ) -> bool:
+        if not _HAVE_SD or sd is None:
+            return False
+        try:
+            if in_dev is not None:
+                sd.check_input_settings(
+                    device=in_dev,
+                    channels=in_ch,
+                    dtype="float32",
+                    samplerate=float(sr),
+                    blocksize=int(blocksize),
+                )
+            if out_dev is not None:
+                sd.check_output_settings(
+                    device=out_dev,
+                    channels=out_ch,
+                    dtype="float32",
+                    samplerate=float(sr),
+                    blocksize=int(blocksize),
+                )
+            return True
+        except Exception:
+            return False
+
+    @classmethod
+    def _resolve_samplerate(
+        cls,
+        preferred: float,
+        *,
+        in_dev: Optional[int],
+        in_ch: int,
+        out_dev: Optional[int],
+        out_ch: int,
+        blocksize: int,
+    ) -> float:
+        """Erste Samplerate, die für Ein- und Ausgangsgerät gültig ist."""
+        seen: set[float] = set()
+        candidates: list[float] = []
+
+        def _add(value: float) -> None:
+            vf = float(value)
+            if vf <= 0 or vf in seen:
+                return
+            seen.add(vf)
+            candidates.append(vf)
+
+        _add(preferred)
+        d_in = cls._device_default_samplerate(in_dev)
+        if d_in is not None:
+            _add(d_in)
+        d_out = cls._device_default_samplerate(out_dev)
+        if d_out is not None:
+            _add(d_out)
+        for fallback in (
+            48000.0,
+            44100.0,
+            96000.0,
+            32000.0,
+            22050.0,
+            16000.0,
+            8000.0,
+        ):
+            _add(fallback)
+
+        for sr in candidates:
+            if cls._stream_params_ok(
+                sr,
+                in_dev=in_dev,
+                in_ch=in_ch,
+                out_dev=out_dev,
+                out_ch=out_ch,
+                blocksize=blocksize,
+            ):
+                return sr
+        return float(preferred)
 
     @staticmethod
     def _friendly_sd_error(exc: BaseException) -> str:
