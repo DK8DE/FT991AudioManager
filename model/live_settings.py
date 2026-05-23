@@ -139,7 +139,8 @@ class LiveSettings:
     #: Zweites Aufnahmegerät (z. B. Funk‑Rückweg/Lin): Rohsignal auf Monitor mischen.
     funk_listen_input_device_id: str = ""
     funk_listen_enabled: bool = False
-    #: 100 % → 1,0 · UI 200 % erlaubt → 2,0 (Spezifikation 0–200 %)
+    #: Verstärkung 0–2,0 (linear); UI-Slider 0–200 mit logarithmischer Kurve
+    #: (:mod:`model.live_volume_curve`, 100 % Regler = 1,0).
     input_gain: float = 1.0
     #: Lautheit nur für den Monitor‑Ausgang
     output_gain: float = 1.0

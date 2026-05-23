@@ -50,6 +50,11 @@ from live.live_devices import (
 from mapping.rx_mapping import RxMode
 from model import AppSettings
 from model.live_settings import LiveEqBandSettings, LiveSettings
+from model.live_volume_curve import (
+    live_gain_display_percent,
+    live_gain_from_slider,
+    live_slider_from_gain,
+)
 
 if TYPE_CHECKING:
     from gui.audio_radio_session import AudioRadioSessionHost
@@ -314,6 +319,7 @@ class LiveWindow(QMainWindow):
 
         self._suppress_idle_listen_monitor = False
         self._idle_monitor_fp_key: Optional[tuple[object, ...]] = None
+        self._mic_preview_fp_key: Optional[tuple[object, ...]] = None
         self._suppress_funk_listen_while_live_tx_active = False
         #: Fester Taste „PTT“ (gedrückt = Live‑Transport an).
         self._live_ptt_momentary_held = False
@@ -727,6 +733,18 @@ class LiveWindow(QMainWindow):
         self._sl_mon_v, self._lb_mon_pct = _mk_v_col("Monitor", _pmon)
         self._sl_funk_v, self._lb_funk_pct = _mk_v_col("Funk", _pf)
         self._sl_flisten_v, self._lb_flisten_pct = _mk_v_col("Funk‑Eingang", _pfl)
+        _vol_tip = (
+            "Logarithmischer Lautstärkeregler: feine Regelung im unteren Bereich, "
+            "100 % = normale Verstärkung (0 dB), bis 200 % = Verdopplung (+6 dB). "
+            "Die Prozentanzeige unten ist die effektive Lautstärke."
+        )
+        for sl in (
+            self._sl_mic_v,
+            self._sl_mon_v,
+            self._sl_funk_v,
+            self._sl_flisten_v,
+        ):
+            sl.setToolTip(_vol_tip)
         self._sl_mic_v.valueChanged.connect(self._pull_vol_sliders)
         self._sl_mon_v.valueChanged.connect(self._pull_vol_sliders)
         self._sl_funk_v.valueChanged.connect(self._pull_vol_sliders)
@@ -937,7 +955,9 @@ class LiveWindow(QMainWindow):
         self._ensure_live_ctrl_y_filter_released()
         self._release_keyboard_ptt_momentary()
         self._engine.stop_idle_listen_monitor()
+        self._engine.stop_mic_preview_monitor()
         self._idle_monitor_fp_key = None
+        self._mic_preview_fp_key = None
         super().hideEvent(event)
         if self._audio_radio_session is not None:
             self._audio_radio_session.on_window_hidden(self)
@@ -1270,26 +1290,23 @@ class LiveWindow(QMainWindow):
     def _apply_live_to_ui(self) -> None:
         liv = LiveSettings.from_dict(self._live_snapshot.to_dict())
 
-        pct_in = round(float(liv.input_gain) * 100.0)
-        pct_out = round(float(liv.output_gain) * 100.0)
-        pct_funk = round(float(liv.funk_output_gain) * 100.0)
-        pct_fl = round(float(liv.funk_listen_gain) * 100.0)
+        sl_in = live_slider_from_gain(liv.input_gain)
+        sl_out = live_slider_from_gain(liv.output_gain)
+        sl_funk = live_slider_from_gain(liv.funk_output_gain)
+        sl_fl = live_slider_from_gain(liv.funk_listen_gain)
         self._sl_mic_v.blockSignals(True)
         self._sl_mon_v.blockSignals(True)
         self._sl_funk_v.blockSignals(True)
         self._sl_flisten_v.blockSignals(True)
-        self._sl_mic_v.setValue(min(200, max(0, pct_in)))
-        self._sl_mon_v.setValue(min(200, max(0, pct_out)))
-        self._sl_funk_v.setValue(min(200, max(0, pct_funk)))
-        self._sl_flisten_v.setValue(min(200, max(0, pct_fl)))
+        self._sl_mic_v.setValue(sl_in)
+        self._sl_mon_v.setValue(sl_out)
+        self._sl_funk_v.setValue(sl_funk)
+        self._sl_flisten_v.setValue(sl_fl)
         self._sl_mic_v.blockSignals(False)
         self._sl_mon_v.blockSignals(False)
         self._sl_funk_v.blockSignals(False)
         self._sl_flisten_v.blockSignals(False)
-        self._lb_mic_pct.setText(f"{pct_in} %")
-        self._lb_mon_pct.setText(f"{pct_out} %")
-        self._lb_funk_pct.setText(f"{pct_funk} %")
-        self._lb_flisten_pct.setText(f"{pct_fl} %")
+        self._update_vol_slider_labels()
 
         self._chk_funk_listen.blockSignals(True)
         self._chk_funk_listen.setChecked(bool(liv.funk_listen_enabled))
@@ -1347,10 +1364,10 @@ class LiveWindow(QMainWindow):
         liv.samplerate = int(float(self._c_sr.currentText()))
         raw_bs = self._c_bs.currentData()
         liv.blocksize = int(raw_bs) if raw_bs is not None else int(liv.blocksize)
-        liv.input_gain = float(self._sl_mic_v.value()) / 100.0
-        liv.output_gain = float(self._sl_mon_v.value()) / 100.0
-        liv.funk_output_gain = float(self._sl_funk_v.value()) / 100.0
-        liv.funk_listen_gain = float(self._sl_flisten_v.value()) / 100.0
+        liv.input_gain = live_gain_from_slider(int(self._sl_mic_v.value()))
+        liv.output_gain = live_gain_from_slider(int(self._sl_mon_v.value()))
+        liv.funk_output_gain = live_gain_from_slider(int(self._sl_funk_v.value()))
+        liv.funk_listen_gain = live_gain_from_slider(int(self._sl_flisten_v.value()))
 
         liv.eq_enabled = bool(self._chk_eq_master.isChecked())
         liv.eq_bands = [
@@ -1374,11 +1391,19 @@ class LiveWindow(QMainWindow):
         liv.clamp_recursive()
         return liv
 
+    def _update_vol_slider_labels(self) -> None:
+        pairs = (
+            (self._sl_mic_v, self._lb_mic_pct),
+            (self._sl_mon_v, self._lb_mon_pct),
+            (self._sl_funk_v, self._lb_funk_pct),
+            (self._sl_flisten_v, self._lb_flisten_pct),
+        )
+        for sl, lb in pairs:
+            pct = live_gain_display_percent(live_gain_from_slider(int(sl.value())))
+            lb.setText(f"{pct} %")
+
     def _pull_vol_sliders(self, *_v: object) -> None:
-        self._lb_mic_pct.setText(f"{int(self._sl_mic_v.value())} %")
-        self._lb_mon_pct.setText(f"{int(self._sl_mon_v.value())} %")
-        self._lb_funk_pct.setText(f"{int(self._sl_funk_v.value())} %")
-        self._lb_flisten_pct.setText(f"{int(self._sl_flisten_v.value())} %")
+        self._update_vol_slider_labels()
         self._push_snapshot()
 
     def _pull_sliders_into_snapshot(self) -> None:
@@ -1433,6 +1458,7 @@ class LiveWindow(QMainWindow):
             self._persist()
         self._push_live_engine_runtime_settings(liv)
         self._refresh_idle_listen_monitor(liv)
+        self._refresh_mic_preview_monitor(liv)
 
     def _on_device_changed_save(self, *_args: object) -> None:
         liv = self._gather_live_from_ui()
@@ -1538,15 +1564,64 @@ class LiveWindow(QMainWindow):
             self._idle_monitor_fp_key = None
             self._engine.stop_idle_listen_monitor()
 
+    def _refresh_mic_preview_monitor(self, liv: Optional[LiveSettings] = None) -> None:
+        """PC‑Mikrofon‑Pegel, solange das Fenster offen ist und kein Live‑Stream läuft."""
+        ref = liv
+        if ref is None:
+            ref = LiveSettings.from_dict(self._gather_live_from_ui().to_dict())
+        else:
+            ref = LiveSettings.from_dict(ref.to_dict())
+
+        if not self.isVisible():
+            self._engine.stop_mic_preview_monitor()
+            self._mic_preview_fp_key = None
+            return
+
+        if self._engine.is_running():
+            self._engine.stop_mic_preview_monitor()
+            self._mic_preview_fp_key = None
+            return
+
+        prereq_ok, _ = self._engine.prerequisites_ok()
+        if not prereq_ok:
+            self._engine.stop_mic_preview_monitor()
+            self._mic_preview_fp_key = None
+            return
+
+        mic_sid = str(ref.input_device_id or "").strip()
+        if not mic_sid:
+            self._engine.stop_mic_preview_monitor()
+            self._mic_preview_fp_key = None
+            return
+
+        fp_key: tuple[object, ...] = (
+            mic_sid,
+            int(ref.samplerate),
+            int(ref.blocksize),
+            round(float(ref.input_gain), 4),
+        )
+        if fp_key == self._mic_preview_fp_key and self._engine.is_mic_preview_running():
+            self._engine.push_mic_preview_settings(ref)
+            return
+
+        self._mic_preview_fp_key = fp_key
+        ok, _msg = self._engine.start_mic_preview_monitor(ref)
+        if not ok:
+            self._mic_preview_fp_key = None
+            self._engine.stop_mic_preview_monitor()
+
     def _defer_refresh_idle_listen_monitor(self) -> None:
         if not self.isVisible():
             return
         try:
             self._refresh_idle_listen_monitor()
+            self._refresh_mic_preview_monitor()
         except Exception:
             self._idle_monitor_fp_key = None
+            self._mic_preview_fp_key = None
             try:
                 self._engine.stop_idle_listen_monitor()
+                self._engine.stop_mic_preview_monitor()
             except Exception:
                 pass
 
@@ -1567,7 +1642,9 @@ class LiveWindow(QMainWindow):
         self._suppress_funk_listen_while_live_tx_active = False
         self._suppress_idle_listen_monitor = True
         self._engine.stop_idle_listen_monitor()
+        self._engine.stop_mic_preview_monitor()
         self._idle_monitor_fp_key = None
+        self._mic_preview_fp_key = None
         self._save_geo_to_settings()
         self._live_cat_settle.stop()
 

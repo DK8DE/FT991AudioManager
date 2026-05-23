@@ -1,8 +1,8 @@
 """PortAudio-/sounddevice-Geräteliste (getrennt von Qt Multimedia).
 
-Es werden nur echte Aufnahmen bzw. Wiedergabe-Endpunkte aufgelistet – und
-gleichnamige Einträge (derselbe Name unter MME/WASAPI/DirectSound/…) zu
-je **einem** PortAudio‑Gerät zusammengeführt, wie im Qt‑Gerätedialog.
+Anzeigenamen wie im **Audio-Player** / **Recorder** (Qt ``QMediaDevices`` =
+Windows-Geräteliste). Intern bleibt die Auswahl der **PortAudio-Index** für
+``sounddevice``.
 """
 
 from __future__ import annotations
@@ -17,6 +17,9 @@ try:
 except ImportError:
     _sd = None  # type: ignore[assignment]
     _HAVE_SD = False
+
+# Mindest-Token-Übereinstimmung PA ↔ Qt (0…1), sonst kein Mapping
+_QT_PA_MATCH_MIN_SCORE = 0.45
 
 
 # Niedriger = bevorzugt (typisch Windows; unbekannte APIs = 9)
@@ -109,59 +112,154 @@ def _norm_group_key(base_name: str) -> str:
     return " ".join(s.split())
 
 
-def _dedupe_device_rows(
+def _norm_match_key(base_name: str) -> str:
+    """Weicher Match-Schlüssel PA ↔ Qt (Windows-Anzeigename)."""
+    s = _norm_group_key(base_name)
+    s = re.sub(r"\(r\)", "", s)
+    s = s.replace("®", "").replace("™", "")
+    s = re.sub(r"\s*-\s*", " ", s)
+    s = re.sub(r"[^\w\s()]", " ", s, flags=re.UNICODE)
+    return " ".join(s.split())
+
+
+def _token_set(key: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", _norm_match_key(key)))
+
+
+def _match_score(a: str, b: str) -> float:
+    ta = _token_set(a)
+    tb = _token_set(b)
+    if not ta or not tb:
+        return 0.0
+    inter = len(ta & tb)
+    return inter / float(max(len(ta), len(tb)))
+
+
+def _qt_multimedia_device_labels(*, want_input: bool) -> List[str]:
+    """Geordnete Windows-/Qt-Anzeigenamen."""
+    try:
+        from audio.qt_multimedia_lazy import qt_multimedia_types
+    except ImportError:
+        return []
+
+    mm = qt_multimedia_types()
+    if mm is None:
+        return []
+    _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
+    if want_input:
+        devices = QMediaDevices.audioInputs()
+    else:
+        devices = QMediaDevices.audioOutputs()
+    out: List[str] = []
+    for dev in devices:
+        desc = str(dev.description()).strip()
+        if desc:
+            out.append(desc)
+    return out
+
+
+def _pa_row_tip(sd: object, idx: int, api: str) -> str:
+    tip = f"PortAudio #{idx}"
+    if api:
+        tip += f" — {api}"
+    return tip
+
+
+def _best_pa_row_for_qt_name(
+    sd: object,
+    qt_desc: str,
+    *,
+    want_input: bool,
+) -> Optional[Tuple[int, str, str]]:
+    """Beste PortAudio-Zeile (index, pa_name, tooltip) für einen Qt-Anzeigenamen."""
+    qkey = _norm_match_key(qt_desc)
+    if not qkey:
+        return None
+
+    best: Optional[Tuple[int, int, float, str, str]] = None
+    # (hostapi_rank, index, match_score, pa_name, api)
+
+    for i, d in enumerate(sd.query_devices()):  # type: ignore[union-attr]
+        if want_input:
+            if int(d.get("max_input_channels") or 0) <= 0:
+                continue
+        else:
+            if int(d.get("max_output_channels") or 0) <= 0:
+                continue
+
+        pa_name = str(d.get("name", f"Gerät {i}")).strip() or f"Gerät {i}"
+        score = _match_score(qkey, pa_name)
+        if score < _QT_PA_MATCH_MIN_SCORE:
+            continue
+
+        api = _hostapi_name_for_device(sd, d)
+        rank = _hostapi_rank(api)
+        cand = (rank, i, score, pa_name, api)
+        if best is None:
+            best = cand
+            continue
+        if cand[0] < best[0] or (cand[0] == best[0] and cand[2] > best[2]) or (
+            cand[0] == best[0] and cand[2] == best[2] and cand[1] < best[1]
+        ):
+            best = cand
+
+    if best is None:
+        return None
+    _rank, idx, _score, pa_name, api = best
+    return idx, pa_name, _pa_row_tip(sd, idx, api)
+
+
+def _raw_pa_device_rows(
     sd: object,
     *,
     want_input: bool,
 ) -> List[Tuple[int, str, str]]:
-    """Pro logischem Gerät eine Zeile: (pa_index, anzeige_name, tooltip)."""
-    rows: dict[str, tuple[int, int, str, str]] = {}
-    # key_norm -> (rank, index, api_name, display_name)
-
+    """Alle PortAudio-Geräte ohne Zusammenlegung."""
+    out: List[Tuple[int, str, str]] = []
     for i, d in enumerate(sd.query_devices()):  # type: ignore[union-attr]
         if want_input:
-            if int(d["max_input_channels"]) <= 0:
+            if int(d.get("max_input_channels") or 0) <= 0:
                 continue
         else:
-            if int(d["max_output_channels"]) <= 0:
+            if int(d.get("max_output_channels") or 0) <= 0:
                 continue
-
         display = str(d.get("name", f"Gerät {i}")).strip() or f"Gerät {i}"
         api = _hostapi_name_for_device(sd, d)
-        rank = _hostapi_rank(api)
-        gk = _norm_group_key(display)
+        out.append((i, display, _pa_row_tip(sd, i, api)))
+    out.sort(key=lambda row: row[1].lower())
+    return out
 
-        prev = rows.get(gk)
-        if prev is None:
-            rows[gk] = (rank, i, api, display)
-            continue
-        prev_rank, prev_i, prev_api, prev_disp = prev
-        if rank < prev_rank or (rank == prev_rank and i < prev_i):
-            rows[gk] = (rank, i, api, display)
 
-    out_list: List[Tuple[int, str, str]] = []
-    for _gk, (_r, idx, api, disp) in sorted(
-        rows.items(),
-        key=lambda kv: kv[1][3].lower(),
-    ):
-        tip = f"PortAudio #{idx}"
-        if api:
-            tip += f" — {api}"
-        out_list.append((idx, disp, tip))
-    return out_list
+def _device_rows(
+    sd: object,
+    *,
+    want_input: bool,
+) -> List[Tuple[int, str, str]]:
+    """Geräteliste: Qt-Anzeigenamen mit PortAudio-Index, sonst rohe PA-Liste."""
+    qt_labels = _qt_multimedia_device_labels(want_input=want_input)
+    if qt_labels:
+        out: List[Tuple[int, str, str]] = []
+        for qdesc in qt_labels:
+            row = _best_pa_row_for_qt_name(sd, qdesc, want_input=want_input)
+            if row is None:
+                continue
+            idx, pa_label, tip = row
+            tip_full = tip
+            if pa_label.lower() != qdesc.lower():
+                tip_full = f"{tip}\nPortAudio: {pa_label}"
+            out.append((idx, qdesc, tip_full))
+        if out:
+            return out
+    return _raw_pa_device_rows(sd, want_input=want_input)
 
 
 def list_input_devices() -> List[Tuple[str, str, str]]:
-    """[(id, Kurzlabel, Tooltip), …]; erstes Tuple System-Standard.
-
-    Kurzlabel ohne Host-API-Klammer — Doppelungen (MME/WASAPI/…) sind
-    zusammengelegt; es bleibt der PortAudio-Index der bevorzugten API.
-    """
+    """[(id, Kurzlabel, Tooltip), …]; erstes Tuple System-Standard."""
     if not _HAVE_SD:
         return [("", "sounddevice nicht installiert", "")]
     assert _sd is not None
     head: List[Tuple[str, str, str]] = [("", "System-Standard", "PortAudio-Standardgerät")]
-    for idx, label, tip in _dedupe_device_rows(_sd, want_input=True):
+    for idx, label, tip in _device_rows(_sd, want_input=True):
         head.append((str(idx), label, tip))
     return head
 
@@ -172,13 +270,13 @@ def list_output_devices() -> List[Tuple[str, str, str]]:
         return [("", "sounddevice nicht installiert", "")]
     assert _sd is not None
     head: List[Tuple[str, str, str]] = [("", "System-Standard", "PortAudio-Standardgerät")]
-    for idx, label, tip in _dedupe_device_rows(_sd, want_input=False):
+    for idx, label, tip in _device_rows(_sd, want_input=False):
         head.append((str(idx), label, tip))
     return head
 
 
 def remap_live_device_id(saved_id: str, *, input_device: bool) -> str:
-    """Mappt einen alten PA-Index ggf. auf den nach Deduplizierung gewählten Kanon."""
+    """Mappt einen alten PA-Index ggf. auf einen noch gültigen Listeneintrag."""
     sid = str(saved_id or "").strip()
     if not sid or not _HAVE_SD:
         return sid
@@ -194,18 +292,21 @@ def remap_live_device_id(saved_id: str, *, input_device: bool) -> str:
     all_d = _sd.query_devices()
     if old_i < 0 or old_i >= len(all_d):
         return ""
-    key = _norm_group_key(str(all_d[old_i].get("name", "")))
+    old_name = str(all_d[old_i].get("name", ""))
+    key = _norm_match_key(old_name)
     if not key:
         return ""
-    for did, _lbl, _tip in rows:
+    for did, lbl, _tip in rows:
         if not did:
             continue
+        if _norm_match_key(lbl) == key:
+            return did
         try:
             j = int(did)
         except ValueError:
             continue
         if 0 <= j < len(all_d):
-            if _norm_group_key(str(all_d[j].get("name", ""))) == key:
+            if _norm_match_key(str(all_d[j].get("name", ""))) == key:
                 return did
     return ""
 
@@ -221,8 +322,8 @@ def resolve_duplex_device_indices(
     **unverändert** — die Engine kann dann auf **getrennte** Ein‑/Ausgabe‑Streams
     ausweichen.
 
-    Bei der Gerätededuplizierung kann ein Slot sonst WASAPI haben, der andere
-    WDM‑KS („Bad I/O device combination“ −9993). Dann Varianten desselben
+    Unter Windows kann ein Slot sonst WASAPI haben, der andere WDM‑KS
+    („Bad I/O device combination“ −9993). Dann Varianten desselben
     *Gerätenamens* so wählen, dass beide dieselbe Host‑API haben.
     """
     if not _HAVE_SD or _sd is None:

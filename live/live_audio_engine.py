@@ -71,11 +71,14 @@ class LiveAudioEngine:
         self._stream_in_listen: Optional[_SdStream] = None
         self._stream_idle_listen_in: Optional[_SdStream] = None
         self._stream_idle_mon_out: Optional[_SdStream] = None
+        self._stream_mic_preview_in: Optional[_SdStream] = None
         self._boxed: LiveSettings = LiveSettings()
         self._dsp: Optional["LiveDSPChain"] = None
         self._running = False
         self._idle_listen_running = False
         self._idle_listen_snap = LiveSettings()
+        self._mic_preview_running = False
+        self._mic_preview_snap = LiveSettings()
 
     def _get_dsp(self) -> "LiveDSPChain":
         if self._dsp is None:
@@ -91,12 +94,40 @@ class LiveAudioEngine:
         """Nur durchreichen Lin‑Mit → Monitor, ohne aktives „Live“."""
         return bool(self._idle_listen_running)
 
+    def is_mic_preview_running(self) -> bool:
+        """PC‑Mikrofon nur für Pegelanzeige (ohne PTT / vollen Live‑Pfad)."""
+        return bool(self._mic_preview_running)
+
     def push_idle_listen_settings(self, live: LiveSettings) -> None:
         """Lautheit (Lin‑Mit) / SR-Anpassungen ohne Streams neu zu starten."""
         if not self._idle_listen_running:
             return
         live.clamp_recursive()
         self._idle_listen_snap = LiveSettings.from_dict(live.to_dict())
+
+    def push_mic_preview_settings(self, live: LiveSettings) -> None:
+        """Mic‑Gain o. Ä. ohne Preview‑Stream neu zu starten."""
+        if not self._mic_preview_running:
+            return
+        live.clamp_recursive()
+        self._mic_preview_snap = LiveSettings.from_dict(live.to_dict())
+
+    def stop_mic_preview_monitor(self) -> None:
+        """Nur Mic‑Pegel‑Vorschau stoppen."""
+        self._mic_preview_running = False
+        s = self._stream_mic_preview_in
+        self._stream_mic_preview_in = None
+        if s is not None:
+            try:
+                s.stop()
+            except Exception:
+                pass
+            try:
+                s.close()
+            except Exception:
+                pass
+        if not self._running:
+            self.mic_meter_db = float(-120.0)
 
     def stop_idle_listen_monitor(self) -> None:
         """Nur Idle‑Monitor stoppen (:meth:`stop` lässt das unberührt)."""
@@ -705,7 +736,6 @@ class LiveAudioEngine:
             yrx = LiveAudioEngine._fit_mono_to_frames(chunk_r, nf)
             y_out = yrx * gv_mon
             np.clip(y_out, -1.0, 1.0, out=y_out)
-            weak_self.mic_meter_db = float(-120.0)
             weak_self.funk_meter_db = float(-120.0)
             weak_self.monitor_meter_db = LiveAudioEngine._mono_peak_dbfs(y_out)
             LiveAudioEngine._stereo_fill_mono(outdata, y_out)
@@ -740,6 +770,81 @@ class LiveAudioEngine:
             self.stop_idle_listen_monitor()
             return False, self._friendly_sd_error(exc)
 
+    def start_mic_preview_monitor(self, live: LiveSettings) -> tuple[bool, str]:
+        """PC‑Mikrofon nur für Pegelanzeige (ohne PTT / vollen Live‑Pfad)."""
+        ok0, msg0 = self.prerequisites_ok()
+        if not ok0:
+            return False, msg0
+        assert sd is not None
+
+        live.clamp_recursive()
+        mic_sid = str(live.input_device_id or "").strip()
+        if not mic_sid:
+            self.stop_mic_preview_monitor()
+            return True, ""
+
+        allowed_in = tuple(x for x, _ in self._enumerate_input_indices())
+        in_dev = LiveAudioEngine._parse_input_device_index(mic_sid, allowed_in)
+        if in_dev is None:
+            self.stop_mic_preview_monitor()
+            return False, "Mic‑Vorschau: ungültiges PC‑Mikrofon."
+
+        self.stop_mic_preview_monitor()
+
+        in_ch = max(1, int(self._in_channels_hint(in_dev)))
+        bs = int(live.blocksize)
+        sr = self._resolve_samplerate(
+            float(live.samplerate),
+            in_dev=in_dev,
+            in_ch=in_ch,
+            out_dev=None,
+            out_ch=2,
+            blocksize=bs,
+        )
+
+        import numpy as np
+
+        weak_self = self
+
+        def input_cb_preview(
+            indata: object,
+            frames: int,
+            time_info: object,
+            status: object,
+        ) -> None:
+            del time_info
+            if not weak_self._mic_preview_running:
+                return
+            nf_f = int(frames)
+            if _portaudio_cb_status_problematic(status):
+                safe_in = np.zeros((nf_f, in_ch), dtype=np.float32)
+            else:
+                safe_in = np.asarray(indata, dtype=np.float32)
+            ls = weak_self._mic_preview_snap
+            fit_trim = LiveAudioEngine._mono_mic_after_input_gain_fit(
+                safe_in, ls, nf_f,
+            )
+            weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_trim)
+
+        try:
+            istream = sd.InputStream(
+                device=in_dev,
+                channels=in_ch,
+                dtype="float32",
+                samplerate=sr,
+                blocksize=bs,
+                latency="low",
+                callback=input_cb_preview,
+            )
+            self._mic_preview_snap = LiveSettings.from_dict(live.to_dict())
+            self._stream_mic_preview_in = istream
+            self._mic_preview_running = True
+            istream.start()
+            return True, ""
+        except BaseException as exc:
+            self.stop_mic_preview_monitor()
+            return False, self._friendly_sd_error(exc)
+
     def start(self, live: LiveSettings) -> tuple[bool, str]:
         ok, msg = self.prerequisites_ok()
         if not ok:
@@ -756,6 +861,7 @@ class LiveAudioEngine:
             )
 
         self.stop_idle_listen_monitor()
+        self.stop_mic_preview_monitor()
 
         live.clamp_recursive()
         allowed_in = tuple(x for x, _ in self._enumerate_input_indices())
