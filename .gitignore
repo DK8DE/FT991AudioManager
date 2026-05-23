@@ -36,15 +36,12 @@ desktop.ini
 # Logs
 *.log
 
-# User-spezifische Einstellungen — wird beim ersten Start neu angelegt.
-# presets.json bleibt versioniert (= die mitgelieferten Default-Profile).
-data/settings.json
-
-# Automatische Speicherkanal-Backups (nur lokal, nicht ins Repo)
-data/memory_backups/
+# Laufzeit-/User-Daten (werden beim ersten Start bzw. bei Nutzung angelegt).
+# Nur der leere Ordner bleibt versioniert — siehe data/.gitkeep.
+data/*
+!data/.gitkeep
 
 # Tests
 .pytest_cache/
 .coverage
 htmlcov/
-data/memory_backups/memory_backup_20260515_143705.json
