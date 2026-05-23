@@ -15,6 +15,7 @@ Performance-Hinweise:
 
 from __future__ import annotations
 
+import base64
 import re
 from typing import List, Optional
 
@@ -149,13 +150,13 @@ class LogPanel(QWidget):
         # --- Anzeige ---
         self.view = QTextEdit()
         self.view.setReadOnly(True)
-        self.view.setLineWrapMode(QTextEdit.NoWrap)
+        self.view.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         # Maximalblöcke begrenzen — bei sehr viel Logging bleibt das TextEdit
         # responsiv. (0 = unbegrenzt; 5000 reicht für ~30 min Polling.)
         self.view.document().setMaximumBlockCount(5000)
         font = QFont()
         font.setFamily("Consolas")
-        font.setStyleHint(QFont.Monospace)
+        font.setStyleHint(QFont.StyleHint.Monospace)
         font.setPointSize(9)
         self.view.setFont(font)
         layout.addWidget(self.view, stretch=1)
@@ -212,7 +213,7 @@ class LogPanel(QWidget):
         self._pending.clear()
 
         cursor = self.view.textCursor()
-        cursor.movePosition(QTextCursor.End)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         prefix = "<br>" if not self.view.document().isEmpty() else ""
         cursor.insertHtml(prefix + "<br>".join(parts))
 
@@ -291,11 +292,14 @@ class LogDockWidget(QDockWidget):
     def __init__(self, log: CatLog, parent: Optional[QWidget] = None) -> None:
         super().__init__("CAT-Log", parent)
         self.setObjectName("CatLogDock")
-        self.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
+        self.setAllowedAreas(
+            Qt.DockWidgetArea.BottomDockWidgetArea
+            | Qt.DockWidgetArea.TopDockWidgetArea
+        )
         self.setFeatures(
-            QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-            | QDockWidget.DockWidgetClosable
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
         )
 
         self.panel = LogPanel(log)
@@ -327,7 +331,7 @@ class LogWindow(QWidget):
         from .app_icon import app_icon
         self.setWindowTitle("CAT-Log — FT-991/A Audiomanager")
         self.setWindowIcon(app_icon())
-        self.setWindowFlags(Qt.Window)
+        self.setWindowFlags(Qt.WindowType.Window)
         self.resize(900, 420)
 
         layout = QVBoxLayout(self)
@@ -364,7 +368,7 @@ class LogWindow(QWidget):
     def geometry_to_base64(self) -> str:
         data = self.saveGeometry()
         try:
-            return bytes(data.toBase64()).decode("ascii")
+            return base64.b64encode(data.data()).decode("ascii")
         except Exception:
             return ""
 

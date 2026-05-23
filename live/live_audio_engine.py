@@ -13,7 +13,7 @@ from __future__ import annotations
 import sys
 from collections import deque
 from threading import Lock
-from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol, Sequence
 
 from live.live_devices import (
     parse_device_id,
@@ -43,6 +43,11 @@ except ImportError:
 _SPLIT_QUEUE_BLOCKS = 128
 
 
+class _SdStream(Protocol):
+    def stop(self) -> None: ...
+    def close(self) -> None: ...
+
+
 def _portaudio_cb_status_problematic(status: object) -> bool:
     """True, wenn ``sounddevice`` im Callback Status-Flags setzt (Über-/Unterlauf u. Ä.).
 
@@ -59,13 +64,13 @@ class LiveAudioEngine:
 
     def __init__(self, on_error: Optional[Callable[[str], None]] = None) -> None:
         self._on_error = on_error
-        self._stream_duplex: Optional[object] = None
-        self._stream_in: Optional[object] = None
-        self._stream_out: Optional[object] = None
-        self._stream_out_funk: Optional[object] = None
-        self._stream_in_listen: Optional[object] = None
-        self._stream_idle_listen_in: Optional[object] = None
-        self._stream_idle_mon_out: Optional[object] = None
+        self._stream_duplex: Optional[_SdStream] = None
+        self._stream_in: Optional[_SdStream] = None
+        self._stream_out: Optional[_SdStream] = None
+        self._stream_out_funk: Optional[_SdStream] = None
+        self._stream_in_listen: Optional[_SdStream] = None
+        self._stream_idle_listen_in: Optional[_SdStream] = None
+        self._stream_idle_mon_out: Optional[_SdStream] = None
         self._boxed: LiveSettings = LiveSettings()
         self._dsp: Optional["LiveDSPChain"] = None
         self._running = False
@@ -98,7 +103,7 @@ class LiveAudioEngine:
         self._idle_listen_running = False
         self.funk_listen_meter_db = float(-120.0)
         self.monitor_meter_db = float(-120.0)
-        objs: list[object] = []
+        objs: list[_SdStream] = []
         for attr in ("_stream_idle_mon_out", "_stream_idle_listen_in"):
             s = getattr(self, attr)
             setattr(self, attr, None)
@@ -289,7 +294,7 @@ class LiveAudioEngine:
             "_stream_in_listen",
             "_stream_in",
         )
-        objs: list[object] = []
+        objs: list[_SdStream] = []
         for attr in ordered:
             s = getattr(self, attr)
             setattr(self, attr, None)

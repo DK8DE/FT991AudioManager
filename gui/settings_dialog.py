@@ -253,7 +253,9 @@ class ConnectionSettingsDialog(QDialog):
         self.status_label.setStyleSheet("color: gray;")
         outer.addWidget(self.status_label)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
@@ -335,7 +337,9 @@ class ConnectionSettingsDialog(QDialog):
         )
 
         self.port_combo = QComboBox()
-        self.port_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.port_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents
+        )
         self.port_combo.setMinimumWidth(160)
         self.port_combo.setMaximumWidth(280)
         port_row = QHBoxLayout()

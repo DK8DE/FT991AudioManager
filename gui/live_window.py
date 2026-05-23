@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
-import math
-from typing import TYPE_CHECKING, Callable, List, Optional
+import ctypes
+import sys
+from typing import TYPE_CHECKING, Any, Callable, List, Optional, cast
 
-from PySide6.QtCore import QByteArray, QMetaObject, QThread, Qt, QTimer, Q_ARG
+from PySide6.QtCore import QObject, QByteArray, QEvent, QMetaObject, QThread, Qt, QTimer, Q_ARG
+from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QFormLayout,
@@ -27,8 +30,8 @@ from PySide6.QtWidgets import (
 from gui.app_icon import app_icon
 from gui.live_eq_editor_widget import LiveEqEditorWidget
 from gui.meter_widget import (
-    LIVE_LEVEL_VISIBLE_MIN_DB,
     ScaledMeterBar,
+    TxIndicator,
     live_dbfs_peak_to_raw,
     make_live_level_bar,
 )
@@ -81,17 +84,155 @@ def _live_ptt_active_button_style(green_hex: str = _YAESU_GREEN) -> str:
     )
 
 
+def _invoke_setup_worker_slot(receiver: QObject, method_name: str, *args: object) -> None:
+    """Queued ``invokeMethod`` für RadioSetupWorker-Slots (PySide6 6.x)."""
+    invoke = cast(Any, QMetaObject.invokeMethod)
+    invoke(receiver, method_name, Qt.ConnectionType.QueuedConnection, *args)
+
+
 # Kurzer Puffer nach DATA/Menüs, bevor Audio‑Stream und TX1; kommen —
 # kleiner als beim Player/Rekorder, Latenz beim „Start Live“ senken.
 _CAT_LIVE_RADIO_SETTLE_MS = 75
 
+_VK_CONTROL = 0x11
+_VK_Y = 0x59
 
-def _live_peak_summary_text(db_v: float) -> str:
-    """Wie die Live‑Balkenskala: ≤ untere Grenze → Ruhestellung („—“)."""
-    if not math.isfinite(db_v) or db_v <= LIVE_LEVEL_VISIBLE_MIN_DB:
-        return "—"
-    clipped = max(LIVE_LEVEL_VISIBLE_MIN_DB, min(0.0, float(db_v)))
-    return f"{clipped:+.1f} dBFS"
+
+def _ctrl_y_physically_held() -> bool:
+    """True solange Strg und Y hardwareseitig gedrückt sind (Windows)."""
+    if sys.platform != "win32":
+        return False
+    try:
+        u = ctypes.windll.user32
+        ctrl = (u.GetAsyncKeyState(_VK_CONTROL) & 0x8000) != 0
+        y_down = (u.GetAsyncKeyState(_VK_Y) & 0x8000) != 0
+        return bool(ctrl and y_down)
+    except Exception:
+        return False
+
+
+def _focused_live_window() -> Optional["LiveWindow"]:
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        return None
+    fw = app.focusWidget()
+    w = fw if isinstance(fw, QWidget) else None
+    while w is not None:
+        if isinstance(w, LiveWindow):
+            if w.isVisible() and not w.isMinimized() and not getattr(w, "_force_close", False):
+                return w
+            return None
+        w = w.parentWidget()
+    aw = app.activeWindow()
+    if (
+        isinstance(aw, LiveWindow)
+        and aw.isVisible()
+        and not aw.isMinimized()
+        and not getattr(aw, "_force_close", False)
+    ):
+        return aw
+    return None
+
+
+def _maybe_end_ctrl_y_ptt(lw: "LiveWindow") -> None:
+    if not lw._kbd_ptt_momentary_engaged:
+        return
+    if sys.platform == "win32" and _ctrl_y_physically_held():
+        return
+    lw._kbd_native_apply_momentary_end()
+
+
+class _LiveCtrlYKeyFilter(QObject):
+    """Strg+Y Push-to-talk: KeyPress startet, KeyRelease nur bei echt losgelassenen Tasten."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: ARG002
+        if not isinstance(event, QKeyEvent):
+            return False
+        if event.type() == QEvent.Type.KeyPress:
+            return self._on_key_press(event)
+        if event.type() == QEvent.Type.KeyRelease:
+            self._on_key_release(event)
+            return False
+        return False
+
+    @staticmethod
+    def _on_key_press(event: QKeyEvent) -> bool:
+        if event.key() != Qt.Key.Key_Y or event.isAutoRepeat():
+            return False
+        km = event.modifiers() | QApplication.keyboardModifiers()
+        blocked = (
+            Qt.KeyboardModifier.AltModifier
+            | Qt.KeyboardModifier.ShiftModifier
+            | Qt.KeyboardModifier.MetaModifier
+        )
+        if not bool(km & Qt.KeyboardModifier.ControlModifier) or bool(km & blocked):
+            return False
+        lw = _focused_live_window()
+        if lw is None:
+            return False
+        QTimer.singleShot(0, lw._kbd_native_apply_momentary_start)
+        event.accept()
+        return True
+
+    @staticmethod
+    def _on_key_release(event: QKeyEvent) -> None:
+        if event.key() not in (
+            Qt.Key.Key_Y,
+            Qt.Key.Key_Control,
+            Qt.Key.Key_Meta,
+        ):
+            return
+        lw = _live_window_with_kbd_ptt_engaged()
+        if lw is None:
+            return
+        QTimer.singleShot(0, lambda lw=lw: _maybe_end_ctrl_y_ptt(lw))
+
+
+_live_ctrl_y_filter: Optional[_LiveCtrlYKeyFilter] = None
+_live_ctrl_y_filter_refcount = 0
+
+
+def _live_window_with_kbd_ptt_engaged() -> Optional["LiveWindow"]:
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        return None
+    for w in app.topLevelWidgets():
+        if (
+            isinstance(w, LiveWindow)
+            and w.isVisible()
+            and not w.isMinimized()
+            and not getattr(w, "_force_close", False)
+            and w._kbd_ptt_momentary_engaged
+        ):
+            return w
+    return None
+
+
+def _live_ctrl_y_filter_acquire() -> None:
+    global _live_ctrl_y_filter
+    global _live_ctrl_y_filter_refcount
+
+    if _live_ctrl_y_filter_refcount == 0:
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            _live_ctrl_y_filter = _LiveCtrlYKeyFilter(app)
+            app.installEventFilter(_live_ctrl_y_filter)
+    _live_ctrl_y_filter_refcount += 1
+
+
+def _live_ctrl_y_filter_release() -> None:
+    global _live_ctrl_y_filter
+    global _live_ctrl_y_filter_refcount
+
+    if _live_ctrl_y_filter_refcount <= 0:
+        return
+    _live_ctrl_y_filter_refcount -= 1
+    if _live_ctrl_y_filter_refcount != 0:
+        return
+    app = QApplication.instance()
+    if isinstance(app, QApplication) and _live_ctrl_y_filter is not None:
+        app.removeEventFilter(_live_ctrl_y_filter)
+    _live_ctrl_y_filter = None
 
 
 class LiveWindow(QMainWindow):
@@ -176,8 +317,15 @@ class LiveWindow(QMainWindow):
         self._suppress_funk_listen_while_live_tx_active = False
         #: Fester Taste „PTT“ (gedrückt = Live‑Transport an).
         self._live_ptt_momentary_held = False
+        #: Nur wenn Momentary‑PTT durch Strg+Y (Hotkey) aktiv ist.
+        self._kbd_ptt_momentary_engaged = False
+        #: Globaler KeyRelease‑Filter für Strg+Y (Refcount über sichtbare Live‑Fenster).
+        self._live_ctrl_y_filter_acquired = False
+        self._last_synced_tx_state: Optional[int] = None
         self._refresh_ptt_button_appearance()
         self._refresh_ptt_controls_enabled()
+        self._install_live_keyboard_shortcuts()
+        self._ensure_live_ctrl_y_filter_acquired()
 
     def _live_engine_runtime_settings_overlay(self, liv: LiveSettings) -> LiveSettings:
         """Übergabe an Audio-Engine — Funk-Eing.-Mithören während Sendung ausblenden."""
@@ -281,6 +429,88 @@ class LiveWindow(QMainWindow):
     def _on_live_ptt_latch_toggled(self, _checked: bool) -> None:
         del _checked
         self._sync_ptt_live_transport()
+
+    def _release_keyboard_ptt_momentary(self) -> None:
+        """Tastatur‑PTT loslassen (deaktivieren / minimieren / schließen).
+
+        Wird die PTT‑Taste weiter mit der Maus gehalten, bleibt der Live‑Pfad an.
+        """
+        if not self._kbd_ptt_momentary_engaged:
+            return
+        self._kbd_ptt_momentary_engaged = False
+        b = getattr(self, "_b_ptt", None)
+        if b is not None and b.isDown():
+            return
+        self._on_live_ptt_momentary_released()
+
+    def _toggle_ptt_latch_from_keyboard(self) -> None:
+        self._release_keyboard_ptt_momentary()
+        btn = getattr(self, "_b_ptt_latch", None)
+        if btn is None or not btn.isEnabled():
+            return
+        btn.toggle()
+
+    def _install_live_keyboard_shortcuts(self) -> None:
+        """Strg+Y: EventFilter (halten/loslassen); Strg+X: Shortcut PTT halten."""
+        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        latch = QShortcut(QKeySequence("Ctrl+X"), self)
+        latch.setContext(ctx)
+        latch.setAutoRepeat(False)
+        latch.activated.connect(self._shortcut_ctrl_x_ptt_latch)
+        self._sc_live_ptt_latch = latch
+
+    def _ensure_live_ctrl_y_filter_acquired(self) -> None:
+        if self._live_ctrl_y_filter_acquired:
+            return
+        _live_ctrl_y_filter_acquire()
+        self._live_ctrl_y_filter_acquired = True
+
+    def _ensure_live_ctrl_y_filter_released(self) -> None:
+        if not self._live_ctrl_y_filter_acquired:
+            return
+        _live_ctrl_y_filter_release()
+        self._live_ctrl_y_filter_acquired = False
+
+    def _shortcut_ctrl_x_ptt_latch(self) -> None:
+        if (
+            not self.isVisible()
+            or self.isMinimized()
+            or getattr(self, "_force_close", False)
+        ):
+            return
+        self._toggle_ptt_latch_from_keyboard()
+
+    def _kbd_native_apply_momentary_start(self) -> None:
+        if (
+            not self.isVisible()
+            or self.isMinimized()
+            or getattr(self, "_force_close", False)
+        ):
+            return
+        btn = getattr(self, "_b_ptt", None)
+        if btn is None or not btn.isEnabled():
+            return
+        if self._kbd_ptt_momentary_engaged:
+            return
+        self._kbd_ptt_momentary_engaged = True
+        self._on_live_ptt_momentary_pressed()
+
+    def _kbd_native_apply_momentary_end(self) -> None:
+        """Nur wenn der Hotkey PTT aktiv war — Maus gedrückt PTT erhält Vorrecht."""
+        if not self._kbd_ptt_momentary_engaged:
+            return
+        self._kbd_ptt_momentary_engaged = False
+        b = getattr(self, "_b_ptt", None)
+        if b is not None and b.isDown():
+            return
+        self._on_live_ptt_momentary_released()
+
+    def changeEvent(self, event: QEvent) -> None:  # type: ignore[override]
+        if event.type() == QEvent.Type.WindowDeactivate:
+            self._release_keyboard_ptt_momentary()
+        elif event.type() == QEvent.Type.WindowStateChange and self.isMinimized():
+            self._release_keyboard_ptt_momentary()
+        super().changeEvent(event)
 
     def _stop_live_via_ptt(
         self,
@@ -606,22 +836,13 @@ class LiveWindow(QMainWindow):
         gc_lay.addWidget(cb, 1)
         root.addWidget(gc_row)
 
-        meter = QGroupBox("Pegelanzeige & Latenzhinweis")
-        ml = QHBoxLayout(meter)
-        self._m_in = QLabel("Eing.: —")
-        self._m_out = QLabel("Ausg.: —")
-        self._m_lat = QLabel("Latenz: —")
-        ml.addWidget(self._m_in)
-        ml.addWidget(self._m_out)
-        ml.addStretch(1)
-        ml.addWidget(self._m_lat)
-        root.addWidget(meter)
-
         row_btn = QHBoxLayout()
         self._b_ptt = QPushButton("PTT")
         self._b_ptt.setToolTip(
             "Gedrückt halten: Live aktiv. Loslassen: Live stoppt "
-            "(wenn „PTT halten“ nicht eingerastet ist)."
+            "(wenn „PTT halten“ nicht eingerastet ist).\n"
+            "Tastatur: Strg+Y ebenfalls gedrückt halten wie die Maustaste (Push‑to‑Talk); "
+            "funktioniert auch, wenn Kombinationsfelder oder Schieber den Fokus haben."
         )
         self._b_ptt.setSizePolicy(
             QSizePolicy.Policy.Minimum,
@@ -637,11 +858,27 @@ class LiveWindow(QMainWindow):
         )
         self._b_ptt_latch.setCheckable(True)
         self._b_ptt_latch.setToolTip(
-            "Einrasten: Live bleibt an (erneut drücken zum Beenden)."
+            "Einrasten: Live bleibt an (erneut drücken zum Beenden).\n"
+            "Tastatur: Strg+X schaltet „PTT halten“ wie der Knopf, solange der Fokus "
+            "auf diesem Fenster oder einem seiner Bedienelemente liegt."
         )
         self._b_ptt_latch.toggled.connect(self._on_live_ptt_latch_toggled)
         row_btn.addWidget(self._b_ptt)
         row_btn.addWidget(self._b_ptt_latch)
+        row_btn.addSpacing(12)
+        self._tx_led = TxIndicator()
+        self._tx_label = QLabel("—")
+        tx_lbl_font = self._tx_label.font()
+        tx_lbl_font.setBold(True)
+        self._tx_label.setFont(tx_lbl_font)
+        self._tx_label.setMinimumWidth(34)
+        self._tx_label.setToolTip("RX/TX‑Anzeige vom Funkgerät (wie im Hauptfenster)")
+        row_btn.addWidget(
+            self._tx_led, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        row_btn.addWidget(
+            self._tx_label, 0, Qt.AlignmentFlag.AlignVCenter
+        )
         row_btn.addStretch(1)
         root.addLayout(row_btn)
         root.addStretch()
@@ -678,29 +915,53 @@ class LiveWindow(QMainWindow):
             return
         if self._setup_worker is None:
             return
-        QMetaObject.invokeMethod(
+        _invoke_setup_worker_slot(
             self._setup_worker,
             "run_set_data_mode",
-            Qt.QueuedConnection,
             Q_ARG(str, data_mode.value),
         )
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
+        self._ensure_live_ctrl_y_filter_acquired()
+        if self._last_synced_tx_state is not None:
+            self._update_tx_rx_led(self._last_synced_tx_state)
+        else:
+            self._update_tx_rx_led(TX_STATE_RX)
         self._suppress_idle_listen_monitor = False
         if self._audio_radio_session is not None:
             self._audio_radio_session.on_window_shown(self)
         QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
 
     def hideEvent(self, event) -> None:  # type: ignore[override]
+        self._ensure_live_ctrl_y_filter_released()
+        self._release_keyboard_ptt_momentary()
         self._engine.stop_idle_listen_monitor()
         self._idle_monitor_fp_key = None
         super().hideEvent(event)
         if self._audio_radio_session is not None:
             self._audio_radio_session.on_window_hidden(self)
 
+    def _update_tx_rx_led(self, state: int) -> None:
+        """RX/TX‑Kreis wie im Hauptfenster (grün=RX, rot=TX, grau=kein CAT)."""
+        led = getattr(self, "_tx_led", None)
+        lbl = getattr(self, "_tx_label", None)
+        if led is None or lbl is None:
+            return
+        cat_ok = self._cat is not None and self._cat.is_connected()
+        if not cat_ok:
+            led.set_state(TxIndicator.STATE_OFF)
+            lbl.setText("—")
+            self._last_synced_tx_state = int(state)
+            return
+        transmitting = bool(state != TX_STATE_RX)
+        led.set_active(transmitting)
+        lbl.setText("TX" if transmitting else "RX")
+        self._last_synced_tx_state = int(state)
+
     def handle_tx_state_changed(self, state: int) -> None:
         """MIC‑PTT sowie Funk‑Mithören‑Stummschalter während Live‑TX."""
+        self._update_tx_rx_led(state)
         transmitting = bool(state != TX_STATE_RX)
         self._sync_live_funk_listen_mute_while_cat_tx(transmitting)
 
@@ -717,20 +978,12 @@ class LiveWindow(QMainWindow):
             self._mic_ptt_interrupted_live = True
 
             if self._radio_setup.in_data_mode:
-                QMetaObject.invokeMethod(
-                    self._setup_worker,
-                    "run_engage_plain_forced",
-                    Qt.QueuedConnection,
-                )
+                _invoke_setup_worker_slot(self._setup_worker, "run_engage_plain_forced")
             QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
             return
         if state == TX_STATE_RX and self._mic_ptt_interrupted_live:
             if self._radio_setup.needs_plain_verify and self._setup_worker is not None:
-                QMetaObject.invokeMethod(
-                    self._setup_worker,
-                    "run_verify_plain",
-                    Qt.QueuedConnection,
-                )
+                _invoke_setup_worker_slot(self._setup_worker, "run_verify_plain")
             self._mic_ptt_interrupted_live = False
 
     def _on_live_ptt_failed(self, message: str) -> None:
@@ -765,11 +1018,7 @@ class LiveWindow(QMainWindow):
             self._abort_live_cat_start("Intern: kein Funk‑CAT‑Worker fehlt.")
             return
         self._live_cat_waiting_engage_finish = True
-        QMetaObject.invokeMethod(
-            self._setup_worker,
-            "run_engage_data",
-            Qt.QueuedConnection,
-        )
+        _invoke_setup_worker_slot(self._setup_worker, "run_engage_data")
 
     def _abort_live_cat_start(self, detail: str) -> None:
         self._clear_live_transport_pending_flags()
@@ -830,11 +1079,7 @@ class LiveWindow(QMainWindow):
             if self._setup_worker is None:
                 self._abort_live_cat_start("Intern: Funk‑CAT‑Worker fehlt.")
                 return
-            QMetaObject.invokeMethod(
-                self._setup_worker,
-                "run_apply_pc_menus",
-                Qt.QueuedConnection,
-            )
+            _invoke_setup_worker_slot(self._setup_worker, "run_apply_pc_menus")
             return
 
         if not rs.in_data_mode:
@@ -876,11 +1121,7 @@ class LiveWindow(QMainWindow):
             and self._radio_setup.in_data_mode
             and self._setup_worker is not None
         ):
-            QMetaObject.invokeMethod(
-                self._setup_worker,
-                "run_engage_plain",
-                Qt.QueuedConnection,
-            )
+            _invoke_setup_worker_slot(self._setup_worker, "run_engage_plain")
 
     def _mithoren_keeps_radio_data_until_window_close(self) -> bool:
         """Wahr: Stop Live gibt Sprachmodus nicht zurück — Funk bleibt in DATA bis Fensterende."""
@@ -915,22 +1156,11 @@ class LiveWindow(QMainWindow):
         self._live_eq.set_read_only(not on)
 
     def _meter_tick(self) -> None:
-        indb, outdb = self._engine.peek_meters_db()
-        self._m_in.setText(f"Eing.: {_live_peak_summary_text(indb)}")
-        self._m_out.setText(f"Ausg.: {_live_peak_summary_text(outdb)}")
         for peak_bar, dbv in zip(
             self._live_level_bars,
             self._engine.peek_live_strip_meters_db(),
         ):
             peak_bar.set_value(live_dbfs_peak_to_raw(dbv))
-        try:
-            sr = float(self._c_sr.currentText())
-            raw_bs = self._c_bs.currentData()
-            bs = float(raw_bs) if raw_bs is not None else 256.0
-        except Exception:
-            sr, bs = 48000.0, 256.0
-        latency_ms_est = round(2e3 * bs / sr, 2)
-        self._m_lat.setText(f"grobe Latenz≈ {latency_ms_est} ms Duplex‑Block ×2")
 
     def _populate_devices(self) -> None:
         ids_in: List[str] = []
@@ -1325,6 +1555,8 @@ class LiveWindow(QMainWindow):
             pass
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._ensure_live_ctrl_y_filter_released()
+        self._release_keyboard_ptt_momentary()
         self._suppress_funk_listen_while_live_tx_active = False
         self._suppress_idle_listen_monitor = True
         self._engine.stop_idle_listen_monitor()
@@ -1364,6 +1596,8 @@ class LiveWindow(QMainWindow):
 
     def force_close(self) -> None:
         """App-Ende oder erzwungenes Schließen: Stream stoppen, Funk‑Restore wie andere Audio‑Fenster."""
+        self._ensure_live_ctrl_y_filter_released()
+        self._release_keyboard_ptt_momentary()
         self._suppress_funk_listen_while_live_tx_active = False
         self._suppress_idle_listen_monitor = True
         self._live_cat_settle.stop()
@@ -1378,4 +1612,3 @@ class LiveWindow(QMainWindow):
         if self._audio_radio_session is not None:
             self._audio_radio_session.detach_for_force_close(self)
         self._shutdown_ptt_thread()
-

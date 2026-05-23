@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt, Signal
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -32,6 +38,9 @@ from model.memory_editor_channel import (
     normalize_memory_local_pc_power_value,
     normalize_memory_local_sql_value,
 )
+
+
+_ModelIndex = QModelIndex | QPersistentModelIndex
 
 
 COLUMN_HEADERS = [
@@ -114,12 +123,12 @@ class MemoryEditorTableModel(QAbstractTableModel):
         self.endResetModel()
         self.refresh_duplicate_highlight()
 
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def rowCount(self, parent: _ModelIndex = QModelIndex()) -> int:  # noqa: N802
         if parent.isValid():
             return 0
         return len(self._bank.channels)
 
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+    def columnCount(self, parent: _ModelIndex = QModelIndex()) -> int:  # noqa: N802
         if parent.isValid():
             return 0
         return len(COLUMN_HEADERS)
@@ -128,11 +137,11 @@ class MemoryEditorTableModel(QAbstractTableModel):
         self,
         section: int,
         orientation: Qt.Orientation,
-        role: int = Qt.DisplayRole,
+        role: int = Qt.ItemDataRole.DisplayRole,
     ) -> Any:
-        if role != Qt.DisplayRole:
+        if role != Qt.ItemDataRole.DisplayRole:
             return None
-        if orientation == Qt.Horizontal:
+        if orientation == Qt.Orientation.Horizontal:
             return COLUMN_HEADERS[section]
         return str(section + 1)
 
@@ -144,21 +153,21 @@ class MemoryEditorTableModel(QAbstractTableModel):
             return False
         return ch.rx_frequency_hz in self._bank.duplicate_frequency_hz()
 
-    def flags(self, index: QModelIndex) -> Qt.ItemFlags:  # noqa: N802
+    def flags(self, index: _ModelIndex) -> Qt.ItemFlag:  # noqa: N802
         if not index.isValid():
-            return Qt.NoItemFlags
+            return Qt.ItemFlag.NoItemFlags
         col = index.column()
         base = (
-            Qt.ItemIsSelectable
-            | Qt.ItemIsEnabled
-            | Qt.ItemIsDragEnabled
-            | Qt.ItemIsDropEnabled
+            Qt.ItemFlag.ItemIsSelectable
+            | Qt.ItemFlag.ItemIsEnabled
+            | Qt.ItemFlag.ItemIsDragEnabled
+            | Qt.ItemFlag.ItemIsDropEnabled
         )
         if col in (0, COL_STATUS):
             return base
-        return base | Qt.ItemIsEditable
+        return base | Qt.ItemFlag.ItemIsEditable
 
-    def data(self, index: QModelIndex, role: int = Qt.DisplayRole) -> Any:  # noqa: N802
+    def data(self, index: _ModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> Any:  # noqa: N802
         if not index.isValid():
             return None
         ch = self._channel(index.row())
@@ -172,7 +181,7 @@ class MemoryEditorTableModel(QAbstractTableModel):
                 if self._is_duplicate_freq_cell(ch):
                     return _DUP_FREQ_FG
                 return None
-        if role not in (Qt.DisplayRole, Qt.EditRole):
+        if role not in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole):
             return None
         if col == 0:
             return f"{ch.number:03d}"
@@ -204,12 +213,12 @@ class MemoryEditorTableModel(QAbstractTableModel):
             return ch.change_status.value
         return None
 
-    def setData(self, index: QModelIndex, value: Any, role: int = Qt.EditRole) -> bool:  # noqa: N802
+    def setData(self, index: _ModelIndex, value: Any, role: int = Qt.ItemDataRole.EditRole) -> bool:  # noqa: N802
         if not index.isValid():
             return False
         ch = self._channel(index.row())
         col = index.column()
-        if role != Qt.EditRole:
+        if role != Qt.ItemDataRole.EditRole:
             return False
         if col == COL_LOCAL_SQL:
             try:
@@ -286,17 +295,17 @@ class MemoryEditorTableModel(QAbstractTableModel):
         return self._channel(row)
 
     def supportedDragActions(self) -> Qt.DropAction:  # noqa: N802
-        return Qt.MoveAction
+        return Qt.DropAction.MoveAction
 
     def supportedDropActions(self) -> Qt.DropAction:  # noqa: N802
-        return Qt.MoveAction
+        return Qt.DropAction.MoveAction
 
     def moveRows(  # noqa: N802
         self,
-        parent: QModelIndex,
+        parent: _ModelIndex,
         start: int,
         count: int,
-        destination: QModelIndex,
+        destination: _ModelIndex,
         row: int,
     ) -> bool:
         if parent.isValid() or count != 1:
@@ -344,11 +353,11 @@ class _EditableComboDelegate(QStyledItemDelegate):
         return combo
 
     def setEditorData(self, editor, index) -> None:  # noqa: ANN001
-        text = index.model().data(index, Qt.EditRole)
+        text = index.model().data(index, Qt.ItemDataRole.EditRole)
         editor.setCurrentText(str(text))
 
     def setModelData(self, editor, model, index) -> None:  # noqa: ANN001
-        model.setData(index, editor.currentText().strip(), Qt.EditRole)
+        model.setData(index, editor.currentText().strip(), Qt.ItemDataRole.EditRole)
 
 
 class _MemoryPcPowerComboDelegate(QStyledItemDelegate):
@@ -371,12 +380,12 @@ class _MemoryPcPowerComboDelegate(QStyledItemDelegate):
         return combo
 
     def setEditorData(self, editor, index) -> None:  # noqa: ANN001
-        text = index.model().data(index, Qt.EditRole)
+        text = index.model().data(index, Qt.ItemDataRole.EditRole)
         i = editor.findText(str(text))
         editor.setCurrentIndex(i if i >= 0 else 0)
 
     def setModelData(self, editor, model, index) -> None:  # noqa: ANN001
-        model.setData(index, editor.currentText(), Qt.EditRole)
+        model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
 
 
 class _ComboDelegate(QStyledItemDelegate):
@@ -390,12 +399,12 @@ class _ComboDelegate(QStyledItemDelegate):
         return combo
 
     def setEditorData(self, editor, index) -> None:  # noqa: ANN001
-        text = index.model().data(index, Qt.EditRole)
+        text = index.model().data(index, Qt.ItemDataRole.EditRole)
         i = editor.findText(str(text))
         editor.setCurrentIndex(i if i >= 0 else 0)
 
     def setModelData(self, editor, model, index) -> None:  # noqa: ANN001
-        model.setData(index, editor.currentText(), Qt.EditRole)
+        model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
 
 
 class MemoryEditorTableView(QTableView):

@@ -60,7 +60,7 @@ class ConnectionWidget(QFrame):
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.setFrameShape(QFrame.StyledPanel)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
 
         self._cat = serial_cat
         self._initial_port = initial_port
@@ -91,9 +91,13 @@ class ConnectionWidget(QFrame):
         # Zeile 0: Port + Baudrate
         grid.addWidget(QLabel("Port:"), 0, 0)
         self.port_combo = QComboBox()
-        self.port_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.port_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents
+        )
         self.port_combo.setMinimumWidth(320)
-        self.port_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.port_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         grid.addWidget(self.port_combo, 0, 1)
 
         grid.addWidget(QLabel("Baudrate:"), 0, 2)
@@ -139,7 +143,9 @@ class ConnectionWidget(QFrame):
 
         # Zeile 2: Status
         self.status_label = QLabel("Status: nicht verbunden")
-        self.status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.status_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         self.status_label.setWordWrap(True)
         outer.addWidget(self.status_label)
 

@@ -69,6 +69,9 @@ from .eq_editor_widget import EQEditorWidget
 from .extended_widget import ExtendedSettingsWidget
 
 
+_ProfilePendingPayload = AudioProfile | RxMode | None
+
+
 # ---------------------------------------------------------------------
 # Worker für vollständige Profil-IO
 # ---------------------------------------------------------------------
@@ -111,7 +114,7 @@ class _ProfileIoWorker(QObject):
         live_name: str = "Live-Werte",
         live_mode_group: str = "SSB",
         baseline: Optional[AudioProfile] = None,
-        target_mode: Optional[object] = None,
+        target_mode: Optional[RxMode] = None,
     ) -> None:
         super().__init__()
         self._ft = ft
@@ -452,7 +455,7 @@ class ProfileWidget(QWidget):
         self._auto_write_timer.timeout.connect(self._flush_auto_write)
         #: Wird gesetzt, wenn während eines laufenden Workers eine neue
         #: Aktion angefragt wird. Tuple: (kind, optional profile snapshot).
-        self._pending_action: Optional[tuple[str, Optional[AudioProfile]]] = None
+        self._pending_action: Optional[tuple[str, _ProfilePendingPayload]] = None
         #: Ob der aktuell laufende Worker stille Auto-Aktion ist (keine
         #: Dialoge, kein Progress-Fenster).
         self._worker_silent: bool = False
@@ -512,14 +515,18 @@ class ProfileWidget(QWidget):
         Zeile eingebettet (dort Reihenfolge + Speicherkanal-Combo).
         """
         self.mode_combo = QComboBox(self)
-        self.mode_combo.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        self.mode_combo.setSizePolicy(
+            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred
+        )
         for mode in ALL_OPERATING_MODES:
             self.mode_combo.addItem(mode.value)
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
 
         self.profile_combo = QComboBox(self)
         self.profile_combo.setMinimumWidth(220)
-        self.profile_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.profile_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         self.profile_combo.currentIndexChanged.connect(self._on_profile_selected)
 
     def _build_editor_panel(self) -> QFrame:
@@ -530,18 +537,18 @@ class ProfileWidget(QWidget):
         outer.setSpacing(8)
 
         eq_header = QFrame()
-        eq_header.setFrameShape(QFrame.StyledPanel)
+        eq_header.setFrameShape(QFrame.Shape.StyledPanel)
         eq_header_layout = QHBoxLayout(eq_header)
         eq_header_layout.setContentsMargins(8, 6, 8, 6)
         eq_header_layout.setSpacing(6)
-        eq_header_layout.setSizeConstraint(QLayout.SetMinimumSize)
+        eq_header_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         outer.addWidget(eq_header)
 
         eq_header_layout.addWidget(QLabel("<b>EQ-Profil:</b>"))
         self.profile_combo_eq = QComboBox()
         self.profile_combo_eq.setMinimumWidth(280)
         self.profile_combo_eq.setSizePolicy(
-            QSizePolicy.Expanding, QSizePolicy.Preferred
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         self.profile_combo_eq.currentIndexChanged.connect(
             self._on_profile_combo_eq_changed
@@ -551,7 +558,9 @@ class ProfileWidget(QWidget):
         eq_header_layout.addSpacing(18)
         eq_header_layout.addWidget(QLabel("Mode-Gruppe:"))
         self.mode_combo_eq = QComboBox()
-        self.mode_combo_eq.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        self.mode_combo_eq.setSizePolicy(
+            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred
+        )
         for mode in ALL_OPERATING_MODES:
             self.mode_combo_eq.addItem(mode.value)
         self.mode_combo_eq.currentIndexChanged.connect(self._on_mode_combo_eq_changed)
@@ -561,18 +570,22 @@ class ProfileWidget(QWidget):
         self._sync_label = QLabel("Live-Sync: aus")
         self._sync_label.setStyleSheet("color: gray;")
         self._sync_label.setMinimumWidth(160)
-        self._sync_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self._sync_label.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+        )
         eq_header_layout.addWidget(self._sync_label)
 
         toolbar = QFrame()
-        toolbar.setFrameShape(QFrame.StyledPanel)
+        toolbar.setFrameShape(QFrame.Shape.StyledPanel)
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(8, 6, 8, 6)
         toolbar_layout.setSpacing(6)
-        toolbar_layout.setSizeConstraint(QLayout.SetMinimumSize)
+        toolbar_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         outer.addWidget(toolbar)
 
-        button_policy = QSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
+        button_policy = QSizePolicy(
+            QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred
+        )
         self.save_button = QPushButton("EQ-Profil speichern")
         self.save_button.setSizePolicy(button_policy)
         self.save_button.clicked.connect(self._on_save_clicked)
@@ -609,7 +622,7 @@ class ProfileWidget(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
         outer.addWidget(scroll, stretch=1)
 
         body = QWidget()
@@ -956,10 +969,10 @@ class ProfileWidget(QWidget):
                     f"EQ-Profil ‘{self._current_profile_name}’ hat ungespeicherte "
                     "Änderungen. Vorher speichern?"
                 ),
-                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                QMessageBox.Yes,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
             )
-            if answer == QMessageBox.Cancel:
+            if answer == QMessageBox.StandardButton.Cancel:
                 idx = self.profile_combo.findText(self._current_profile_name)
                 if idx >= 0:
                     with self._hold_suppress_dirty():
@@ -972,7 +985,7 @@ class ProfileWidget(QWidget):
                             self.profile_combo.blockSignals(False)
                             self.profile_combo_eq.blockSignals(False)
                 return
-            if answer == QMessageBox.Yes:
+            if answer == QMessageBox.StandardButton.Yes:
                 self._save_current_profile_inplace()
         new_name = self.profile_combo.currentText()
         self._apply_profile_to_editors(new_name)
@@ -1059,10 +1072,10 @@ class ProfileWidget(QWidget):
                 self,
                 "Überschreiben?",
                 f"Ein EQ-Profil ‘{new_name}’ existiert bereits. Überschreiben?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if answer != QMessageBox.Yes:
+            if answer != QMessageBox.StandardButton.Yes:
                 return
 
         profile = self._build_profile_from_editors(new_name)
@@ -1083,10 +1096,10 @@ class ProfileWidget(QWidget):
             self,
             "EQ-Profil löschen?",
             f"EQ-Profil ‘{name}’ wirklich löschen?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if answer != QMessageBox.Yes:
+        if answer != QMessageBox.StandardButton.Yes:
             return
         self._store.remove(name)
         self._current_profile_name = None
@@ -1167,10 +1180,10 @@ class ProfileWidget(QWidget):
                 "Ungespeicherte Änderungen am aktuellen Profil gehen verloren.\n\n"
                 "Fortfahren?"
             ),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if answer != QMessageBox.Yes:
+        if answer != QMessageBox.StandardButton.Yes:
             return
         try:
             count = self._store.import_replace_all_from_file(Path(path))
@@ -1212,7 +1225,7 @@ class ProfileWidget(QWidget):
     def _schedule_action(
         self,
         kind: str,
-        payload: Optional[object] = None,
+        payload: _ProfilePendingPayload = None,
     ) -> None:
         """Plant eine CAT-Aktion ein.
 
@@ -1241,7 +1254,7 @@ class ProfileWidget(QWidget):
     def _dispatch_action(
         self,
         kind: str,
-        payload: Optional[object],
+        payload: _ProfilePendingPayload,
     ) -> None:
         if not self._cat.is_connected():
             return
@@ -1408,7 +1421,7 @@ class ProfileWidget(QWidget):
             total_steps = _total_steps_for(self.mode_combo.currentText())
             dialog = QProgressDialog(title, "Abbrechen", 0, total_steps, self)
             dialog.setWindowTitle(title)
-            dialog.setWindowModality(Qt.WindowModal)
+            dialog.setWindowModality(Qt.WindowModality.WindowModal)
             dialog.setMinimumDuration(0)
             dialog.setAutoClose(False)
             dialog.setAutoReset(False)

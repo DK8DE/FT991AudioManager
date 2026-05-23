@@ -55,7 +55,7 @@ class StatusLed(QFrame):
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802
         fill, border = _GREEN if self._active else _RED
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(border)
         painter.setBrush(fill)
         painter.drawEllipse(2, 2, self.width() - 4, self.height() - 4)

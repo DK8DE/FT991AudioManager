@@ -84,10 +84,19 @@ class AudioRecorderSettings:
         )
 
 
+def _int_from_setting(value: object) -> int:
+    """JSON/settings-Wert robust als ``int`` — ohne ``bool`` (Unterklasse von ``int``)."""
+    if isinstance(value, bool):
+        raise TypeError("bool")
+    if isinstance(value, int):
+        return value
+    return int(str(value))
+
+
 def _clamp_volume(value: object) -> int:
     """Klemmt einen Lautstärke-Wert auf 0..100 %."""
     try:
-        v = int(value)
+        v = _int_from_setting(value)
     except (TypeError, ValueError):
         return DEFAULT_VOLUME_PERCENT
     return max(0, min(100, v))
@@ -96,7 +105,7 @@ def _clamp_volume(value: object) -> int:
 def _clamp_bitrate(value: object) -> int:
     """Klemmt auf eine erlaubte MP3-Bitrate, Fallback Default."""
     try:
-        v = int(value)
+        v = _int_from_setting(value)
     except (TypeError, ValueError):
         return DEFAULT_BITRATE_KBPS
     if v in ALLOWED_BITRATES_KBPS:

@@ -190,7 +190,7 @@ class MemoryChannelLoader(QObject):
         # damit der serielle Roundtrip ohne Scheduler-Latenz fuer das
         # GUI-Polling laeuft. Wirkt im Verbund mit dem
         # ``MeterPoller``-Pausenmechanismus im MainWindow.
-        thread.start(QThread.HighestPriority)
+        thread.start(QThread.Priority.HighestPriority)
 
     def stop(self, *, wait: bool = False) -> None:
         # Sicherheits-Snapshots: zwischen ``stop()`` und tatsaechlicher

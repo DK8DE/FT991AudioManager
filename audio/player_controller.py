@@ -7,7 +7,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Any, cast
 
 from PySide6.QtCore import QMetaObject, QObject, QThread, Qt, QTimer, QUrl, Signal, Slot, Q_ARG
 
@@ -36,12 +36,12 @@ AfterRx = Literal[
 
 
 def _invoke_ptt_worker_set_transmit(worker: QObject, on: bool) -> None:
-    """Queued ``invokeMethod`` (PySide6 6.x: ``str``-Slot + ``Qt.QueuedConnection``)."""
-
-    QMetaObject.invokeMethod(
+    """Queued ``invokeMethod`` für CatPttWorker-Slots (PySide6 6.x)."""
+    invoke = cast(Any, QMetaObject.invokeMethod)
+    invoke(
         worker,
         "set_transmit",
-        Qt.QueuedConnection,
+        Qt.ConnectionType.QueuedConnection,
         Q_ARG(bool, on),
     )
 

@@ -82,7 +82,9 @@ class _HzStepEdit(QLineEdit):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         sp = QSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setSizePolicy(sp)
 
@@ -131,7 +133,9 @@ class VfoTripletWidget(QWidget):
         self._hz = _HzStepEdit()
 
         self._dot = QLabel(".")
-        self._dot.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
+        self._dot.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignHCenter
+        )
         if self._digit_font is not None:
             df = QFont(self._digit_font)
         else:
@@ -300,7 +304,7 @@ class VfoTripletWidget(QWidget):
         self._emit_user_if_needed(clamped)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             w = self.childAt(event.pos())
             if isinstance(w, QLineEdit):
                 w.setFocus()

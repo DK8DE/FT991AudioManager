@@ -85,7 +85,7 @@ class AudioBasicsWidget(QGroupBox):
 
         self._mic_gain_title = QLabel("MIC Gain:")
         universal.addWidget(self._mic_gain_title, 0, 0)
-        self.mic_gain_slider = QSlider(Qt.Horizontal)
+        self.mic_gain_slider = QSlider(Qt.Orientation.Horizontal)
         self.mic_gain_slider.setMinimum(MIC_GAIN_MIN)
         self.mic_gain_slider.setMaximum(MIC_GAIN_MAX)
         self.mic_gain_slider.setSingleStep(1)
@@ -100,7 +100,9 @@ class AudioBasicsWidget(QGroupBox):
         universal.addWidget(self.mic_gain_slider, 0, 1)
         self.mic_gain_label = QLabel(str(MIC_GAIN_DEFAULT))
         self.mic_gain_label.setMinimumWidth(28)
-        self.mic_gain_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.mic_gain_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self.mic_gain_label.setToolTip("Anzeige 0–100")
         universal.addWidget(self.mic_gain_label, 0, 2)
         self.mic_gain_slider.valueChanged.connect(self._on_mic_gain_slider_changed)
@@ -135,7 +137,7 @@ class AudioBasicsWidget(QGroupBox):
         processor_layout.addWidget(self.processor_check, 0, 0, 1, 3)
 
         processor_layout.addWidget(QLabel("Processor Level:"), 1, 0)
-        self.processor_level_slider = QSlider(Qt.Horizontal)
+        self.processor_level_slider = QSlider(Qt.Orientation.Horizontal)
         self.processor_level_slider.setRange(PROCESSOR_LEVEL_MIN, PROCESSOR_LEVEL_MAX)
         self.processor_level_slider.setSingleStep(1)
         self.processor_level_slider.setPageStep(5)
@@ -143,7 +145,9 @@ class AudioBasicsWidget(QGroupBox):
         processor_layout.addWidget(self.processor_level_slider, 1, 1)
         self.processor_level_label = QLabel(str(PROCESSOR_LEVEL_DEFAULT))
         self.processor_level_label.setMinimumWidth(36)
-        self.processor_level_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.processor_level_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         processor_layout.addWidget(self.processor_level_label, 1, 2)
         self.processor_level_slider.valueChanged.connect(self._on_processor_level_changed)
 

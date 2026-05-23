@@ -120,28 +120,28 @@ def make_dark_palette() -> QPalette:
     """Baut die :class:`QPalette` für das Dark-Theme."""
     p = QPalette()
     # Aktive/Inactive Standardfarben
-    p.setColor(QPalette.Window,          QColor(DARK_COLORS["Window"]))
-    p.setColor(QPalette.WindowText,      QColor(DARK_COLORS["WindowText"]))
-    p.setColor(QPalette.Base,            QColor(DARK_COLORS["Base"]))
-    p.setColor(QPalette.AlternateBase,   QColor(DARK_COLORS["AlternateBase"]))
-    p.setColor(QPalette.ToolTipBase,     QColor(DARK_COLORS["ToolTipBase"]))
-    p.setColor(QPalette.ToolTipText,     QColor(DARK_COLORS["ToolTipText"]))
-    p.setColor(QPalette.Text,            QColor(DARK_COLORS["Text"]))
-    p.setColor(QPalette.Button,          QColor(DARK_COLORS["Button"]))
-    p.setColor(QPalette.ButtonText,      QColor(DARK_COLORS["ButtonText"]))
-    p.setColor(QPalette.BrightText,      QColor(DARK_COLORS["BrightText"]))
-    p.setColor(QPalette.Link,            QColor(DARK_COLORS["Link"]))
-    p.setColor(QPalette.Highlight,       QColor(DARK_COLORS["Highlight"]))
-    p.setColor(QPalette.HighlightedText, QColor(DARK_COLORS["HighlightedText"]))
+    p.setColor(QPalette.ColorRole.Window,          QColor(DARK_COLORS["Window"]))
+    p.setColor(QPalette.ColorRole.WindowText,      QColor(DARK_COLORS["WindowText"]))
+    p.setColor(QPalette.ColorRole.Base,            QColor(DARK_COLORS["Base"]))
+    p.setColor(QPalette.ColorRole.AlternateBase,   QColor(DARK_COLORS["AlternateBase"]))
+    p.setColor(QPalette.ColorRole.ToolTipBase,     QColor(DARK_COLORS["ToolTipBase"]))
+    p.setColor(QPalette.ColorRole.ToolTipText,     QColor(DARK_COLORS["ToolTipText"]))
+    p.setColor(QPalette.ColorRole.Text,            QColor(DARK_COLORS["Text"]))
+    p.setColor(QPalette.ColorRole.Button,          QColor(DARK_COLORS["Button"]))
+    p.setColor(QPalette.ColorRole.ButtonText,      QColor(DARK_COLORS["ButtonText"]))
+    p.setColor(QPalette.ColorRole.BrightText,      QColor(DARK_COLORS["BrightText"]))
+    p.setColor(QPalette.ColorRole.Link,            QColor(DARK_COLORS["Link"]))
+    p.setColor(QPalette.ColorRole.Highlight,       QColor(DARK_COLORS["Highlight"]))
+    p.setColor(QPalette.ColorRole.HighlightedText, QColor(DARK_COLORS["HighlightedText"]))
 
     # Disabled-Varianten — etwas zurückhaltender
-    p.setColor(QPalette.Disabled, QPalette.WindowText,
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.WindowText,
                QColor(DARK_DISABLED["WindowText"]))
-    p.setColor(QPalette.Disabled, QPalette.Text,
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text,
                QColor(DARK_DISABLED["Text"]))
-    p.setColor(QPalette.Disabled, QPalette.ButtonText,
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText,
                QColor(DARK_DISABLED["ButtonText"]))
-    p.setColor(QPalette.Disabled, QPalette.Highlight,
+    p.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight,
                QColor(DARK_DISABLED["Highlight"]))
     return p
 

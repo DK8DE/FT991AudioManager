@@ -9,7 +9,7 @@ wiederhergestellt.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import QObject, QThread, QMetaObject, Qt
 from PySide6.QtWidgets import QMessageBox, QWidget
@@ -19,6 +19,12 @@ from audio.radio_playback_setup import RadioPlaybackSetup, RadioSetupWorker, dat
 if TYPE_CHECKING:
     from cat import SerialCAT
     from model import AppSettings
+
+
+def _invoke_setup_worker_slot(receiver: QObject, method_name: str) -> None:
+    """Queued ``invokeMethod`` für RadioSetupWorker-Slots (PySide6 6.x)."""
+    invoke = cast(Any, QMetaObject.invokeMethod)
+    invoke(receiver, method_name, Qt.ConnectionType.QueuedConnection)
 
 
 class AudioRadioSessionHost(QObject):
@@ -41,7 +47,7 @@ class AudioRadioSessionHost(QObject):
         self.worker.apply_finished.connect(self._on_apply_finished_warn)
         self.worker.pc_menus_finished.connect(self._on_pc_menus_finished_warn)
         self.worker.restore_finished.connect(self._on_restore_finished_warn)
-        self._thread.start(QThread.HighestPriority)
+        self._thread.start(QThread.Priority.HighestPriority)
         self._open_ids: set[int] = set()
 
     def _on_pc_menus_finished_warn(self, ok: bool, message: str) -> None:
@@ -66,7 +72,7 @@ class AudioRadioSessionHost(QObject):
             QMessageBox.warning(parent, "Audio / CAT", message)
 
     @property
-    def thread(self) -> QThread:
+    def setup_thread(self) -> QThread:
         return self._thread
 
     @property
@@ -84,11 +90,7 @@ class AudioRadioSessionHost(QObject):
         if not self._cat.is_connected():
             return
         self.setup.set_data_mode(data_mode_from_string(self._settings.audio_player.data_mode))
-        QMetaObject.invokeMethod(
-            self.worker,
-            "run_apply_pc_menus",
-            Qt.QueuedConnection,
-        )
+        _invoke_setup_worker_slot(self.worker, "run_apply_pc_menus")
 
     def on_window_hidden(self, window: QWidget) -> None:
         """Fenster aus der offenen Liste nehmen (ohne CAT-Restore)."""
@@ -112,11 +114,7 @@ class AudioRadioSessionHost(QObject):
     def _invoke_restore_if_applied(self) -> None:
         if not self.setup.is_applied:
             return
-        QMetaObject.invokeMethod(
-            self.worker,
-            "run_restore",
-            Qt.QueuedConnection,
-        )
+        _invoke_setup_worker_slot(self.worker, "run_restore")
 
     def shutdown(self) -> None:
         """App-Ende: Thread beenden (nachdem Fenster ``detach`` + Restore ausgelöst haben)."""

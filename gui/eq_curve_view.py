@@ -167,10 +167,12 @@ class _EqCurveCanvas(QWidget):
         self._hover: Optional[_DragState] = None
         self._drag: Optional[_DragState] = None
         self.setMinimumSize(260, 140)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self.setMouseTracking(True)
         self.setAutoFillBackground(False)
-        self.setCursor(Qt.ArrowCursor)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
 
     # ------------------------------------------------------------------
     # Externe API
@@ -272,21 +274,21 @@ class _EqCurveCanvas(QWidget):
         hit = self._hit_test(pos.x(), pos.y())
         self._hover = hit
         if hit is None:
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(Qt.CursorShape.ArrowCursor)
         elif hit.mode == "center":
-            self.setCursor(Qt.SizeAllCursor)
+            self.setCursor(Qt.CursorShape.SizeAllCursor)
         else:
-            self.setCursor(Qt.SizeHorCursor)
+            self.setCursor(Qt.CursorShape.SizeHorCursor)
         self.update()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         pos = event.position()
         hit = self._hit_test(pos.x(), pos.y())
-        if event.button() == Qt.RightButton:
+        if event.button() == Qt.MouseButton.RightButton:
             if hit is not None and hit.mode == "center":
                 self._toggle_off(hit.band_index)
             return
-        if event.button() != Qt.LeftButton:
+        if event.button() != Qt.MouseButton.LeftButton:
             return
         if hit is None:
             return
@@ -295,13 +297,13 @@ class _EqCurveCanvas(QWidget):
         self._apply_drag(pos.x(), pos.y(), initial=True)
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._drag = None
 
     def leaveEvent(self, _event) -> None:  # noqa: N802
         if self._drag is None:
             self._hover = None
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(Qt.CursorShape.ArrowCursor)
             self.update()
 
     # ------------------------------------------------------------------
@@ -362,7 +364,7 @@ class _EqCurveCanvas(QWidget):
 
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         try:
             self._paint(painter)
         finally:
@@ -410,7 +412,7 @@ class _EqCurveCanvas(QWidget):
             right_x = self._x_for_freq(min(_F_MAX, f_right_hz), plot_x, plot_w)
             box_x = int(min(left_x, right_x))
             box_w = max(1, int(abs(right_x - left_x)))
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(_BW_FILL)
             painter.drawRect(box_x, plot_y, box_w, plot_h)
             # Kanten markieren (Hover-Highlight)
@@ -445,12 +447,12 @@ class _EqCurveCanvas(QWidget):
 
         # 0-dB-Linie
         zero_y = self._y_for_db(0.0, plot_y, plot_h)
-        painter.setPen(QPen(_ZERO_LINE, 1, Qt.DashLine))
+        painter.setPen(QPen(_ZERO_LINE, 1, Qt.PenStyle.DashLine))
         painter.drawLine(plot_x, int(zero_y), plot_x + plot_w, int(zero_y))
 
         # Plot-Rahmen
         painter.setPen(QPen(_GRID_MAJOR, 1))
-        painter.setBrush(Qt.NoBrush)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(plot_x, plot_y, plot_w, plot_h)
 
         # Achsen-Labels
@@ -486,16 +488,18 @@ class _EqCurveCanvas(QWidget):
 
         if polyline.size() >= 2:
             fill_poly = QPolygonF(polyline)
-            fill_poly.append(QPointF(polyline[-1].x(), zero_y))
-            fill_poly.append(QPointF(polyline[0].x(), zero_y))
+            fill_poly.append(
+                QPointF(polyline.at(polyline.size() - 1).x(), zero_y)
+            )
+            fill_poly.append(QPointF(polyline.at(0).x(), zero_y))
             grad = QLinearGradient(0, plot_y, 0, plot_y + plot_h)
             grad.setColorAt(0.0, _CURVE_FILL_TOP)
             grad.setColorAt(1.0, _CURVE_FILL_BOTTOM)
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(grad))
             painter.drawPolygon(fill_poly)
 
-            painter.setBrush(Qt.NoBrush)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(_CURVE, 2))
             painter.drawPolyline(polyline)
 
@@ -554,7 +558,7 @@ class EqCurveView(QWidget):
         layout.addWidget(self.canvas, stretch=1)
 
         self.footer = QLabel("LOW —   ·   MID —   ·   HIGH —")
-        self.footer.setAlignment(Qt.AlignCenter)
+        self.footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ff = self.footer.font()
         ff.setPointSizeF(ff.pointSizeF() * 0.88)
         self.footer.setFont(ff)

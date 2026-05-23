@@ -7,7 +7,7 @@ import time
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import QByteArray, QMetaObject, QObject, Qt, QThread, QTimer, Q_ARG, QUrl, Signal
 from PySide6.QtGui import QFont
@@ -107,8 +107,10 @@ _PLAYLIST_TOKEN_ROLE = Qt.ItemDataRole.UserRole
 _CAT_PLAY_RADIO_SETTLE_MS = 200
 
 
-def _invoke_worker_slot(receiver: QObject, method_name: str) -> None:
-    QMetaObject.invokeMethod(receiver, method_name, Qt.QueuedConnection)
+def _invoke_worker_slot(receiver: QObject, method_name: str, *args: object) -> None:
+    """Queued ``invokeMethod`` für RadioSetupWorker-Slots (PySide6 6.x)."""
+    invoke = cast(Any, QMetaObject.invokeMethod)
+    invoke(receiver, method_name, Qt.ConnectionType.QueuedConnection, *args)
 
 
 def _invoke_worker_slot_qarg_str(
@@ -116,12 +118,7 @@ def _invoke_worker_slot_qarg_str(
     method_name: str,
     arg: str,
 ) -> None:
-    QMetaObject.invokeMethod(
-        receiver,
-        method_name,
-        Qt.QueuedConnection,
-        Q_ARG(str, arg),
-    )
+    _invoke_worker_slot(receiver, method_name, Q_ARG(str, arg))
 
 
 def _write_playlist_end_warnton_wav(path: Path) -> None:
@@ -186,7 +183,7 @@ class AudioPlayerWindow(QMainWindow):
             initial_data_mode = data_mode_from_string(settings.audio_player.data_mode)
         if audio_radio_session is not None:
             self._radio_setup = audio_radio_session.setup
-            self._setup_thread = audio_radio_session.thread
+            self._setup_thread = audio_radio_session.setup_thread
             self._setup_worker = audio_radio_session.worker
             self._owns_radio_thread = False
         else:

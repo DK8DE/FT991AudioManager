@@ -144,7 +144,7 @@ class EQEditorWidget(QWidget):
             "Rechtsklick = an/aus"
         )
         hint.setStyleSheet(_CAPTION_STYLE)
-        hint.setAlignment(Qt.AlignCenter)
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hint.setWordWrap(True)
         outer.addWidget(hint)
 
@@ -158,7 +158,7 @@ class EQEditorWidget(QWidget):
     def _build_db_stack(self) -> QWidget:
         frame = QFrame()
         frame.setObjectName("eqDbStack")
-        frame.setFrameShape(QFrame.NoFrame)
+        frame.setFrameShape(QFrame.Shape.NoFrame)
         layout = QGridLayout(frame)
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setHorizontalSpacing(4)
@@ -166,7 +166,7 @@ class EQEditorWidget(QWidget):
 
         caption = QLabel("Level")
         caption.setStyleSheet(_CAPTION_STYLE)
-        caption.setAlignment(Qt.AlignHCenter)
+        caption.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(caption, 0, 0, 1, 1)
 
         # 3 Zeilen für HIGH / MID / LOW (Reihenfolge in _DB_STACK_ORDER).
@@ -174,10 +174,10 @@ class EQEditorWidget(QWidget):
         for row_offset, band_index in enumerate(_DB_STACK_ORDER, start=1):
             name_label = QLabel(_BAND_LABELS[band_index])
             name_label.setStyleSheet(_CAPTION_STYLE)
-            name_label.setAlignment(Qt.AlignHCenter)
+            name_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             value_label = QLabel("—")
             value_label.setStyleSheet(_VALUE_LABEL_STYLE)
-            value_label.setAlignment(Qt.AlignHCenter)
+            value_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             value_label.setMinimumWidth(60)
             value_font = QFont(value_label.font())
             value_font.setPointSizeF(value_font.pointSizeF() * 1.05)

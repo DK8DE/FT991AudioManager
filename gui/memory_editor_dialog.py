@@ -125,12 +125,16 @@ class MemoryEditorWindow(QMainWindow):
         self.table = MemoryEditorTableView()
         self._model = MemoryEditorTableModel(self._bank, self.table)
         self.table.setModel(self._model)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.table.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self.table.setAlternatingRowColors(True)
         self.table.horizontalHeader().setStretchLastSection(True)
         self._model.rowsMoved.connect(self._on_rows_moved)
-        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.delete_rows_requested.connect(self._clear_row)
         attach_delegates(self.table)
@@ -180,22 +184,22 @@ class MemoryEditorWindow(QMainWindow):
 
     def _wire_signals(self) -> None:
         self._host.read_progress.connect(
-            self._on_read_progress, Qt.QueuedConnection
+            self._on_read_progress, Qt.ConnectionType.QueuedConnection
         )
         self._host.read_finished.connect(
-            self._on_read_finished, Qt.QueuedConnection
+            self._on_read_finished, Qt.ConnectionType.QueuedConnection
         )
         self._host.write_progress.connect(
-            self._on_write_progress, Qt.QueuedConnection
+            self._on_write_progress, Qt.ConnectionType.QueuedConnection
         )
         self._host.write_finished.connect(
-            self._on_write_finished, Qt.QueuedConnection
+            self._on_write_finished, Qt.ConnectionType.QueuedConnection
         )
         self._host.operation_failed.connect(
-            self._on_op_failed, Qt.QueuedConnection
+            self._on_op_failed, Qt.ConnectionType.QueuedConnection
         )
         self._host.connection_lost.connect(
-            self._on_connection_lost, Qt.QueuedConnection
+            self._on_connection_lost, Qt.ConnectionType.QueuedConnection
         )
         self._model.memory_local_prefs_changed.connect(
             self._persist_local_memory_mappings
@@ -314,7 +318,7 @@ class MemoryEditorWindow(QMainWindow):
             try:
                 if delegate is not None:
                     delegate.closeEditor.emit(
-                        editor, QAbstractItemDelegate.SubmitModelCache
+                        editor, QAbstractItemDelegate.EndEditHint.SubmitModelCache
                     )
             except Exception:  # noqa: BLE001
                 pass
@@ -365,7 +369,7 @@ class MemoryEditorWindow(QMainWindow):
             "Speicherkanäle lesen …", "Abbrechen", 0, 100, self
         )
         self._read_progress.setWindowTitle("Erstes Einlesen")
-        self._read_progress.setWindowModality(Qt.WindowModal)
+        self._read_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._read_progress.setMinimumDuration(0)
         self._read_progress.canceled.connect(self._host.stop)
         self._read_progress.show()
@@ -411,9 +415,9 @@ class MemoryEditorWindow(QMainWindow):
                 "Neu laden",
                 "Ungespeicherte Änderungen verwerfen und alle Kanäle "
                 "vom Funkgerät neu einlesen?",
-                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
-            if ans != QMessageBox.Yes:
+            if ans != QMessageBox.StandardButton.Yes:
                 return
         if self._read_progress is not None:
             self._read_progress.close()
@@ -421,7 +425,7 @@ class MemoryEditorWindow(QMainWindow):
             "Speicherkanäle lesen …", "Abbrechen", 0, 100, self
         )
         self._read_progress.setWindowTitle("Neu laden")
-        self._read_progress.setWindowModality(Qt.WindowModal)
+        self._read_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._read_progress.setMinimumDuration(0)
         self._read_progress.canceled.connect(self._host.stop)
         self._read_progress.show()
@@ -490,7 +494,7 @@ class MemoryEditorWindow(QMainWindow):
                 f"Vorher wird eine Sicherung angelegt."
             )
 
-        if QMessageBox.question(self, "Speichern", msg) != QMessageBox.Yes:
+        if QMessageBox.question(self, "Speichern", msg) != QMessageBox.StandardButton.Yes:
             return
 
         backup_dir = app_data_dir() / "memory_backups"
@@ -504,7 +508,7 @@ class MemoryEditorWindow(QMainWindow):
             "Schreibe Speicherkanäle …", "Abbrechen", 0, len(channels), self
         )
         self._write_progress.setWindowTitle("Speichern")
-        self._write_progress.setWindowModality(Qt.WindowModal)
+        self._write_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._write_progress.setMinimumDuration(0)
         self._write_progress.setValue(0)
         self._write_progress.canceled.connect(self._host.stop)
@@ -744,9 +748,9 @@ class MemoryEditorWindow(QMainWindow):
             "Anhängen: nur belegte Kanäle aus der Datei werden in freie "
             "Slots der aktuellen Liste eingefügt."
         )
-        replace_btn = box.addButton("Alles ersetzen", QMessageBox.DestructiveRole)
-        append_btn = box.addButton("Anhängen", QMessageBox.AcceptRole)
-        box.addButton("Abbrechen", QMessageBox.RejectRole)
+        replace_btn = box.addButton("Alles ersetzen", QMessageBox.ButtonRole.DestructiveRole)
+        append_btn = box.addButton("Anhängen", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
         box.exec()
         clicked = box.clickedButton()
         if clicked == replace_btn:
@@ -769,9 +773,9 @@ class MemoryEditorWindow(QMainWindow):
             "Slots ein; der Rest der Datei wird nicht übernommen."
         )
         fill_btn = box.addButton(
-            "Freie belegen (bis voll)", QMessageBox.AcceptRole
+            "Freie belegen (bis voll)", QMessageBox.ButtonRole.AcceptRole
         )
-        box.addButton("Abbrechen", QMessageBox.RejectRole)
+        box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() == fill_btn:
             return "fill"
@@ -785,9 +789,9 @@ class MemoryEditorWindow(QMainWindow):
             "Liste ersetzen",
             "Die aktuelle Liste hat ungespeicherte Änderungen.\n"
             "Trotzdem alles ersetzen?",
-            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        return ans == QMessageBox.Yes
+        return ans == QMessageBox.StandardButton.Yes
 
     def _apply_import(
         self,
@@ -915,9 +919,9 @@ class MemoryEditorWindow(QMainWindow):
                 self,
                 "Schließen",
                 "Ungespeicherte Änderungen verwerfen?",
-                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
-            if ans != QMessageBox.Yes:
+            if ans != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
         self._notify_closed()

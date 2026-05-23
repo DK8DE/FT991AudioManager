@@ -194,7 +194,7 @@ class MemoryEditorWorkerHost(QObject):
         thread.finished.connect(thread.deleteLater)
         self._thread = thread
         self._worker = worker
-        thread.start(QThread.HighestPriority)
+        thread.start(QThread.Priority.HighestPriority)
 
     def start_read(self) -> None:
         worker = _ReadWorker(self._cat)

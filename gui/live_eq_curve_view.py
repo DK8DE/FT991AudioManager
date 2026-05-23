@@ -149,7 +149,9 @@ class _LiveEqCurveCanvas(QWidget):
         self._hover: Optional[_DragState] = None
         self._drag: Optional[_DragState] = None
         self.setMinimumSize(380, 150)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
         self.setMouseTracking(True)
         self.setAutoFillBackground(False)
 
@@ -487,8 +489,10 @@ class _LiveEqCurveCanvas(QWidget):
 
         if polyline.size() >= 2:
             fill_poly = QPolygonF(polyline)
-            fill_poly.append(QPointF(polyline[-1].x(), zero_y))
-            fill_poly.append(QPointF(polyline[0].x(), zero_y))
+            fill_poly.append(
+                QPointF(polyline.at(polyline.size() - 1).x(), zero_y)
+            )
+            fill_poly.append(QPointF(polyline.at(0).x(), zero_y))
             grad = QLinearGradient(0, plot_y, 0, plot_y + plot_h)
             grad.setColorAt(0.0, _CURVE_FILL_TOP)
             grad.setColorAt(1.0, _CURVE_FILL_BOTTOM)

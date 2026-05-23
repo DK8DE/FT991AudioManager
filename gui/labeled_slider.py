@@ -65,7 +65,7 @@ class LabeledSlider(QWidget):
         self._name_label.setMinimumWidth(label_min_width)
         layout.addWidget(self._name_label)
 
-        self._slider = QSlider(Qt.Horizontal)
+        self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(minimum, maximum)
         self._slider.setSingleStep(1)
         self._slider.setPageStep(page_step)
@@ -74,7 +74,9 @@ class LabeledSlider(QWidget):
 
         self._value_label = QLabel("")
         self._value_label.setMinimumWidth(value_min_width)
-        self._value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._value_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         layout.addWidget(self._value_label)
 
         self._slider.valueChanged.connect(self._on_internal_change)

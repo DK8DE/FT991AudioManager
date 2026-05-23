@@ -5,11 +5,12 @@ from __future__ import annotations
 import base64
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from PySide6.QtCore import (
     QByteArray,
     QMetaObject,
+    QObject,
     Qt,
     QThread,
     QTimer,
@@ -100,6 +101,12 @@ def _format_ms(ms: int) -> str:
     s = ms // 1000
     m, s = divmod(s, 60)
     return f"{m}:{s:02d}"
+
+
+def _invoke_worker_slot(receiver: QObject, method_name: str, *args: object) -> None:
+    """Queued ``invokeMethod`` für RadioSetupWorker-Slots (PySide6 6.x)."""
+    invoke = cast(Any, QMetaObject.invokeMethod)
+    invoke(receiver, method_name, Qt.ConnectionType.QueuedConnection, *args)
 
 
 def _big_font(base: QFont) -> QFont:
@@ -209,7 +216,7 @@ class AudioRecorderWindow(QMainWindow):
             initial_data_mode = data_mode_from_string(settings.audio_player.data_mode)
         if audio_radio_session is not None:
             self._radio_setup = audio_radio_session.setup
-            self._setup_thread = audio_radio_session.thread
+            self._setup_thread = audio_radio_session.setup_thread
             self._setup_worker = audio_radio_session.worker
             self._owns_radio_thread = False
         else:
@@ -1453,10 +1460,9 @@ class AudioRecorderWindow(QMainWindow):
         if self._radio_setup.data_mode == data_mode:
             return
         self.lbl_status.setText(f"Funkgerät wird auf {data_mode.value} geschaltet …")
-        QMetaObject.invokeMethod(
+        _invoke_worker_slot(
             self._setup_worker,
             "run_set_data_mode",
-            Qt.QueuedConnection,
             Q_ARG(str, data_mode.value),
         )
 
@@ -1468,21 +1474,13 @@ class AudioRecorderWindow(QMainWindow):
             self.lbl_status.setText(
                 f"Funkgerät wird auf {target.value} / 048+077+109→USB, 070→REAR, 072→USB geschaltet …"
             )
-            QMetaObject.invokeMethod(
-                self._setup_worker,
-                "run_apply",
-                Qt.QueuedConnection,
-            )
+            _invoke_worker_slot(self._setup_worker, "run_apply")
             return
         if not self._radio_setup.in_data_mode:
             self.lbl_status.setText(
                 f"Schalte zurück auf {self._radio_setup.data_mode.value} …"
             )
-            QMetaObject.invokeMethod(
-                self._setup_worker,
-                "run_engage_data",
-                Qt.QueuedConnection,
-            )
+            _invoke_worker_slot(self._setup_worker, "run_engage_data")
             return
         # Bereits im richtigen Zustand → direkt weiter.
         self._continue_after_data_mode_ready()
@@ -1501,22 +1499,14 @@ class AudioRecorderWindow(QMainWindow):
             self._player.play(int(row))
 
     def _request_engage_plain(self) -> None:
-        QMetaObject.invokeMethod(
-            self._setup_worker,
-            "run_engage_plain",
-            Qt.QueuedConnection,
-        )
+        _invoke_worker_slot(self._setup_worker, "run_engage_plain")
 
     def _request_radio_restore(self) -> None:
         if self._audio_radio_session is not None:
             return
         if not self._radio_setup.is_applied:
             return
-        QMetaObject.invokeMethod(
-            self._setup_worker,
-            "run_restore",
-            Qt.QueuedConnection,
-        )
+        _invoke_worker_slot(self._setup_worker, "run_restore")
 
     def _radio_transmit_activity_busy(self) -> bool:
         return self._recorder.is_busy() or self._player.is_busy()
@@ -1623,19 +1613,11 @@ class AudioRecorderWindow(QMainWindow):
                 self.lbl_status.setText(
                     f"MIC PTT erkannt — schalte auf {voice} …"
                 )
-                QMetaObject.invokeMethod(
-                    self._setup_worker,
-                    "run_engage_plain_forced",
-                    Qt.QueuedConnection,
-                )
+                _invoke_worker_slot(self._setup_worker, "run_engage_plain_forced")
             return
         if state == TX_STATE_RX and self._mic_ptt_interrupted:
             if self._radio_setup.needs_plain_verify:
-                QMetaObject.invokeMethod(
-                    self._setup_worker,
-                    "run_verify_plain",
-                    Qt.QueuedConnection,
-                )
+                _invoke_worker_slot(self._setup_worker, "run_verify_plain")
             elif self._radio_setup.in_data_mode:
                 self._request_engage_plain()
 
@@ -1732,11 +1714,7 @@ class AudioRecorderWindow(QMainWindow):
             self._audio_radio_session.on_window_shown(self)
             return
         if self._cat.is_connected():
-            QMetaObject.invokeMethod(
-                self._setup_worker,
-                "run_apply_pc_menus",
-                Qt.QueuedConnection,
-            )
+            _invoke_worker_slot(self._setup_worker, "run_apply_pc_menus")
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self.persist_settings()

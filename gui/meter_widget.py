@@ -28,7 +28,7 @@ import time
 
 import traceback
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 
 from PySide6.QtCore import (
     QMetaObject,
@@ -115,6 +115,12 @@ from mapping.sh_width_mapping import (
     sh_display_hz,
     sh_snap_p2_to_supported,
 )
+
+
+def _invoke_poller_slot(receiver: QObject, method_name: str, *args: object) -> None:
+    """Queued ``invokeMethod`` für MeterPoller-Slots (PySide6 6.x)."""
+    invoke = cast(Any, QMetaObject.invokeMethod)
+    invoke(receiver, method_name, Qt.ConnectionType.QueuedConnection, *args)
 
 
 # ----------------------------------------------------------------------
@@ -707,7 +713,7 @@ class TxIndicator(QFrame):
 
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self._state == self.STATE_TX:
             fill = QColor(255, 80, 80)
             border = QColor(140, 30, 30)
@@ -773,7 +779,7 @@ class _LedDot(QWidget):
 
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self._on is True:
             fill = QColor(82, 196, 26)     # grün
             border = QColor(40, 110, 18)
@@ -837,14 +843,14 @@ class DspSlider(QFrame):
         self._level_debounce.setInterval(150)
         self._level_debounce.timeout.connect(self._flush_level)
 
-        self.setFrameShape(QFrame.NoFrame)
+        self.setFrameShape(QFrame.Shape.NoFrame)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
         title = QLabel(label)
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tf = title.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
@@ -868,7 +874,7 @@ class DspSlider(QFrame):
             self._slider.setMinimumHeight(130)
             self._slider.setSingleStep(1)
             self._slider.setPageStep(1)
-            self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+            self._slider.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
             self._slider.valueChanged.connect(self._on_slider_changed)
             if tick_interval is not None and tick_interval > 0:
                 # Skalenstriche neben dem vertikalen Slider
@@ -882,7 +888,7 @@ class DspSlider(QFrame):
             v.addLayout(slider_row, stretch=1)
 
             self._value_label = QLabel(str(level_min))
-            self._value_label.setAlignment(Qt.AlignCenter)
+            self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vf = self._value_label.font()
             vf.setPointSizeF(vf.pointSizeF() * 0.85)
             self._value_label.setFont(vf)
@@ -890,7 +896,7 @@ class DspSlider(QFrame):
         else:
             self._slider = None
             self._value_label = QLabel("OFF")
-            self._value_label.setAlignment(Qt.AlignCenter)
+            self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vf = self._value_label.font()
             vf.setPointSizeF(vf.pointSizeF() * 0.85)
             self._value_label.setFont(vf)
@@ -964,7 +970,7 @@ class _LedButton(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setFixedSize(18, 18)
-        self.setCursor(Qt.PointingHandCursor)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._on: Optional[bool] = None
 
     def set_state(self, on: Optional[bool]) -> None:
@@ -973,13 +979,13 @@ class _LedButton(QWidget):
             self.update()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
 
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self._on is True:
             fill = QColor(82, 196, 26)
             border = QColor(40, 110, 18)
@@ -1015,14 +1021,14 @@ class AgcSlider(QFrame):
         super().__init__(parent)
         self._applying_remote = False
 
-        self.setFrameShape(QFrame.NoFrame)
+        self.setFrameShape(QFrame.Shape.NoFrame)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
         title = QLabel("AGC")
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tf = title.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
@@ -1047,7 +1053,7 @@ class AgcSlider(QFrame):
         self._slider.setTickPosition(QSlider.TickPosition.TicksLeft)
         self._slider.setTickInterval(1)
         self._slider.setInvertedAppearance(False)
-        self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._slider.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self._slider.valueChanged.connect(self._on_slider_changed)
 
         slider_row = QHBoxLayout()
@@ -1058,7 +1064,7 @@ class AgcSlider(QFrame):
         v.addLayout(slider_row, stretch=1)
 
         self._value_label = QLabel(AGC_SLIDER_LABELS[0])
-        self._value_label.setAlignment(Qt.AlignCenter)
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vf = self._value_label.font()
         vf.setPointSizeF(vf.pointSizeF() * 0.85)
         self._value_label.setFont(vf)
@@ -1110,14 +1116,14 @@ class SqlSlider(QFrame):
         super().__init__(parent)
         self._applying_remote = False
 
-        self.setFrameShape(QFrame.NoFrame)
+        self.setFrameShape(QFrame.Shape.NoFrame)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
         title = QLabel("SQL")
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tf = title.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
@@ -1137,7 +1143,7 @@ class SqlSlider(QFrame):
         self._slider.setTickPosition(QSlider.TickPosition.TicksLeft)
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
-        self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._slider.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self._slider.valueChanged.connect(self._on_slider_changed)
 
         slider_row = QHBoxLayout()
@@ -1148,7 +1154,7 @@ class SqlSlider(QFrame):
         v.addLayout(slider_row, stretch=1)
 
         self._value_label = QLabel("0")
-        self._value_label.setAlignment(Qt.AlignCenter)
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vf = self._value_label.font()
         vf.setPointSizeF(vf.pointSizeF() * 0.85)
         self._value_label.setFont(vf)
@@ -1190,14 +1196,14 @@ class PowerSlider(QFrame):
         self._applying_remote = False
         self._max_w = 100
 
-        self.setFrameShape(QFrame.NoFrame)
+        self.setFrameShape(QFrame.Shape.NoFrame)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
         title = QLabel("POWER")
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tf = title.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
@@ -1217,7 +1223,7 @@ class PowerSlider(QFrame):
         self._slider.setTickPosition(QSlider.TickPosition.TicksLeft)
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
-        self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._slider.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self._slider.setToolTip("Sendeleistung (PC) — 5-W-Schritte")
         self._slider.valueChanged.connect(self._on_slider_changed)
 
@@ -1229,7 +1235,7 @@ class PowerSlider(QFrame):
         v.addLayout(slider_row, stretch=1)
 
         self._value_label = QLabel("50 W")
-        self._value_label.setAlignment(Qt.AlignCenter)
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vf = self._value_label.font()
         vf.setPointSizeF(vf.pointSizeF() * 0.85)
         self._value_label.setFont(vf)
@@ -1299,14 +1305,14 @@ class MicGainSlider(QFrame):
         super().__init__(parent)
         self._applying_remote = False
 
-        self.setFrameShape(QFrame.NoFrame)
+        self.setFrameShape(QFrame.Shape.NoFrame)
 
         v = QVBoxLayout(self)
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
         title = QLabel("MIC")
-        title.setAlignment(Qt.AlignCenter)
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tf = title.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
@@ -1326,7 +1332,7 @@ class MicGainSlider(QFrame):
         self._slider.setTickPosition(QSlider.TickPosition.TicksLeft)
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
-        self._slider.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._slider.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
         self._slider.setToolTip("MIC Gain (MG) 0–100")
         self._slider.valueChanged.connect(self._on_slider_changed)
 
@@ -1338,7 +1344,7 @@ class MicGainSlider(QFrame):
         v.addLayout(slider_row, stretch=1)
 
         self._value_label = QLabel("50")
-        self._value_label.setAlignment(Qt.AlignCenter)
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vf = self._value_label.font()
         vf.setPointSizeF(vf.pointSizeF() * 0.85)
         self._value_label.setFont(vf)
@@ -1473,7 +1479,7 @@ class ScaledMeterBar(QWidget):
 
         if label_text:
             self._label = QLabel(label_text)
-            self._label.setAlignment(Qt.AlignCenter)
+            self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lf = self._label.font()
             lf.setBold(True)
             lf.setPointSizeF(lf.pointSizeF() * header_font_scale)
@@ -1491,7 +1497,7 @@ class ScaledMeterBar(QWidget):
         outer.addWidget(self._canvas, stretch=1)
         self._canvas.setMinimumHeight(bar_min_height)
         self._canvas.setMinimumWidth(scale_width + bar_width + 6)
-        self._canvas.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self._canvas.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         if self._flex_horizontal:
             self._canvas.setMinimumWidth(52)
             csp = self._canvas.sizePolicy()
@@ -1502,7 +1508,7 @@ class ScaledMeterBar(QWidget):
             self.setSizePolicy(sp)
 
         self._value_label = QLabel("—")
-        self._value_label.setAlignment(Qt.AlignCenter)
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vf = self._value_label.font()
         vf.setPointSizeF(vf.pointSizeF() * value_font_scale)
         self._value_label.setFont(vf)
@@ -1655,7 +1661,7 @@ class _ScaledBarCanvas(QWidget):
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802
         p = self._parent_ref
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         try:
             self._paint(painter, p)
         finally:
@@ -1705,7 +1711,7 @@ class _ScaledBarCanvas(QWidget):
             grad.setStart(0, bar_bottom)
             grad.setFinalStop(0, bar_top)
             painter.setBrush(grad)
-            painter.setPen(Qt.NoPen)
+            painter.setPen(Qt.PenStyle.NoPen)
             inner_x = bar_x + 1
             inner_w = bar_w - 2
             inner_h = bar_bottom - filled_top - 1
@@ -1738,7 +1744,7 @@ class _ScaledBarCanvas(QWidget):
             text_rect_y = ty - fm.ascent() // 2 - 1
             painter.drawText(
                 2, text_rect_y, p._scale_width - 6, fm.height(),
-                Qt.AlignRight | Qt.AlignVCenter, tick_label,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, tick_label,
             )
 
 
@@ -1881,7 +1887,7 @@ class MiniLevelBar(QWidget):
         layout.addWidget(self._label)
 
         self.bar = QProgressBar()
-        self.bar.setOrientation(Qt.Horizontal)
+        self.bar.setOrientation(Qt.Orientation.Horizontal)
         self.bar.setRange(0, raw_max)
         self.bar.setTextVisible(False)
         self.bar.setFixedHeight(8)
@@ -1891,7 +1897,7 @@ class MiniLevelBar(QWidget):
         self._value_label = QLabel("—")
         self._value_label.setFont(font)
         self._value_label.setMinimumWidth(36)
-        self._value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._value_label)
 
     def set_value(self, raw: Optional[int]) -> None:
@@ -1949,7 +1955,7 @@ class GainLevelSlider(QWidget):
         self._value_label = QLabel("—")
         self._value_label.setFont(font)
         self._value_label.setMinimumWidth(36)
-        self._value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._value_label)
 
     def _on_slider_value_changed(self, value: int) -> None:
@@ -2009,7 +2015,7 @@ class _SymmetricTxBwBar(QWidget):
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         del event
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         w = max(1, self.width())
         h = max(1, self.height())
         painter.fillRect(0, 0, w, h, QColor("#0F0F0F"))
@@ -2019,7 +2025,7 @@ class _SymmetricTxBwBar(QWidget):
         half = max(2.0, t * span)
         painter.setPen(QPen(QColor("#4a4a4a"), 1))
         painter.drawLine(int(cx), 4, int(cx), h - 4)
-        painter.setPen(Qt.NoPen)
+        painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(70, 140, 200, 140))
         painter.drawRect(int(cx - half), 4, int(2 * half), h - 8)
 
@@ -2275,7 +2281,7 @@ class MeterWidget(QWidget):
             self.tx_label.setMinimumWidth(34)
         else:
             head_frame = QFrame()
-            head_frame.setFrameShape(QFrame.StyledPanel)
+            head_frame.setFrameShape(QFrame.Shape.StyledPanel)
             head_layout = QHBoxLayout(head_frame)
             head_layout.setContentsMargins(6, 4, 6, 4)
             head_layout.setSpacing(6)
@@ -2295,7 +2301,7 @@ class MeterWidget(QWidget):
         # --- S-Meter + DSP-Slider ---------------------------------------
         smeter_frame = QFrame()
         smeter_frame.setObjectName("panelFrame")
-        smeter_frame.setFrameShape(QFrame.StyledPanel)
+        smeter_frame.setFrameShape(QFrame.Shape.StyledPanel)
         if self._integrated_main_layout:
             sfp = smeter_frame.sizePolicy()
             sfp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
@@ -2315,7 +2321,7 @@ class MeterWidget(QWidget):
         smeter_column.setContentsMargins(0, 0, 0, 0)
         smeter_column.setSpacing(3)
         smeter_title = QLabel("S-Meter")
-        smeter_title.setAlignment(Qt.AlignCenter)
+        smeter_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sf = smeter_title.font()
         sf.setBold(True)
         smeter_title.setFont(sf)
@@ -2323,7 +2329,7 @@ class MeterWidget(QWidget):
         self.smeter_bar = make_smeter_bar(
             flex_horizontal=self._integrated_main_layout,
         )
-        smeter_column.addWidget(self.smeter_bar, stretch=1, alignment=Qt.AlignHCenter)
+        smeter_column.addWidget(self.smeter_bar, stretch=1, alignment=Qt.AlignmentFlag.AlignHCenter)
         if self._integrated_main_layout:
             # Etwas mehr horizontaler Anteil als ein einzelner Slider — Balken
             # bleibt zentriert, Leerraum verteilt sich gleichmäßig.
@@ -2380,7 +2386,7 @@ class MeterWidget(QWidget):
         # --- AF / RF-Gain -------------------------------------------------
         gain_frame = QFrame()
         gain_frame.setObjectName("panelFrame")
-        gain_frame.setFrameShape(QFrame.StyledPanel)
+        gain_frame.setFrameShape(QFrame.Shape.StyledPanel)
         gain_layout = QVBoxLayout(gain_frame)
         gain_layout.setContentsMargins(6, 4, 6, 4)
         gain_layout.setSpacing(2)
@@ -2402,7 +2408,7 @@ class MeterWidget(QWidget):
         # --- Sendebandbreite (SH WIDTH, unter AF/RF) ---------------------
         self._tx_bw_frame = QFrame()
         self._tx_bw_frame.setObjectName("panelFrame")
-        self._tx_bw_frame.setFrameShape(QFrame.StyledPanel)
+        self._tx_bw_frame.setFrameShape(QFrame.Shape.StyledPanel)
         self._tx_bw_frame.hide()
         tx_bw_outer = QVBoxLayout(self._tx_bw_frame)
         tx_bw_outer.setContentsMargins(6, 4, 6, 4)
@@ -2414,13 +2420,13 @@ class MeterWidget(QWidget):
         # --- TX-Bars ------------------------------------------------------
         bars_frame = QFrame()
         bars_frame.setObjectName("panelFrame")
-        bars_frame.setFrameShape(QFrame.StyledPanel)
+        bars_frame.setFrameShape(QFrame.Shape.StyledPanel)
         bars_outer = QVBoxLayout(bars_frame)
         bars_outer.setContentsMargins(6, 6, 6, 4)
         bars_outer.setSpacing(4)
 
         tx_meters_heading = QLabel("TX-Meter")
-        tx_meters_heading.setAlignment(Qt.AlignCenter)
+        tx_meters_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tlf = tx_meters_heading.font()
         tlf.setBold(True)
         tlf.setPointSizeF(tlf.pointSizeF() * 0.85)
@@ -2538,16 +2544,14 @@ class MeterWidget(QWidget):
         self._rx_interval_ms = max(self._tx_interval_ms,
                                    min(MAX_INTERVAL_MS, int(rx_interval_ms)))
         if self._poller is not None:
-            QMetaObject.invokeMethod(
+            _invoke_poller_slot(
                 self._poller,
                 "set_interval_ms",
-                Qt.QueuedConnection,
                 Q_ARG(int, self._tx_interval_ms),
             )
-            QMetaObject.invokeMethod(
+            _invoke_poller_slot(
                 self._poller,
                 "set_rx_interval_ms",
-                Qt.QueuedConnection,
                 Q_ARG(int, self._rx_interval_ms),
             )
 
@@ -2590,7 +2594,7 @@ class MeterWidget(QWidget):
 
     def stop_polling(self) -> None:
         if self._poller is not None:
-            QMetaObject.invokeMethod(self._poller, "stop", Qt.QueuedConnection)
+            _invoke_poller_slot(self._poller, "stop")
         if self._thread is not None:
             thread = self._thread
             thread.quit()
@@ -2621,21 +2625,20 @@ class MeterWidget(QWidget):
         Einlesen aller Speicherkanaele.
         """
         if self._poller is not None:
-            QMetaObject.invokeMethod(self._poller, "stop", Qt.QueuedConnection)
+            _invoke_poller_slot(self._poller, "stop")
 
     def resume_polling(self) -> None:
         """Setzt einen mit :meth:`pause_polling` pausierten Poller fort."""
         if self._poller is not None:
-            QMetaObject.invokeMethod(self._poller, "start", Qt.QueuedConnection)
+            _invoke_poller_slot(self._poller, "start")
 
     def notify_app_frequency_write(self, hz: int, hold_ms: int = -1) -> None:
         """GUI: Frequenz-Schreiben — Poller kurz pausieren."""
         if self._poller is None:
             return
-        QMetaObject.invokeMethod(
+        _invoke_poller_slot(
             self._poller,
             "notify_app_frequency_write",
-            Qt.QueuedConnection,
             Q_ARG(int, int(hz)),
             Q_ARG(int, int(hold_ms)),
         )
@@ -2644,10 +2647,9 @@ class MeterWidget(QWidget):
         """FLRig SETFREQ — ohne Poll-Pause."""
         if self._poller is None:
             return
-        QMetaObject.invokeMethod(
+        _invoke_poller_slot(
             self._poller,
             "note_flrig_frequency_hz",
-            Qt.QueuedConnection,
             Q_ARG(int, int(hz)),
         )
 
@@ -3033,7 +3035,7 @@ class MeterWidget(QWidget):
             if frequency_hz is not None and int(frequency_hz) > 0
             else self._last_vfo_a_hz
         )
-        max_w = po_max_watts_for_freq(hz if hz > 0 else None)
+        max_w = po_max_watts_for_freq(hz if hz is not None and hz > 0 else None)
         cw = clamp_pc_power_watts(int(watts), max_watts=max_w)
 
         self.power_slider.set_max_watts(max_w)

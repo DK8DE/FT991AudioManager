@@ -76,7 +76,7 @@ def _make_slider_row(
     tooltip: str,
 ) -> tuple[QLabel, QSlider, QLabel]:
     label = QLabel(label_text)
-    slider = QSlider(Qt.Horizontal)
+    slider = QSlider(Qt.Orientation.Horizontal)
     slider.setRange(minimum, maximum)
     slider.setValue(default)
     slider.setSingleStep(1)
@@ -84,7 +84,9 @@ def _make_slider_row(
     slider.setToolTip(tooltip)
     value_label = QLabel(str(default))
     value_label.setMinimumWidth(36)
-    value_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    value_label.setAlignment(
+        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+    )
     slider.valueChanged.connect(lambda v, lbl=value_label: lbl.setText(str(v)))
     return label, slider, value_label
 

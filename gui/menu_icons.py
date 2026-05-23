@@ -33,7 +33,7 @@ def menu_action_icon(
         if not themed.isNull():
             return themed
     app = QApplication.instance()
-    style = app.style() if app is not None else None
+    style = app.style() if isinstance(app, QApplication) else None
     if style is not None:
         return style.standardIcon(standard)
     return QIcon()
@@ -51,7 +51,7 @@ def _control_bar_icon(
 ) -> QIcon:
     dpr = 1.0
     app = QApplication.instance()
-    if app is not None:
+    if isinstance(app, QApplication):
         screen = app.primaryScreen()
         if screen is not None:
             dpr = screen.devicePixelRatio()
@@ -137,7 +137,7 @@ def volume_role_pc_icon() -> QIcon:
     app = QApplication.instance()
     pc_color = (
         app.palette().color(QPalette.ColorRole.WindowText)
-        if app is not None
+        if isinstance(app, QApplication)
         else QColor(33, 33, 33)
     )
 

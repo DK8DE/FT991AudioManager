@@ -19,7 +19,7 @@ Neuer schlanker Aufbau (ab 0.5.1):
 from __future__ import annotations
 
 import time
-from typing import Any, Optional, cast
+from typing import Any, Optional, cast, cast
 
 import serial
 
@@ -165,6 +165,12 @@ def _status_bar_tx_text(transmitting: bool) -> str:
     return "TX: AN " if transmitting else "TX: aus "
 
 
+def _invoke_cat_worker_slot(receiver: QObject, method_name: str) -> None:
+    """Queued ``invokeMethod`` für RadioSetupWorker-Slots (PySide6 6.x)."""
+    invoke = cast(Any, QMetaObject.invokeMethod)
+    invoke(receiver, method_name, Qt.ConnectionType.QueuedConnection)
+
+
 class MainWindow(QMainWindow):
     """Hauptfenster mit VFO-Zeile, großem Meter-Panel und EQ-Profilzeile."""
 
@@ -269,7 +275,7 @@ class MainWindow(QMainWindow):
         # Statusleiste: links Verbindung + Speicherkanal-Laden, rechts Mode/TX.
         self._connection_footer_label = QLabel("Nicht verbunden")
         self._connection_footer_label.setTextInteractionFlags(
-            Qt.TextSelectableByMouse
+            Qt.TextInteractionFlag.TextSelectableByMouse
         )
         sb = QStatusBar()
         sb.addWidget(self._connection_footer_label, 1)
@@ -381,10 +387,8 @@ class MainWindow(QMainWindow):
         if event.type() != QEvent.Type.MouseButtonPress:
             return super().eventFilter(_watched, event)
         me = cast(QMouseEvent, event)
-        app = QApplication.instance()
-        if app is None:
-            return super().eventFilter(_watched, event)
-        fw = app.focusWidget()
+        qapp = QApplication.instance()
+        fw = qapp.focusWidget() if isinstance(qapp, QApplication) else None
         if fw is None:
             return super().eventFilter(_watched, event)
         in_a = self._vfo_a_triplet.isAncestorOf(fw)
@@ -540,7 +544,7 @@ class MainWindow(QMainWindow):
         # ----- Oben rechts: VFO-A/B + RX/TX --------------------------------
         top_bar = QFrame()
         top_bar.setObjectName("panelFrame")
-        top_bar.setFrameShape(QFrame.StyledPanel)
+        top_bar.setFrameShape(QFrame.Shape.StyledPanel)
         top_row = QHBoxLayout(top_bar)
         top_row.setContentsMargins(10, 6, 10, 6)
         top_row.setSpacing(12)
@@ -593,7 +597,7 @@ class MainWindow(QMainWindow):
 
         band_panel = QFrame()
         band_panel.setObjectName("panelFrame")
-        band_panel.setFrameShape(QFrame.StyledPanel)
+        band_panel.setFrameShape(QFrame.Shape.StyledPanel)
         band_row = QHBoxLayout(band_panel)
         band_row.setContentsMargins(10, 4, 10, 4)
         band_row.setSpacing(10)
@@ -644,7 +648,7 @@ class MainWindow(QMainWindow):
         # ----- Unten: Mode + EQ-Profil; Speicherkanal darunter (volle Breite) --
         bottom_bar = QFrame()
         bottom_bar.setObjectName("panelFrame")
-        bottom_bar.setFrameShape(QFrame.StyledPanel)
+        bottom_bar.setFrameShape(QFrame.Shape.StyledPanel)
         bottom_outer = QVBoxLayout(bottom_bar)
         bottom_outer.setContentsMargins(8, 6, 8, 6)
         # Gleicher Zeilenabstand wie zwischen den beiden Combo-Zeilen oben.
@@ -670,7 +674,7 @@ class MainWindow(QMainWindow):
         self.memory_combo.setEnabled(False)
         self.memory_combo.setMinimumWidth(260)
         self.memory_combo.setSizePolicy(
-            QSizePolicy.Expanding, QSizePolicy.Preferred
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         self.memory_combo.setToolTip(
             "Speicherkanäle des FT-991/991A. Wechsel sendet MCnnn; "
@@ -701,7 +705,7 @@ class MainWindow(QMainWindow):
         # Eigener panelFrame wie Mode/Speicher — nicht im selben Kasten wie Speicherkanal.
         favorites_bar = QFrame()
         favorites_bar.setObjectName("panelFrame")
-        favorites_bar.setFrameShape(QFrame.StyledPanel)
+        favorites_bar.setFrameShape(QFrame.Shape.StyledPanel)
         fav_outer = QVBoxLayout(favorites_bar)
         fav_outer.setContentsMargins(8, 6, 8, 6)
         fav_outer.setSpacing(0)
@@ -1227,21 +1231,13 @@ class MainWindow(QMainWindow):
 
         if setup.is_applied:
             self._tcall_release_engage_plain = True
-            QMetaObject.invokeMethod(
-                worker,
-                "run_engage_data",
-                Qt.QueuedConnection,
-            )
+            _invoke_cat_worker_slot(worker, "run_engage_data")
             return
 
         has_audio_win = self._audio_radio_session.has_open_audio_windows
         self._tcall_release_restore_full = not has_audio_win
         self._tcall_release_engage_plain = has_audio_win
-        QMetaObject.invokeMethod(
-            worker,
-            "run_apply",
-            Qt.QueuedConnection,
-        )
+        _invoke_cat_worker_slot(worker, "run_apply")
 
     def _on_tcall_radio_apply_finished(self, ok: bool, message: str) -> None:
         if not self._tcall_cat_pending:
@@ -1278,17 +1274,9 @@ class MainWindow(QMainWindow):
             self._tcall_cat_pending = False
             return
         if self._tcall_release_restore_full:
-            QMetaObject.invokeMethod(
-                self._audio_radio_session.worker,
-                "run_restore",
-                Qt.QueuedConnection,
-            )
+            _invoke_cat_worker_slot(self._audio_radio_session.worker, "run_restore")
         elif self._tcall_release_engage_plain:
-            QMetaObject.invokeMethod(
-                self._audio_radio_session.worker,
-                "run_engage_plain",
-                Qt.QueuedConnection,
-            )
+            _invoke_cat_worker_slot(self._audio_radio_session.worker, "run_engage_plain")
         self._tcall_release_restore_full = False
         self._tcall_release_engage_plain = False
         self._tcall_restore_data_mode = None
@@ -1344,17 +1332,9 @@ class MainWindow(QMainWindow):
         worker = self._audio_radio_session.worker
         if self._tcall_release_restore_full:
             self.statusBar().showMessage("T.CALL: Stelle Funkgerät wieder her …", 3000)
-            QMetaObject.invokeMethod(
-                worker,
-                "run_restore",
-                Qt.QueuedConnection,
-            )
+            _invoke_cat_worker_slot(worker, "run_restore")
         elif self._tcall_release_engage_plain:
-            QMetaObject.invokeMethod(
-                worker,
-                "run_engage_plain",
-                Qt.QueuedConnection,
-            )
+            _invoke_cat_worker_slot(worker, "run_engage_plain")
         self._tcall_release_restore_full = False
         self._tcall_release_engage_plain = False
 
@@ -1867,9 +1847,9 @@ class MainWindow(QMainWindow):
         self.profile_widget.notify_radio_mode(mode)
 
     def _on_dark_mode_toggled(self, checked: bool) -> None:
-        app = QApplication.instance()
-        if app is not None:
-            apply_theme(app, dark=checked)
+        qapp = QApplication.instance()
+        if isinstance(qapp, QApplication):
+            apply_theme(cast(QApplication, qapp), dark=checked)
         digit_color = _VFO_TRIPLET_FREQ_COLOR_DARK if checked else None
         self._vfo_a_triplet.set_text_color(digit_color)
         self._vfo_b_triplet.set_text_color(digit_color)
@@ -2575,10 +2555,10 @@ class MainWindow(QMainWindow):
                 self._favorites_store.upsert(snap)
             self._favorites_store.save()
         except (ValueError, CatError) as exc:
+            if isinstance(exc, CatConnectionLostError):
+                self._on_connection_lost()
+                return
             QMessageBox.warning(self, "Favoriten", str(exc))
-            return
-        except CatConnectionLostError:
-            self._on_connection_lost()
             return
         self._refresh_favorites_combo()
         sb = self.statusBar()
@@ -2636,10 +2616,10 @@ class MainWindow(QMainWindow):
             self._favorites_store.upsert(snap, replace_index=sel)
             self._favorites_store.save()
         except (ValueError, CatError) as exc:
+            if isinstance(exc, CatConnectionLostError):
+                self._on_connection_lost()
+                return
             QMessageBox.warning(self, "Favoriten", str(exc))
-            return
-        except CatConnectionLostError:
-            self._on_connection_lost()
             return
         self._refresh_favorites_combo(select_placeholder=False)
         qi = self._favorites_panel.combo.findData(sel)
@@ -2693,10 +2673,10 @@ class MainWindow(QMainWindow):
             ft.write_rf_gain(max(0, min(255, fav.rf_gain)))
             if fav.pc_power_watts > 0:
                 ft.set_pc_power_watts(fav.pc_power_watts)
-        except CatConnectionLostError:
-            self._on_connection_lost()
-            return
         except CatError as exc:
+            if isinstance(exc, CatConnectionLostError):
+                self._on_connection_lost()
+                return
             QMessageBox.warning(self, "Favorit", str(exc))
             return
         self._try_clear_fm_repeater_shift_simplex()
@@ -2784,6 +2764,11 @@ class MainWindow(QMainWindow):
             if callable(h):
                 self.meter_widget.tx_state_changed.connect(h)
                 self._live_tx_meter_bridge = True
+            led_sync = getattr(w, "_update_tx_rx_led", None)
+            if callable(led_sync):
+                last = getattr(self.meter_widget, "_last_tx_state", None)
+                if last is not None:
+                    led_sync(int(last))
         self._live_window = w
         return w
 
@@ -2792,6 +2777,11 @@ class MainWindow(QMainWindow):
         rf = getattr(win, "reload_from_app_settings", None)
         if callable(rf):
             rf()
+        led_sync = getattr(win, "_update_tx_rx_led", None)
+        if callable(led_sync):
+            last = getattr(self.meter_widget, "_last_tx_state", None)
+            if last is not None:
+                led_sync(int(last))
         win.show()
         win.raise_()
         win.activateWindow()

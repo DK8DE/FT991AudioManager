@@ -26,6 +26,8 @@ _PO_CAL_MAX_WIDTH_PX = 380
 
 from cat import SerialCAT
 from gui.calibration_worker import CalibrationWorker, TuneOnlyWorker
+
+_CalibrationWorkerLike = CalibrationWorker | TuneOnlyWorker
 from mapping.calibration_bands import CAL_BAND_HF_10M, DEFAULT_HF_TEST_HZ
 from model.po_calibration_store import CalPoint, load_po_calibration
 
@@ -58,7 +60,7 @@ class PoCalibrationWidget(QWidget):
         super().__init__(parent)
         self._cat = serial_cat
         self._thread: Optional[QThread] = None
-        self._worker: Optional[object] = None
+        self._worker: Optional[_CalibrationWorkerLike] = None
         self._points: List[CalPoint] = []
         self._build_ui()
         self._load_existing_into_table()
@@ -70,7 +72,7 @@ class PoCalibrationWidget(QWidget):
 
         warn = QLabel(_WARNING_HTML)
         warn.setWordWrap(True)
-        warn.setTextFormat(Qt.RichText)
+        warn.setTextFormat(Qt.TextFormat.RichText)
         warn.setStyleSheet(
             "QLabel { background: #3d2f00; color: #ffe082; padding: 10px; "
             "border: 1px solid #806000; border-radius: 4px; }"
@@ -143,10 +145,10 @@ class PoCalibrationWidget(QWidget):
             self.window(),
             "Kalibrierung läuft",
             "Die Kalibrierung läuft noch. Wirklich abbrechen?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return False
         self._on_stop()
         return True
@@ -223,10 +225,10 @@ class PoCalibrationWidget(QWidget):
                 "Das Funkgerät sendet automatisch per CAT-TX "
                 "(5–100 W in 5-W-Schritten)."
             ),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
         self._set_busy(True)
         self._progress.setValue(0)
@@ -234,14 +236,14 @@ class PoCalibrationWidget(QWidget):
         worker = CalibrationWorker(self._cat, hf_freq_hz=self._hf_freq_hz())
         self._start_worker(worker, tune_only=False)
 
-    def _start_worker(self, worker: object, *, tune_only: bool) -> None:
+    def _start_worker(self, worker: _CalibrationWorkerLike, *, tune_only: bool) -> None:
         thread = QThread(self)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.log_line.connect(self._append_log)
         if tune_only:
             worker.finished_ok.connect(self._on_tune_done)
-        else:
+        elif isinstance(worker, CalibrationWorker):
             worker.progress.connect(self._on_progress)
             worker.band_points.connect(self._on_band_points)
             worker.finished_ok.connect(self._on_calibration_done)
@@ -254,7 +256,7 @@ class PoCalibrationWidget(QWidget):
         self._worker = worker
         thread.start()
 
-    def _clear_thread(self, thread: QThread, worker: object) -> None:
+    def _clear_thread(self, thread: QThread, worker: _CalibrationWorkerLike) -> None:
         if self._thread is thread:
             self._thread = None
             self._worker = None
@@ -301,6 +303,6 @@ class PoCalibrationWidget(QWidget):
 
     def _on_stop(self) -> None:
         worker = self._worker
-        if worker is not None and hasattr(worker, "stop"):
+        if worker is not None and isinstance(worker, CalibrationWorker):
             worker.stop()
         self._append_log("Abbruch angefordert …")

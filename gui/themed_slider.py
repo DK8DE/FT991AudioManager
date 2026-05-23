@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 # Direktstart von beliebigem CWD: ``python gui/themed_slider.py`` oder
 # ``python -m gui.themed_slider`` (aus ft991_audio_manager/).
@@ -37,7 +38,7 @@ class MeterVerticalSlider(QSlider):
     def initStyleOption(self, option: QStyleOptionSlider) -> None:
         super().initStyleOption(option)
         if self._meter_paint_suppress_style_ticks:
-            option.tickPosition = QSlider.TickPosition.NoTicks
+            cast(Any, option).tickPosition = QSlider.TickPosition.NoTicks
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
         pos = self.tickPosition()
