@@ -7,7 +7,18 @@ import ctypes
 import sys
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, cast
 
-from PySide6.QtCore import QObject, QByteArray, QEvent, QMetaObject, QThread, Qt, QTimer, Q_ARG
+from PySide6.QtCore import (
+    QObject,
+    QByteArray,
+    QEvent,
+    QMetaObject,
+    QThread,
+    Qt,
+    QTimer,
+    Q_ARG,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
@@ -38,6 +49,7 @@ from gui.meter_widget import (
 from audio.cat_ptt_worker import CatPttWorker
 from audio.player_controller import _invoke_ptt_worker_set_transmit
 from audio.radio_playback_setup import data_mode_for_rx_mode
+from audio.windows_endpoint_volume import invalidate_windows_audio_device_cache
 from cat import SerialCAT
 from cat.ft991_cat import FT991CAT
 from mapping import TX_STATE_MIC_PTT, TX_STATE_RX
@@ -49,7 +61,12 @@ from live.live_devices import (
 )
 from mapping.rx_mapping import RxMode
 from model import AppSettings
-from model.live_settings import LiveEqBandSettings, LiveSettings
+from model.live_settings import (
+    DEFAULT_BLOCKSIZE,
+    DEFAULT_SAMPLERATE,
+    LiveEqBandSettings,
+    LiveSettings,
+)
 from model.live_volume_curve import (
     live_gain_display_percent,
     live_gain_from_slider,
@@ -95,9 +112,9 @@ def _invoke_setup_worker_slot(receiver: QObject, method_name: str, *args: object
     invoke(receiver, method_name, Qt.ConnectionType.QueuedConnection, *args)
 
 
-# Kurzer Puffer nach DATA/Menüs, bevor Audio‑Stream und TX1; kommen —
-# kleiner als beim Player/Rekorder, Latenz beim „Start Live“ senken.
-_CAT_LIVE_RADIO_SETTLE_MS = 75
+# Puffer nach DATA/Menüs, bevor Audio‑Stream und TX1; kommen — nach
+# Speicherkanal→Sprachmode→DATA braucht das FT‑991 etwas mehr Zeit als 75 ms.
+_CAT_LIVE_RADIO_SETTLE_MS = 200
 
 _VK_CONTROL = 0x11
 _VK_Y = 0x59
@@ -240,6 +257,39 @@ def _live_ctrl_y_filter_release() -> None:
     _live_ctrl_y_filter = None
 
 
+class _LiveStreamParamsPreviewWorker(QObject):
+    """Ermittelt Samplerate + Blockgröße im Hintergrund (WASAPI/COM/PortAudio)."""
+
+    preview_requested = Signal(object, int)
+    finished = Signal(int, int, int)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.preview_requested.connect(
+            self._run_preview,
+            Qt.ConnectionType.QueuedConnection,
+        )
+
+    @Slot(object, int)
+    def _run_preview(self, live_dict: object, request_id: int) -> None:
+        data = live_dict if isinstance(live_dict, dict) else {}
+        try:
+            liv = LiveSettings.from_dict(data)
+            sr, bs = LiveAudioEngine.preview_stream_params(liv)
+        except Exception:
+            raw_sr = data.get("samplerate", DEFAULT_SAMPLERATE)
+            raw_bs = data.get("blocksize", DEFAULT_BLOCKSIZE)
+            try:
+                sr = int(raw_sr)
+            except (TypeError, ValueError):
+                sr = int(DEFAULT_SAMPLERATE)
+            try:
+                bs = int(raw_bs)
+            except (TypeError, ValueError):
+                bs = int(DEFAULT_BLOCKSIZE)
+        self.finished.emit(request_id, sr, bs)
+
+
 class LiveWindow(QMainWindow):
     """Regler spiegeln Settings; Engine liest kopiertes ``LiveSettings`` im Callback."""
 
@@ -252,11 +302,14 @@ class LiveWindow(QMainWindow):
         audio_radio_session: Optional["AudioRadioSessionHost"] = None,
         operating_mode_provider: Optional[Callable[[], RxMode]] = None,
         other_audio_blocking: Optional[Callable[[], str]] = None,
+        profile_widget: Optional[QWidget] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
-        super().__init__(parent)
+        del parent
+        super().__init__(None)
         self._settings = settings
         self._persist = persist_settings
+        self._profile_widget = profile_widget
         self._live_snapshot = LiveSettings.from_dict(settings.live.to_dict())
         self._cat = serial_cat
         self._audio_radio_session = audio_radio_session
@@ -278,9 +331,20 @@ class LiveWindow(QMainWindow):
         self.setWindowTitle("Live")
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        # Kein Parent — frei beweglich, MainWindow kann darüber liegen (s. LogWindow).
+        self.setWindowFlags(Qt.WindowType.Window)
         self.resize(980, 720)
 
         self._engine = LiveAudioEngine(on_error=lambda _msg: None)
+
+        self._sr_preview_thread = QThread(self)
+        self._sr_preview_worker = _LiveStreamParamsPreviewWorker()
+        self._sr_preview_worker.moveToThread(self._sr_preview_thread)
+        self._sr_preview_worker.finished.connect(self._on_stream_params_preview_finished)
+        self._sr_preview_thread.start()
+        self._sr_preview_req = 0
+        self._sr_preview_pending: Optional[int] = None
+        self._sr_refresh_monitors_after = False
 
         if self._cat is not None and self._radio_setup is not None:
             if self._setup_worker is not None:
@@ -311,9 +375,6 @@ class LiveWindow(QMainWindow):
         self._meter_timer.setInterval(60)
         self._meter_timer.timeout.connect(self._meter_tick)
         self._meter_timer.start()
-
-        self._c_sr.currentTextChanged.connect(self._on_sr_bs_changed_restart)
-        self._c_bs.currentIndexChanged.connect(self._on_sr_bs_changed_restart)
 
         self._restore_geometry()
 
@@ -352,12 +413,8 @@ class LiveWindow(QMainWindow):
 
         hold = getattr(self, "_suppress_funk_listen_while_live_tx_active", False)
         if transmitting:
-            if bool(self._chk_funk_listen.isChecked()):
-                if not hold:
-                    self._suppress_funk_listen_while_live_tx_active = True
-                    self._push_live_engine_runtime_settings(self._gather_live_from_ui())
-            elif hold:
-                self._suppress_funk_listen_while_live_tx_active = False
+            if not hold:
+                self._suppress_funk_listen_while_live_tx_active = True
                 self._push_live_engine_runtime_settings(self._gather_live_from_ui())
             return
 
@@ -572,9 +629,7 @@ class LiveWindow(QMainWindow):
                 return
             if self._ptt_worker is not None:
                 _invoke_ptt_worker_set_transmit(self._ptt_worker, True)
-                self._suppress_funk_listen_while_live_tx_active = bool(
-                    self._chk_funk_listen.isChecked()
-                )
+                self._suppress_funk_listen_while_live_tx_active = True
                 self._push_live_engine_runtime_settings(
                     LiveSettings.from_dict(liv.to_dict())
                 )
@@ -602,37 +657,36 @@ class LiveWindow(QMainWindow):
         df.addRow("Monitor:", self._c_out)
         df.addRow("Funk‑Ausgang:", self._c_funk)
 
-        funk_listen_row = QWidget()
-        funk_listen_lay = QHBoxLayout(funk_listen_row)
-        funk_listen_lay.setContentsMargins(0, 0, 0, 0)
-        funk_listen_lay.setSpacing(10)
         self._c_funk_listen = QComboBox()
         self._c_funk_listen.setMinimumWidth(220)
-        self._chk_funk_listen = QCheckBox("Mithören")
-        self._chk_funk_listen.setToolTip(
-            "Funkeingabe‑Mithören über Monitor‑Ausgang."
+        self._c_funk_listen.setToolTip(
+            "Funkeingabe wird immer auf den Monitor‑Ausgang gemischt (Mithören)."
         )
-        funk_listen_lay.addWidget(self._c_funk_listen, 1)
-        funk_listen_lay.addWidget(self._chk_funk_listen)
-        lf_lbl = QLabel("Funk‑Eingang:")
-        lf_lbl.setBuddy(self._c_funk_listen)
-        df.addRow(lf_lbl, funk_listen_row)
-        self._chk_funk_listen.toggled.connect(self._on_funk_listen_toggled_save)
+        df.addRow("Funk‑Eingang:", self._c_funk_listen)
 
         bf = QHBoxLayout()
-        self._c_sr = QComboBox()
-        self._c_sr.addItems(["44100", "48000"])
-        bf.addWidget(QLabel("Samplerate Hz:"))
-        bf.addWidget(self._c_sr)
+        self._lbl_sr = QLabel("— Hz")
+        self._lbl_sr.setToolTip(
+            "Entspricht automatisch der höchsten Samplerate, die für alle "
+            "gewählten Geräte gültig ist (Windows/WASAPI + PortAudio-Check). "
+            "Bluetooth-Headsets nutzen fürs Mikro oft HFP (16 kHz) und für "
+            "Wiedergabe ein anderes Profil — die App wählt intern ein "
+            "kompatibles PortAudio-Paar."
+        )
+        bf.addWidget(QLabel("Samplerate:"))
+        bf.addWidget(self._lbl_sr)
         bf.addSpacing(14)
-        self._c_bs = QComboBox()
-        for b in (128, 256, 512):
-            self._c_bs.addItem(str(b), b)
-        bf.addWidget(QLabel("Block"))
-        bf.addWidget(self._c_bs)
+        self._lbl_bs = QLabel("—")
+        self._lbl_bs.setToolTip(
+            "Blockgröße (Frames) automatisch aus PortAudio-Latenz und Geräte-Check."
+        )
+        bf.addWidget(QLabel("Block:"))
+        bf.addWidget(self._lbl_bs)
         bf.addSpacing(14)
-        self._chk_live_mithoren = QCheckBox("Live Mithören")
-        self._chk_live_mithoren.setToolTip("Eigene Ausgabe mithören")
+        self._chk_live_mithoren = QCheckBox("Eigene NF abhören")
+        self._chk_live_mithoren.setToolTip(
+            "Bearbeitetes PC-Mikrofon auf dem Monitor-Ausgang abhören."
+        )
         self._chk_live_mithoren.toggled.connect(
             self._on_suppress_live_monitor_toggled
         )
@@ -908,25 +962,36 @@ class LiveWindow(QMainWindow):
         self._populate_devices()
         self._apply_live_to_ui()
 
+    def _resolve_live_target_data_mode(self, mode: Optional[RxMode] = None) -> None:
+        """DATA‑Ziel aus Funkmodus ableiten und Session‑Flag mit Gerät abgleichen."""
+        if self._radio_setup is None:
+            return
+        if mode is None:
+            if self._cat is not None and self._cat.is_connected():
+                try:
+                    mode = FT991CAT(self._cat).read_rx_mode()
+                except Exception:
+                    mode = None
+            if mode is None and self._operating_mode_provider is not None:
+                try:
+                    mode = self._operating_mode_provider()
+                except Exception:
+                    mode = None
+        if mode is None:
+            return
+        data_mode = data_mode_for_rx_mode(mode)
+        self._settings.audio_player.data_mode = data_mode.value  # type: ignore[assignment]
+        self._radio_setup.align_data_mode_to_rx_mode(mode)
+        self._radio_setup.reconcile_in_data_mode_with_radio()
+
     def sync_data_mode_from_main(self, mode: Optional[RxMode] = None) -> None:
         """DATA‑Ziel wie Audio‑Recorder/‑Player aus der Hauptfenster‑Betriebsart."""
         if self._radio_setup is None:
             return
-        if mode is None:
-            if self._operating_mode_provider is not None:
-                mode = self._operating_mode_provider()
-            elif self._cat is not None and self._cat.is_connected():
-                try:
-                    mode = FT991CAT(self._cat).read_rx_mode()
-                except Exception:
-                    return
-            else:
-                return
-        data_mode = data_mode_for_rx_mode(mode)
-        self._settings.audio_player.data_mode = data_mode.value  # type: ignore[assignment]
-        self._radio_setup.align_data_mode_to_rx_mode(mode)
+        self._resolve_live_target_data_mode(mode)
         if not self._radio_setup.is_applied or not self._radio_setup.in_data_mode:
             return
+        data_mode = self._radio_setup.data_mode
         if self._engine.is_running():
             return
         if self._radio_setup.data_mode == data_mode:
@@ -939,8 +1004,20 @@ class LiveWindow(QMainWindow):
             Q_ARG(str, data_mode.value),
         )
 
+    def _sync_live_eq_profile_for_session(self, *, entering: bool) -> None:
+        pw = self._profile_widget
+        if pw is None:
+            return
+        if entering:
+            fn = getattr(pw, "enter_live_eq_session", None)
+        else:
+            fn = getattr(pw, "exit_live_eq_session", None)
+        if callable(fn):
+            fn()
+
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
+        self._sync_live_eq_profile_for_session(entering=True)
         self._ensure_live_ctrl_y_filter_acquired()
         if self._last_synced_tx_state is not None:
             self._update_tx_rx_led(self._last_synced_tx_state)
@@ -992,6 +1069,8 @@ class LiveWindow(QMainWindow):
         ):
             return
         if state == TX_STATE_MIC_PTT:
+            if self._cat_live_start_busy or self._live_cat_waiting_engage_finish:
+                return
             if not self._engine.is_running() and not self._radio_setup.in_data_mode:
                 return
             self._stop_live_via_ptt(clear_ptt_wants=True)
@@ -1022,14 +1101,22 @@ class LiveWindow(QMainWindow):
         self._invoke_worker_engage_data_for_live()
 
     def _on_live_radio_engage_finished(self, ok: bool, message: str) -> None:
-        if not getattr(self, "_live_cat_waiting_engage_finish", False):
-            return
+        was_waiting = bool(self._live_cat_waiting_engage_finish)
         self._live_cat_waiting_engage_finish = False
-        if not self._cat_live_start_busy or self._radio_setup is None:
+        if not was_waiting and not self._desired_live_transport_on():
+            return
+        if self._radio_setup is None:
             return
         if not ok:
-            self._abort_live_cat_start(message or "DATA‑Modus konnte nicht gesetzt werden.")
+            if was_waiting or self._cat_live_start_busy:
+                self._abort_live_cat_start(
+                    message or "DATA‑Modus konnte nicht gesetzt werden.",
+                )
             return
+        if not self._desired_live_transport_on():
+            self._clear_live_transport_pending_flags()
+            return
+        self._cat_live_start_busy = True
         self._schedule_live_engine_after_radio_settled(fresh_data_engaged=True)
 
     def _invoke_worker_engage_data_for_live(self) -> None:
@@ -1055,7 +1142,16 @@ class LiveWindow(QMainWindow):
         self._live_cat_settle.start(ms)
 
     def _on_live_radio_settled_start_engine(self) -> None:
-        if not self._cat_live_start_busy or self._engine.is_running():
+        if not self._desired_live_transport_on():
+            self._clear_live_transport_pending_flags()
+            return
+        if self._engine.is_running():
+            return
+        if not self._cat_live_start_busy:
+            self._cat_live_start_busy = True
+        self._resolve_live_target_data_mode()
+        if self._radio_setup is not None and not self._radio_setup.in_data_mode:
+            self._invoke_worker_engage_data_for_live()
             return
         liv = LiveSettings.from_dict(self._gather_live_from_ui().to_dict())
         self._live_snapshot = liv
@@ -1067,7 +1163,7 @@ class LiveWindow(QMainWindow):
             return
         if self._ptt_worker is not None:
             _invoke_ptt_worker_set_transmit(self._ptt_worker, True)
-        self._suppress_funk_listen_while_live_tx_active = bool(self._chk_funk_listen.isChecked())
+        self._suppress_funk_listen_while_live_tx_active = True
         self._push_live_engine_runtime_settings(LiveSettings.from_dict(liv.to_dict()))
         self._cat_live_start_busy = False
         self._refresh_ptt_controls_enabled()
@@ -1092,7 +1188,8 @@ class LiveWindow(QMainWindow):
                 "CAT nicht verbunden — bitte zuerst im Hauptfenster verbinden.",
             )
             return
-        self.sync_data_mode_from_main()
+        # Aktuellen Funkmodus lesen (Speicherkanal kann DATA→FM o. ä. gewechselt haben).
+        self._resolve_live_target_data_mode()
 
         if not rs.is_applied:
             self._pending_live_after_pc_then_engage = True
@@ -1144,10 +1241,8 @@ class LiveWindow(QMainWindow):
             _invoke_setup_worker_slot(self._setup_worker, "run_engage_plain")
 
     def _mithoren_keeps_radio_data_until_window_close(self) -> bool:
-        """Wahr: Stop Live gibt Sprachmodus nicht zurück — Funk bleibt in DATA bis Fensterende."""
-        return bool(
-            LiveSettings.from_dict(self._live_snapshot.to_dict()).funk_listen_enabled
-        )
+        """Stop Live gibt Sprachmodus nicht zurück — Funk bleibt in DATA bis Fensterende."""
+        return True
 
     def _release_voice_plain_after_stop_live_if_not_mithoren(self) -> None:
         """Bei aktiv „Mithören“ Datenmodus beim Stop bestehen lassen (siehe closeEvent)."""
@@ -1183,6 +1278,7 @@ class LiveWindow(QMainWindow):
             peak_bar.set_value(live_dbfs_peak_to_raw(dbv))
 
     def _populate_devices(self) -> None:
+        invalidate_windows_audio_device_cache()
         ids_in: List[str] = []
         ids_out: List[str] = []
         sel_in = self._c_in.currentData()
@@ -1267,6 +1363,7 @@ class LiveWindow(QMainWindow):
                     self._on_device_changed_save
                 )
                 self._live_dev_signals_wired = True
+            self._schedule_samplerate_label_update(refresh_monitors_after=True)
         finally:
             self._c_in.blockSignals(False)
             self._c_out.blockSignals(False)
@@ -1308,23 +1405,9 @@ class LiveWindow(QMainWindow):
         self._sl_flisten_v.blockSignals(False)
         self._update_vol_slider_labels()
 
-        self._chk_funk_listen.blockSignals(True)
-        self._chk_funk_listen.setChecked(bool(liv.funk_listen_enabled))
-        self._chk_funk_listen.blockSignals(False)
-        self._refresh_funk_listen_controls()
-
         self._chk_live_mithoren.blockSignals(True)
         self._chk_live_mithoren.setChecked(not bool(liv.suppress_live_monitor_mic))
         self._chk_live_mithoren.blockSignals(False)
-
-        self._c_sr.blockSignals(True)
-        self._c_sr.setCurrentText(str(int(liv.samplerate)))
-        self._c_sr.blockSignals(False)
-
-        ix = max(0, self._c_bs.findData(int(liv.blocksize)))
-        self._c_bs.blockSignals(True)
-        self._c_bs.setCurrentIndex(ix)
-        self._c_bs.blockSignals(False)
 
         self._chk_eq_master.blockSignals(True)
         self._chk_eq_master.setChecked(bool(liv.eq_enabled))
@@ -1349,7 +1432,8 @@ class LiveWindow(QMainWindow):
         self._c_mk.setValue(int(round(c.makeup_db * 10)))
 
         self._refresh_gate_comp_readouts()
-        self._push_snapshot(persist_disk=False)
+        self._push_snapshot(persist_disk=False, refresh_monitors=False)
+        self._schedule_samplerate_label_update(liv, refresh_monitors_after=True)
 
     def _gather_live_from_ui(self) -> LiveSettings:
         liv = LiveSettings.from_dict(self._live_snapshot.to_dict())
@@ -1359,11 +1443,10 @@ class LiveWindow(QMainWindow):
         liv.funk_listen_input_device_id = str(
             self._c_funk_listen.currentData() or ""
         )
-        liv.funk_listen_enabled = bool(self._chk_funk_listen.isChecked())
+        liv.funk_listen_enabled = True
         liv.suppress_live_monitor_mic = not bool(self._chk_live_mithoren.isChecked())
-        liv.samplerate = int(float(self._c_sr.currentText()))
-        raw_bs = self._c_bs.currentData()
-        liv.blocksize = int(raw_bs) if raw_bs is not None else int(liv.blocksize)
+        liv.samplerate = int(self._live_snapshot.samplerate)
+        liv.blocksize = int(self._live_snapshot.blocksize)
         liv.input_gain = live_gain_from_slider(int(self._sl_mic_v.value()))
         liv.output_gain = live_gain_from_slider(int(self._sl_mon_v.value()))
         liv.funk_output_gain = live_gain_from_slider(int(self._sl_funk_v.value()))
@@ -1414,22 +1497,9 @@ class LiveWindow(QMainWindow):
         del _chk
         self._push_snapshot()
 
-    def _on_funk_listen_toggled_save(self, _checked: bool) -> None:
-        del _checked
-        self._refresh_funk_listen_controls()
-        self._push_snapshot()
-        if self._engine.is_running():
-            self._restart_engine()
-
     def _on_suppress_live_monitor_toggled(self, _checked: bool) -> None:
         del _checked
         self._push_snapshot()
-
-    def _refresh_funk_listen_controls(self) -> None:
-        """Checkbox „Mithören“ steuert Live/CAT; Gerätwahl und Funk‑Eingang‑Regler immer aktiv."""
-        self._c_funk_listen.setEnabled(True)
-        self._sl_flisten_v.setEnabled(True)
-        self._lb_flisten_pct.setEnabled(True)
 
     def _refresh_gate_comp_readouts(self) -> None:
         """Zeigt die aktuellen Gate-/Kompressor-Werte rechts neben den Slidern."""
@@ -1450,15 +1520,80 @@ class LiveWindow(QMainWindow):
         self._refresh_gate_comp_readouts()
         self._push_snapshot()
 
-    def _push_snapshot(self, *, persist_disk: bool = True) -> None:
+    def _push_snapshot(self, *, persist_disk: bool = True, refresh_monitors: bool = True) -> None:
         liv = self._gather_live_from_ui()
         self._live_snapshot = liv
         self._settings.live = LiveSettings.from_dict(liv.to_dict())
         if persist_disk:
             self._persist()
         self._push_live_engine_runtime_settings(liv)
-        self._refresh_idle_listen_monitor(liv)
-        self._refresh_mic_preview_monitor(liv)
+        if refresh_monitors:
+            self._refresh_idle_listen_monitor(liv)
+            self._refresh_mic_preview_monitor(liv)
+
+    def _schedule_samplerate_label_update(
+        self,
+        liv: Optional[LiveSettings] = None,
+        *,
+        refresh_monitors_after: bool = False,
+    ) -> None:
+        if refresh_monitors_after:
+            self._sr_refresh_monitors_after = True
+        ref = liv if liv is not None else self._live_snapshot
+        cached_sr = int(ref.samplerate)
+        cached_bs = int(ref.blocksize)
+        if cached_sr > 0:
+            self._lbl_sr.setText(f"{cached_sr} Hz (Windows)")
+        else:
+            self._lbl_sr.setText("… Hz")
+        if cached_bs > 0:
+            self._lbl_bs.setText(str(cached_bs))
+        else:
+            self._lbl_bs.setText("…")
+        self._sr_preview_req += 1
+        req = self._sr_preview_req
+        self._sr_preview_pending = req
+        self._sr_preview_worker.preview_requested.emit(ref.to_dict(), req)
+
+    def _on_stream_params_preview_finished(
+        self, request_id: int, sr: int, bs: int
+    ) -> None:
+        if request_id != self._sr_preview_pending:
+            return
+        self._lbl_sr.setText(f"{sr} Hz (Windows)")
+        self._lbl_bs.setText(str(bs))
+        prev_sr = int(self._live_snapshot.samplerate)
+        prev_bs = int(self._live_snapshot.blocksize)
+        self._live_snapshot.samplerate = sr
+        self._live_snapshot.blocksize = bs
+        self._settings.live.samplerate = sr
+        self._settings.live.blocksize = bs
+        if self._engine.is_running():
+            self._sr_refresh_monitors_after = False
+            return
+        refresh = (
+            self._sr_refresh_monitors_after or prev_sr != sr or prev_bs != bs
+        )
+        self._sr_refresh_monitors_after = False
+        if not refresh:
+            return
+        liv = self._gather_live_from_ui()
+        self._idle_monitor_fp_key = None
+        self._mic_preview_fp_key = None
+        QTimer.singleShot(0, lambda: self._refresh_idle_listen_monitor(liv))
+        QTimer.singleShot(0, lambda: self._refresh_mic_preview_monitor(liv))
+
+    def _shutdown_sr_preview_thread(self) -> None:
+        tt = getattr(self, "_sr_preview_thread", None)
+        if tt is None or not tt.isRunning():
+            return
+        tw = getattr(self, "_sr_preview_worker", None)
+        if tw is not None:
+            tw.blockSignals(True)
+        tt.quit()
+        if not tt.wait(2000):
+            tt.terminate()
+            tt.wait(500)
 
     def _on_device_changed_save(self, *_args: object) -> None:
         liv = self._gather_live_from_ui()
@@ -1475,17 +1610,7 @@ class LiveWindow(QMainWindow):
             )
         else:
             QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
-
-    def _on_sr_bs_changed_restart(self, *_args: object) -> None:
-        liv = self._gather_live_from_ui()
-        self._live_snapshot = liv
-        self._settings.live = liv
-        self._persist()
-        self._push_live_engine_runtime_settings(liv)
-        if self._engine.is_running():
-            self._restart_engine()
-            return
-        QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
+        self._schedule_samplerate_label_update(liv, refresh_monitors_after=True)
 
     def _restart_engine(self) -> None:
         if not self._engine.is_running():
@@ -1501,9 +1626,7 @@ class LiveWindow(QMainWindow):
             return
         if self._ptt_worker is not None:
             _invoke_ptt_worker_set_transmit(self._ptt_worker, True)
-            self._suppress_funk_listen_while_live_tx_active = bool(
-                self._chk_funk_listen.isChecked()
-            )
+            self._suppress_funk_listen_while_live_tx_active = True
             self._push_live_engine_runtime_settings(
                 LiveSettings.from_dict(self._live_snapshot.to_dict())
             )
@@ -1511,7 +1634,7 @@ class LiveWindow(QMainWindow):
             self._refresh_ptt_button_appearance()
 
     def _refresh_idle_listen_monitor(self, liv: Optional[LiveSettings] = None) -> None:
-        """Funk‑Eingang → Monitor nur wenn „Mithören“ an und „Start Live“ aus."""
+        """Funk‑Eingang → Monitor, solange „Start Live“ aus ist."""
         if getattr(self, "_suppress_idle_listen_monitor", False):
             return
 
@@ -1536,11 +1659,6 @@ class LiveWindow(QMainWindow):
             self._idle_monitor_fp_key = None
             return
 
-        if not bool(ref.funk_listen_enabled):
-            self._engine.stop_idle_listen_monitor()
-            self._idle_monitor_fp_key = None
-            return
-
         listen_sid = str(ref.funk_listen_input_device_id or "").strip()
         mon_sid = str(ref.output_device_id or "").strip()
         if not listen_sid or not mon_sid:
@@ -1551,18 +1669,28 @@ class LiveWindow(QMainWindow):
         fp_key: tuple[object, ...] = (
             listen_sid,
             mon_sid,
-            int(ref.samplerate),
-            int(ref.blocksize),
         )
         if fp_key == self._idle_monitor_fp_key and self._engine.is_idle_listen_monitor_running():
             self._engine.push_idle_listen_settings(ref)
+            self._c_funk_listen.setToolTip(
+                "Funkeingabe wird immer auf den Monitor‑Ausgang gemischt (Mithören)."
+            )
             return
 
         self._idle_monitor_fp_key = fp_key
-        ok, _msg = self._engine.start_idle_listen_monitor(ref)
+        ok, msg = self._engine.start_idle_listen_monitor(ref)
         if not ok:
             self._idle_monitor_fp_key = None
             self._engine.stop_idle_listen_monitor()
+            tip = (
+                "Funkeingabe wird immer auf den Monitor‑Ausgang gemischt (Mithören).\n\n"
+                f"Mithören konnte nicht starten: {msg}"
+            )
+            self._c_funk_listen.setToolTip(tip)
+            return
+        self._c_funk_listen.setToolTip(
+            "Funkeingabe wird immer auf den Monitor‑Ausgang gemischt (Mithören)."
+        )
 
     def _refresh_mic_preview_monitor(self, liv: Optional[LiveSettings] = None) -> None:
         """PC‑Mikrofon‑Pegel, solange das Fenster offen ist und kein Live‑Stream läuft."""
@@ -1649,6 +1777,7 @@ class LiveWindow(QMainWindow):
         self._live_cat_settle.stop()
 
         if getattr(self, "_force_close", False):
+            self._shutdown_sr_preview_thread()
             self._shutdown_ptt_thread()
             super().closeEvent(event)
             return
@@ -1669,6 +1798,8 @@ class LiveWindow(QMainWindow):
         # Live-Fenster endgültig — DATA/Sprache wie vor Live wiederherstellen,
         # auch wenn „Mithören“ beim Stop die Umschaltung unterdrückt hat.
         self._release_live_voice_mode_plain()
+        self._sync_live_eq_profile_for_session(entering=False)
+        self._shutdown_sr_preview_thread()
         self._shutdown_ptt_thread()
         super().closeEvent(event)
 
@@ -1695,4 +1826,6 @@ class LiveWindow(QMainWindow):
         self._release_live_voice_mode_plain()
         if self._audio_radio_session is not None:
             self._audio_radio_session.detach_for_force_close(self)
+        self._sync_live_eq_profile_for_session(entering=False)
+        self._shutdown_sr_preview_thread()
         self._shutdown_ptt_thread()

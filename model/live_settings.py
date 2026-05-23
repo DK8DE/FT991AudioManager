@@ -138,7 +138,7 @@ class LiveSettings:
     funk_output_device_id: str = ""
     #: Zweites Aufnahmegerät (z. B. Funk‑Rückweg/Lin): Rohsignal auf Monitor mischen.
     funk_listen_input_device_id: str = ""
-    funk_listen_enabled: bool = False
+    funk_listen_enabled: bool = True
     #: Verstärkung 0–2,0 (linear); UI-Slider 0–200 mit logarithmischer Kurve
     #: (:mod:`model.live_volume_curve`, 100 % Regler = 1,0).
     input_gain: float = 1.0
@@ -171,10 +171,11 @@ class LiveSettings:
         self.output_gain = _clamp(self.output_gain, 0.0, 2.0)
         self.funk_output_gain = _clamp(self.funk_output_gain, 0.0, 2.0)
         self.funk_listen_gain = _clamp(self.funk_listen_gain, 0.0, 2.0)
+        self.funk_listen_enabled = True
 
     def _normalize_blocksize_and_sr(self) -> None:
         sr = int(self.samplerate)
-        if sr not in (44100, 48000):
+        if sr <= 0:
             sr = DEFAULT_SAMPLERATE
         self.samplerate = sr
 
@@ -261,7 +262,7 @@ class LiveSettings:
             output_device_id=str(raw.get("output_device_id", "") or ""),
             funk_output_device_id=str(raw.get("funk_output_device_id", "") or ""),
             funk_listen_input_device_id=str(fl_in or ""),
-            funk_listen_enabled=bool(raw.get("funk_listen_enabled", False)),
+            funk_listen_enabled=True,
             input_gain=float(raw.get("input_gain", 1.0)),
             output_gain=float(raw.get("output_gain", 1.0)),
             funk_output_gain=float(raw.get("funk_output_gain", 1.0)),

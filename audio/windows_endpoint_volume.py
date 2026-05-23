@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import sys
+import time
 import warnings
 from contextlib import contextmanager
-from typing import Any, Callable, Iterator, Optional, TypeVar
+from typing import Any, Callable, Iterator, Optional, Sequence, TypeVar
 
 _T = TypeVar("_T")
 
@@ -23,6 +24,7 @@ if sys.platform == "win32":
         from pycaw.constants import AudioDeviceState, DEVICE_STATE
         from pycaw.pycaw import (
             AudioUtilities,
+            IAudioClient,
             IAudioEndpointVolume,
             IAudioMeterInformation,
         )
@@ -38,6 +40,10 @@ if sys.platform == "win32":
         _IAudioMeterInformation = None
 else:
     _IAudioMeterInformation = None
+
+_DEVICES_CACHE: tuple[list[Any], float] | None = None
+_DEVICES_CACHE_TTL_S = 10.0
+_MIX_SR_CACHE: dict[tuple[str, bool], int] = {}
 
 
 def windows_endpoint_volume_available() -> bool:
@@ -124,6 +130,48 @@ def _enumerate_active_pycaw_devices() -> list[Any]:
         )
 
     return _pycaw_call(_fetch)
+
+
+def _cached_active_pycaw_devices() -> list[Any]:
+    global _DEVICES_CACHE
+    now = time.monotonic()
+    if _DEVICES_CACHE is not None:
+        devs, ts = _DEVICES_CACHE
+        if now - ts < _DEVICES_CACHE_TTL_S:
+            return devs
+    devs = _enumerate_active_pycaw_devices()
+    _DEVICES_CACHE = (devs, now)
+    return devs
+
+
+def invalidate_windows_audio_device_cache() -> None:
+    """Geräte- und Mixformat-Cache leeren (z. B. nach „Geräte neu laden“)."""
+    global _DEVICES_CACHE
+    _DEVICES_CACHE = None
+    _MIX_SR_CACHE.clear()
+
+
+def _find_device_in_list(
+    display_name: str,
+    *,
+    capture: bool,
+    devices: Sequence[Any],
+) -> Any | None:
+    needle = str(display_name or "").strip().lower()
+    if not needle:
+        return None
+    for dev in devices:
+        if not _device_is_active(dev):
+            continue
+        if _device_is_capture(dev) != capture:
+            continue
+        name = str(getattr(dev, "FriendlyName", "") or "").lower()
+        if not name:
+            continue
+        if name == needle or name in needle or needle in name:
+            inner = getattr(dev, "_dev", None)
+            return inner if inner is not None else dev
+    return None
 
 
 def _find_pycaw_device(qt_device_id: str, *, capture: bool) -> Any | None:
@@ -294,3 +342,95 @@ def _match_device_by_description(qt_device_id: str, *, capture: bool):
             inner = getattr(dev, "_dev", None)
             return inner if inner is not None else dev
     return None
+
+
+def _find_pycaw_device_by_display_name(display_name: str, *, capture: bool) -> Any | None:
+    """Endpunkt anhand des Windows-/Qt-Anzeigenamens (Live-Geräteliste)."""
+    if not _PYCAW_OK:
+        return None
+    return _find_device_in_list(
+        display_name,
+        capture=capture,
+        devices=_cached_active_pycaw_devices(),
+    )
+
+
+def _activate_audio_client(dev: Any) -> Any | None:
+    """``IMMDevice`` → ``IAudioClient``."""
+    if not _PYCAW_OK or dev is None:
+        return None
+    try:
+        inner = getattr(dev, "_dev", dev)
+        iface = inner.Activate(IAudioClient._iid_, CLSCTX_ALL, None)
+        return iface.QueryInterface(IAudioClient)
+    except Exception:
+        return None
+
+
+def _mix_samplerate_from_device(dev: Any) -> Optional[int]:
+    client = _activate_audio_client(dev)
+    if client is None:
+        return None
+    try:
+        wf = client.GetMixFormat()
+        rate = int(wf.contents.nSamplesPerSec)
+        if rate > 0:
+            return rate
+    except Exception:
+        pass
+    return None
+
+
+def windows_mix_samplerate_available() -> bool:
+    return _PYCAW_OK
+
+
+def windows_mix_samplerate_for_display_name(
+    display_name: str,
+    *,
+    capture: bool,
+) -> Optional[int]:
+    """Shared-Mode-Samplerate laut Windows-WASAPI für den Endpunkt."""
+    if not _PYCAW_OK:
+        return None
+    key = (str(display_name or "").strip().lower(), bool(capture))
+    if key[0] and key in _MIX_SR_CACHE:
+        return _MIX_SR_CACHE[key]
+    dev = _find_pycaw_device_by_display_name(display_name, capture=capture)
+    if dev is None:
+        return None
+    rate = _mix_samplerate_from_device(dev)
+    if rate is not None and key[0]:
+        _MIX_SR_CACHE[key] = rate
+    return rate
+
+
+def windows_mix_samplerates_for_labels(
+    labels: Sequence[tuple[str, bool]],
+) -> list[int]:
+    """Mehrere Endpunkte mit **einer** Geräte-Enumeration (schneller als Einzelaufrufe)."""
+    if not _PYCAW_OK:
+        return []
+    devices = _cached_active_pycaw_devices()
+    hints: list[int] = []
+    seen: set[int] = set()
+    for display_name, capture in labels:
+        key = (str(display_name or "").strip().lower(), bool(capture))
+        if not key[0]:
+            continue
+        if key in _MIX_SR_CACHE:
+            rate = _MIX_SR_CACHE[key]
+        else:
+            dev = _find_device_in_list(
+                display_name,
+                capture=capture,
+                devices=devices,
+            )
+            rate = _mix_samplerate_from_device(dev) if dev is not None else None
+            if rate is not None:
+                _MIX_SR_CACHE[key] = rate
+        if rate is None or rate <= 0 or rate in seen:
+            continue
+        seen.add(rate)
+        hints.append(rate)
+    return hints

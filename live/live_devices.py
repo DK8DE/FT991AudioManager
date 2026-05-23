@@ -517,9 +517,51 @@ def physical_same_input(pa_a: Optional[int], pa_b: Optional[int]) -> bool:
     return ia is None and ib is None
 
 
+def device_label_for_id(device_id: str, *, input_device: bool) -> str:
+    """Anzeigename aus der Live-Geräteliste für einen PortAudio-Index."""
+    sid = str(device_id or "").strip()
+    if not sid:
+        return ""
+    rows = list_input_devices() if input_device else list_output_devices()
+    for did, lbl, _tip in rows:
+        if did == sid:
+            return lbl
+    return ""
+
+
+def windows_samplerate_hints_for_live(live: object) -> List[float]:
+    """Windows-WASAPI-Sampleraten der gewählten Live-Geräte (Reihenfolge = Priorität)."""
+    import sys
+
+    if sys.platform != "win32":
+        return []
+    try:
+        from audio.windows_endpoint_volume import (
+            windows_mix_samplerates_for_labels,
+        )
+    except ImportError:
+        return []
+
+    label_specs: list[tuple[str, bool]] = []
+    specs = (
+        (str(getattr(live, "input_device_id", "") or ""), True),
+        (str(getattr(live, "output_device_id", "") or ""), False),
+        (str(getattr(live, "funk_output_device_id", "") or ""), False),
+        (str(getattr(live, "funk_listen_input_device_id", "") or ""), True),
+    )
+    for dev_id, capture in specs:
+        lbl = device_label_for_id(dev_id, input_device=capture)
+        if lbl:
+            label_specs.append((lbl, capture))
+    if not label_specs:
+        return []
+    return [float(sr) for sr in windows_mix_samplerates_for_labels(label_specs)]
+
+
 __all__ = [
     "coerce_input_pa_index",
     "coerce_output_pa_index",
+    "device_label_for_id",
     "list_input_devices",
     "list_output_devices",
     "parse_device_id",
@@ -528,4 +570,5 @@ __all__ = [
     "remap_live_device_id",
     "resolve_duplex_device_indices",
     "sounddevice_available",
+    "windows_samplerate_hints_for_live",
 ]

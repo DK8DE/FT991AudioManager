@@ -77,9 +77,13 @@ class MemoryEditorWindow(QMainWindow):
         parent: Optional[QWidget] = None,
         on_closed: Optional[Callable[[], None]] = None,
     ) -> None:
-        super().__init__(parent)
+        del parent
+        super().__init__(None)
         self.setWindowTitle("FT-991/A Speicherkanal-Editor")
         self.setWindowIcon(app_icon())
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        # Kein Parent — frei beweglich, MainWindow kann darüber liegen (s. LogWindow).
+        self.setWindowFlags(Qt.WindowType.Window)
         self.resize(1280, 720)
 
         self._cat = serial_cat

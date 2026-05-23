@@ -162,7 +162,8 @@ class AudioPlayerWindow(QMainWindow):
         audio_hub: Optional[AudioSettingsHub] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
-        super().__init__(parent)
+        del parent
+        super().__init__(None)
         self._settings = settings
         self._audio_hub = audio_hub
         self._cat = serial_cat
@@ -174,6 +175,8 @@ class AudioPlayerWindow(QMainWindow):
         self.setWindowTitle("FT-991/A Audio-Player")
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        # Kein Parent — frei beweglich, MainWindow kann darüber liegen (s. LogWindow).
+        self.setWindowFlags(Qt.WindowType.Window)
         self.resize(520, 560)
 
         self._controller = PlayerController(self._cat, self)

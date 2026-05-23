@@ -473,6 +473,8 @@ class ProfileWidget(QWidget):
         #: ``True``, wenn ein Schreibvorgang zuletzt am TX-Lock gescheitert
         #: ist und auf den TX→RX-Übergang wartet.
         self._tx_block_pending: bool = False
+        #: EQ-Profil vor dem Öffnen des Live-Fensters (CAT-Restore beim Schließen).
+        self._live_eq_session_saved_profile: Optional[str] = None
         #: Zuletzt vom Radio gemeldete Mode-Gruppe. Verhindert, dass jedes
         #: Polling-Sample ein Read auslöst — wir reagieren nur auf echte
         #: Wechsel.
@@ -719,7 +721,10 @@ class ProfileWidget(QWidget):
             # Beim Connect das aktive EQ-Profil ins Gerät schreiben (nicht
             # umgekehrt vom Radio lesen — sonst würde das zuletzt gewählte
             # Profil sofort wieder überschrieben).
-            self.request_apply_active_profile()
+            if self._live_eq_session_saved_profile is not None:
+                self._push_profile_to_radio(DEFAULT_PROFILE_NAME)
+            else:
+                self.request_apply_active_profile()
         else:
             self._sync_label.setText("Live-Sync: aus")
             self._sync_label.setStyleSheet("color: gray;")
@@ -741,6 +746,40 @@ class ProfileWidget(QWidget):
 
     def current_profile_name(self) -> Optional[str]:
         return self._current_profile_name
+
+    def enter_live_eq_session(self) -> bool:
+        """Live-Fenster geöffnet: „Default“ ans Radio, UI-Auswahl unverändert."""
+        if self._live_eq_session_saved_profile is not None:
+            return True
+        self._live_eq_session_saved_profile = self._current_profile_name
+        self._auto_write_timer.stop()
+        self.set_cat_blocked(True)
+        return self._push_profile_to_radio(DEFAULT_PROFILE_NAME)
+
+    def exit_live_eq_session(self) -> None:
+        """Live-Fenster geschlossen: vorheriges EQ-Profil wieder ans Radio."""
+        saved = self._live_eq_session_saved_profile
+        if saved is None:
+            return
+        self._live_eq_session_saved_profile = None
+        self.set_cat_blocked(False)
+        if saved:
+            self._push_profile_to_radio(saved)
+
+    def _push_profile_to_radio(self, name: str) -> bool:
+        """Schreibt ein gespeichertes Profil ins Gerät, ohne die UI-Auswahl."""
+        n = str(name or "").strip()
+        if not n:
+            return False
+        self._store.ensure_defaults()
+        raw = self._store.find(n)
+        if raw is None:
+            return False
+        if not self._cat.is_connected():
+            return False
+        profile = AudioProfile.from_dict(raw.to_dict())
+        self._schedule_action("write_full", profile)
+        return True
 
     def select_profile_by_name(self, name: str) -> bool:
         """Programmgesteuert ein EQ-Profil wählen und — bei CAT — ins Gerät schreiben.

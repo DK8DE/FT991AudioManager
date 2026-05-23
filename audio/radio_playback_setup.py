@@ -123,6 +123,24 @@ class RadioPlaybackSetup:
         """DATA-Zielmodus aus aktuellem Sprach-/DATA-Modus ableiten (ohne CAT)."""
         self._data_mode = data_mode_for_rx_mode(mode)
 
+    def reconcile_in_data_mode_with_radio(self) -> bool:
+        """Abgleich: ``_in_data_mode`` nur True, wenn das Gerät im Ziel-DATA-Mode ist.
+
+        Nach externem Wechsel (Speicherkanal, Drehknopf) kann das Radio in FM/USB
+        stehen, während die Session intern noch „in DATA“ gemeldet ist.
+        """
+        if not self._in_data_mode:
+            return False
+        if self._snapshot is None or not self._cat.is_connected():
+            return self._in_data_mode
+        try:
+            current = FT991CAT(self._cat).read_rx_mode()
+        except CatError:
+            return self._in_data_mode
+        if current != self._data_mode:
+            self._in_data_mode = False
+        return self._in_data_mode
+
     def set_data_mode(self, mode: RxMode) -> tuple[bool, str]:
         """Wechselt den gewünschten Data-Mode.
 
@@ -322,8 +340,18 @@ class RadioPlaybackSetup:
         if self._snapshot is None:
             return False, "Audio-Setup nicht aktiv — bitte erst Apply."
         if self._in_data_mode:
-            self._needs_plain_verify = False
-            return True, ""
+            if self._cat.is_connected():
+                try:
+                    current = FT991CAT(self._cat).read_rx_mode()
+                    if current == self._data_mode:
+                        self._needs_plain_verify = False
+                        return True, ""
+                    self._in_data_mode = False
+                except CatError:
+                    self._in_data_mode = False
+            else:
+                self._needs_plain_verify = False
+                return True, ""
         if not self._cat.is_connected():
             return False, "CAT nicht verbunden — DATA-Mode nicht setzbar."
         # ``_data_mode`` kommt vom Hauptfenster (sync_data_mode_from_main) —

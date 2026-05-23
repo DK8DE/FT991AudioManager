@@ -318,5 +318,45 @@ class NotifyTxStateTest(unittest.TestCase):
         self.assertTrue(self.widget._tx_block_pending)
 
 
+class LiveEqSessionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        _ensure_qapp()
+        self.cat = MagicMock()
+        self.cat.is_connected.return_value = True
+        tmp_path = Path(tempfile.mkdtemp(prefix="ft991_test_")) / "presets.json"
+        self.store = PresetStore.load(tmp_path)
+        self.store.upsert(AudioProfile(name="SSB Voice"))
+        self.store.save()
+        self.widget = ProfileWidget(self.cat, self.store, initial_last_profile="SSB Voice")
+        self.widget._dispatch_action = MagicMock()
+
+    def test_enter_writes_default_without_changing_ui(self) -> None:
+        self.assertEqual(self.widget.current_profile_name(), "SSB Voice")
+        self.assertTrue(self.widget.enter_live_eq_session())
+        self.assertEqual(self.widget.current_profile_name(), "SSB Voice")
+        self.assertEqual(self.widget._live_eq_session_saved_profile, "SSB Voice")
+        self.widget._dispatch_action.assert_called_once()
+        kind, profile = self.widget._dispatch_action.call_args.args
+        self.assertEqual(kind, "write_full")
+        self.assertEqual(profile.name, DEFAULT_PROFILE_NAME)
+
+    def test_exit_restores_saved_profile(self) -> None:
+        self.widget.enter_live_eq_session()
+        self.widget._dispatch_action.reset_mock()
+        self.widget.exit_live_eq_session()
+        self.assertIsNone(self.widget._live_eq_session_saved_profile)
+        self.widget._dispatch_action.assert_called_once()
+        _kind, profile = self.widget._dispatch_action.call_args.args
+        self.assertEqual(profile.name, "SSB Voice")
+
+    def test_connect_during_live_writes_default(self) -> None:
+        self.widget.enter_live_eq_session()
+        self.widget._dispatch_action.reset_mock()
+        self.widget.set_cat_available(True)
+        self.widget._dispatch_action.assert_called_once()
+        _kind, profile = self.widget._dispatch_action.call_args.args
+        self.assertEqual(profile.name, DEFAULT_PROFILE_NAME)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

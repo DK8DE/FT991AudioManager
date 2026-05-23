@@ -137,6 +137,56 @@ class RadioPlaybackSetupTest(unittest.TestCase):
             self.assertTrue(setup.in_data_mode)
             self.assertEqual(ft.set_rx_mode.call_args.args[0], RxMode.DATA_FM)
 
+    def test_reconcile_clears_stale_in_data_when_radio_left_data(self) -> None:
+        """Speicherkanal FM: intern noch DATA, Gerät schon FM → PTT muss engage_data."""
+        cat = MagicMock()
+        cat.is_connected.return_value = True
+        setup = RadioPlaybackSetup(cat, RxMode.DATA_FM)
+        setup._snapshot = RadioAudioSnapshot(
+            rx_mode=RxMode.DATA_FM,
+            am_port_raw="0",
+            data_in_select_raw="0",
+            data_port_raw="0",
+            fm_pkt_port_raw="0",
+            ssb_port_raw="0",
+        )
+        setup._in_data_mode = True
+
+        with patch("audio.radio_playback_setup.FT991CAT") as ft_cls:
+            ft = ft_cls.return_value
+            ft.read_rx_mode.return_value = RxMode.FM
+            self.assertFalse(setup.reconcile_in_data_mode_with_radio())
+            self.assertFalse(setup.in_data_mode)
+
+            setup._in_data_mode = True
+            ft.read_rx_mode.return_value = RxMode.DATA_FM
+            self.assertTrue(setup.reconcile_in_data_mode_with_radio())
+            self.assertTrue(setup.in_data_mode)
+
+    def test_engage_data_mode_when_stale_in_data_flag(self) -> None:
+        """``_in_data_mode`` True, Gerät in FM — muss trotzdem DATA schalten."""
+        cat = MagicMock()
+        cat.is_connected.return_value = True
+        setup = RadioPlaybackSetup(cat, RxMode.DATA_FM)
+        setup._snapshot = RadioAudioSnapshot(
+            rx_mode=RxMode.FM,
+            am_port_raw="0",
+            data_in_select_raw="0",
+            data_port_raw="0",
+            fm_pkt_port_raw="0",
+            ssb_port_raw="0",
+        )
+        setup._in_data_mode = True
+
+        with patch("audio.radio_playback_setup.FT991CAT") as ft_cls:
+            ft = ft_cls.return_value
+            ft.read_rx_mode.return_value = RxMode.FM
+            ft.set_rx_mode.return_value = True
+            ok, _ = setup.engage_data_mode()
+            self.assertTrue(ok)
+            ft.set_rx_mode.assert_called_with(RxMode.DATA_FM)
+            self.assertTrue(setup.in_data_mode)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

@@ -2759,7 +2759,7 @@ class MainWindow(QMainWindow):
             audio_radio_session=self._audio_radio_session,
             operating_mode_provider=self._main_operating_mode,
             other_audio_blocking=self._live_transmit_blocked_by_other_windows,
-            parent=self,
+            profile_widget=self.profile_widget,
         )
         if not self._live_tx_meter_bridge:
             h = getattr(w, "handle_tx_state_changed", None)
@@ -2819,7 +2819,6 @@ class MainWindow(QMainWindow):
             self._sound_settings_window = SoundSettingsWindow(
                 self._settings,
                 self._audio_hub,
-                parent=self,
             )
             self._sound_settings_window.closed.connect(
                 self._on_sound_settings_window_closed
@@ -2843,7 +2842,6 @@ class MainWindow(QMainWindow):
                 audio_radio_session=self._audio_radio_session,
                 operating_mode_provider=self._main_operating_mode,
                 audio_hub=self._audio_hub,
-                parent=self,
             )
             self._audio_player_window.closed.connect(
                 self._on_audio_player_window_closed
@@ -2873,7 +2871,6 @@ class MainWindow(QMainWindow):
                 audio_radio_session=self._audio_radio_session,
                 operating_mode_provider=self._main_operating_mode,
                 audio_hub=self._audio_hub,
-                parent=self,
             )
             self._audio_recorder_window.closed.connect(
                 self._on_audio_recorder_window_closed
@@ -2921,7 +2918,6 @@ class MainWindow(QMainWindow):
             persist_settings=self._persist_settings,
             apply_local_memory_overrides=self._apply_local_memory_overrides,
             sync_main_memory_dropdown=self._sync_memory_dropdown_from_editor_bank,
-            parent=self,
             on_closed=self._on_memory_editor_closed,
         )
 

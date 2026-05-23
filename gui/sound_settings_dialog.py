@@ -54,13 +54,16 @@ class SoundSettingsWindow(QMainWindow):
         audio_hub: AudioSettingsHub,
         parent: Optional[QWidget] = None,
     ) -> None:
-        super().__init__(parent)
+        del parent
+        super().__init__(None)
         self._settings = settings
         self._hub = audio_hub
 
         self.setWindowTitle("Soundeinstellungen")
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        # Kein Parent — frei beweglich, MainWindow kann darüber liegen (s. LogWindow).
+        self.setWindowFlags(Qt.WindowType.Window)
         self.resize(520, 420)
 
         self._hub.device_changed.connect(self._on_hub_device_changed)
@@ -221,20 +224,13 @@ class SoundSettingsWindow(QMainWindow):
         r_listen = QHBoxLayout()
         r_listen.addWidget(form_label("Funk‑Eingang:"))
         self._combo_live_funk_listen = QComboBox()
+        self._combo_live_funk_listen.setToolTip(
+            "Funkeingabe wird immer auf den Live‑Monitor gemischt (Mithören)."
+        )
         self._combo_live_funk_listen.currentIndexChanged.connect(
             self._on_live_funk_listen_dev
         )
         r_listen.addWidget(self._combo_live_funk_listen, 1)
-        self._chk_live_funk_listen = QCheckBox("aktiv")
-        self._chk_live_funk_listen.setToolTip(
-            "Entspricht „Mithören“ im Live‑Fenster:\n\n"
-            "**An**: gewählter Funk‑Eingang auf den Live‑Monitor (auch ohne „Start Live“, "
-            "wenn dieses Fenster offen bleibt) und im Live‑Mix.\n\n"
-            "**Aus**: kein Funk‑Eingang auf den Monitor.\n\n"
-            "Die Lautheit steuert der Regler „Funk‑Eingang“ im Live‑Fenster."
-        )
-        self._chk_live_funk_listen.toggled.connect(self._on_live_funk_listen_enabled)
-        r_listen.addWidget(self._chk_live_funk_listen)
         liv_lay.addLayout(r_listen)
 
         root.addWidget(live)
@@ -348,7 +344,6 @@ class SoundSettingsWindow(QMainWindow):
         self._combo_live_out.blockSignals(True)
         self._combo_live_funk.blockSignals(True)
         self._combo_live_funk_listen.blockSignals(True)
-        self._chk_live_funk_listen.blockSignals(True)
         try:
             self._combo_live_in.clear()
             self._combo_live_out.clear()
@@ -417,16 +412,12 @@ class SoundSettingsWindow(QMainWindow):
                 self._combo_live_funk_listen,
                 self._settings.live.funk_listen_input_device_id,
             )
-            self._chk_live_funk_listen.setChecked(
-                bool(self._settings.live.funk_listen_enabled),
-            )
-            self._sync_live_funk_listen_combo_enabled()
+            self._settings.live.funk_listen_enabled = True
         finally:
             self._combo_live_in.blockSignals(False)
             self._combo_live_out.blockSignals(False)
             self._combo_live_funk.blockSignals(False)
             self._combo_live_funk_listen.blockSignals(False)
-            self._chk_live_funk_listen.blockSignals(False)
 
     def _on_live_in_dev(self, *_idx: int) -> None:
         rid = self._combo_live_in.currentData()
@@ -445,13 +436,7 @@ class SoundSettingsWindow(QMainWindow):
         self._settings.live.funk_listen_input_device_id = (
             str(rid) if isinstance(rid, str) else ""
         )
-
-    def _on_live_funk_listen_enabled(self, checked: bool) -> None:
-        self._settings.live.funk_listen_enabled = bool(checked)
-        self._sync_live_funk_listen_combo_enabled()
-
-    def _sync_live_funk_listen_combo_enabled(self) -> None:
-        self._combo_live_funk_listen.setEnabled(True)
+        self._settings.live.funk_listen_enabled = True
 
     def _save_geometry(self) -> None:
         geo = self.saveGeometry()
