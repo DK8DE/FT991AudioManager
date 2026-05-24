@@ -791,14 +791,35 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
             return
         self._recorder.stop()
 
+    def _input_device_label(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_label(ROLE_INPUT)
+        return str(getattr(self._settings.global_audio, "input_device_label", "") or "")
+
+    def _send_device_label(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_label(ROLE_SEND)
+        return str(
+            getattr(self._settings.global_audio, "send_output_device_label", "") or ""
+        )
+
+    def _pc_device_label(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_label(ROLE_PC)
+        return str(
+            getattr(self._settings.global_audio, "pc_output_device_label", "") or ""
+        )
+
     def _start_recording_now(self) -> None:
         device_id = self._input_device_id()
+        device_label = self._input_device_label()
         bitrate = self.combo_bitrate.currentData()
         if not isinstance(bitrate, int):
             bitrate = DEFAULT_BITRATE_KBPS
         target = self._recorder.start(
             folder=self._folder,
             device_id=device_id,
+            device_label=device_label,
             bitrate_kbps=int(bitrate),
         )
         if target is None:
@@ -1094,8 +1115,23 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
             percent = self._audio_hub.qt_volume_percent(ROLE_INPUT)
         self._recorder.set_input_volume_percent(int(percent))
 
+    def _pc_device_label(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_label(ROLE_PC)
+        return str(
+            getattr(self._settings.global_audio, "pc_output_device_label", "") or ""
+        )
+
+    def _send_device_label(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_label(ROLE_SEND)
+        return str(
+            getattr(self._settings.global_audio, "send_output_device_label", "") or ""
+        )
+
     def _apply_send_device(self, dev_id: str) -> None:
-        self._player.set_output_device_id(str(dev_id or ""))
+        label = self._send_device_label() if self._audio_hub else ""
+        self._player.set_output_device_id(str(dev_id or ""), label=label)
 
     def _apply_send_volume(self, percent: int) -> None:
         if self._audio_hub is not None:

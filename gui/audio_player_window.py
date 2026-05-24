@@ -590,6 +590,20 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
             return self._audio_hub.device_id(ROLE_PC)
         return str(self._settings.audio_player.pc_output_device_id or "")
 
+    def _send_device_label(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_label(ROLE_SEND)
+        return str(
+            getattr(self._settings.global_audio, "send_output_device_label", "") or ""
+        )
+
+    def _pc_device_label(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_label(ROLE_PC)
+        return str(
+            getattr(self._settings.global_audio, "pc_output_device_label", "") or ""
+        )
+
     def _refresh_volume_device_tooltips(self) -> None:
         self._vol_send.set_assigned_device(
             hub_device_label(self._send_device_id(), input_device=False)
@@ -878,7 +892,8 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
             self._playlist_end_warnton_reset()
 
     def _apply_send_device(self, dev_id: str) -> None:
-        self._controller.set_output_device_id(dev_id)
+        label = self._send_device_label() if self._audio_hub else ""
+        self._controller.set_output_device_id(dev_id, label=label)
 
     def _apply_send_volume(self, percent: int) -> None:
         if self._audio_hub is not None:
@@ -901,7 +916,8 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
 
     def _apply_pc_output_device(self, dev_id: str) -> None:
         self._pc_pending_device_id = dev_id
-        self._controller.set_tx_monitor_pc_device_id(dev_id)
+        label = self._pc_device_label() if self._audio_hub else ""
+        self._controller.set_tx_monitor_pc_device_id(dev_id, label=label)
         self._apply_pc_output_device_qt(dev_id)
 
     def _apply_pc_volume(self, percent: int) -> None:

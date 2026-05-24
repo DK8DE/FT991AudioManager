@@ -20,6 +20,10 @@ from .windows_endpoint_volume import (
     WindowsEndpointVolume,
     windows_endpoint_volume_available,
 )
+from .qt_device_resolve import (
+    qt_device_label_for_id,
+    remap_global_audio_devices,
+)
 
 
 class AudioSettingsHub(QObject):
@@ -34,6 +38,12 @@ class AudioSettingsHub(QObject):
     def __init__(self, settings: AppSettings, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._settings = settings
+        if remap_global_audio_devices(self._settings.global_audio):
+            sync_global_to_legacy(
+                self._settings.global_audio,
+                self._settings.audio_player,
+                self._settings.audio_recorder,
+            )
         self._win_input = WindowsEndpointVolume()
         self._win_send = WindowsEndpointVolume()
         self._win_pc = WindowsEndpointVolume()
@@ -66,12 +76,25 @@ class AudioSettingsHub(QObject):
     def device_id(self, role: str) -> str:
         return self.global_audio.device_id_for(role)
 
-    def set_device_id(self, role: str, device_id: str) -> None:
+    def device_label(self, role: str) -> str:
+        return self.global_audio.device_label_for(role)
+
+    def set_device_id(
+        self, role: str, device_id: str, *, label: str = ""
+    ) -> None:
         dev = str(device_id or "")
         g = self.global_audio
-        if g.device_id_for(role) == dev:
+        if g.device_id_for(role) == dev and (
+            not label or g.device_label_for(role) == label
+        ):
             return
         g.set_device_id_for(role, dev)
+        lbl = str(label or "").strip()
+        if not lbl and dev:
+            lbl = qt_device_label_for_id(
+                dev, input_device=(role == ROLE_INPUT)
+            )
+        g.set_device_label_for(role, lbl)
         sync_global_to_legacy(g, self._settings.audio_player, self._settings.audio_recorder)
         self._apply_windows_for_role(role)
         self.device_changed.emit(role, dev)

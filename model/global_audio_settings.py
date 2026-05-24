@@ -22,6 +22,10 @@ class GlobalAudioSettings:
     input_device_id: str = ""
     send_output_device_id: str = ""
     pc_output_device_id: str = ""
+    #: Anzeigenamen zum Remapping, wenn Windows nach USB-Wechsel neue GUIDs vergibt.
+    input_device_label: str = ""
+    send_output_device_label: str = ""
+    pc_output_device_label: str = ""
     input_volume_percent: int = DEFAULT_VOLUME_PERCENT
     send_volume_percent: int = DEFAULT_VOLUME_PERCENT
     pc_volume_percent: int = DEFAULT_VOLUME_PERCENT
@@ -40,6 +44,15 @@ class GlobalAudioSettings:
             return self.pc_output_device_id
         raise ValueError(f"Unbekannte Audio-Rolle: {role!r}")
 
+    def device_label_for(self, role: str) -> str:
+        if role == ROLE_INPUT:
+            return self.input_device_label
+        if role == ROLE_SEND:
+            return self.send_output_device_label
+        if role == ROLE_PC:
+            return self.pc_output_device_label
+        raise ValueError(f"Unbekannte Audio-Rolle: {role!r}")
+
     def set_device_id_for(self, role: str, device_id: str) -> None:
         dev = str(device_id or "")
         if role == ROLE_INPUT:
@@ -48,6 +61,17 @@ class GlobalAudioSettings:
             self.send_output_device_id = dev
         elif role == ROLE_PC:
             self.pc_output_device_id = dev
+        else:
+            raise ValueError(f"Unbekannte Audio-Rolle: {role!r}")
+
+    def set_device_label_for(self, role: str, label: str) -> None:
+        text = str(label or "")
+        if role == ROLE_INPUT:
+            self.input_device_label = text
+        elif role == ROLE_SEND:
+            self.send_output_device_label = text
+        elif role == ROLE_PC:
+            self.pc_output_device_label = text
         else:
             raise ValueError(f"Unbekannte Audio-Rolle: {role!r}")
 
@@ -96,6 +120,9 @@ class GlobalAudioSettings:
             "input_device_id": self.input_device_id,
             "send_output_device_id": self.send_output_device_id,
             "pc_output_device_id": self.pc_output_device_id,
+            "input_device_label": self.input_device_label,
+            "send_output_device_label": self.send_output_device_label,
+            "pc_output_device_label": self.pc_output_device_label,
             "input_volume_percent": int(self.input_volume_percent),
             "send_volume_percent": int(self.send_volume_percent),
             "pc_volume_percent": int(self.pc_volume_percent),
@@ -113,6 +140,9 @@ class GlobalAudioSettings:
             input_device_id=str(r.get("input_device_id", "") or ""),
             send_output_device_id=str(r.get("send_output_device_id", "") or ""),
             pc_output_device_id=str(r.get("pc_output_device_id", "") or ""),
+            input_device_label=str(r.get("input_device_label", "") or ""),
+            send_output_device_label=str(r.get("send_output_device_label", "") or ""),
+            pc_output_device_label=str(r.get("pc_output_device_label", "") or ""),
             input_volume_percent=_clamp_volume(r.get("input_volume_percent")),
             send_volume_percent=_clamp_volume(r.get("send_volume_percent")),
             pc_volume_percent=_clamp_volume(r.get("pc_volume_percent")),

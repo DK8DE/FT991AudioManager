@@ -28,7 +28,7 @@ from live.live_devices import (
     list_output_devices,
     remap_live_device_id,
 )
-from model.global_audio_settings import ROLE_INPUT, ROLE_PC, ROLE_SEND
+from model.global_audio_settings import ROLE_INPUT, ROLE_PC, ROLE_SEND, sync_global_to_legacy
 
 from i18n import tr
 from i18n.retranslatable import RetranslatableMixin
@@ -292,6 +292,14 @@ class SoundSettingsWindow(RetranslatableMixin, QMainWindow):
             combo.blockSignals(False)
 
     def _load_from_hub(self) -> None:
+        from audio.qt_device_resolve import remap_global_audio_devices
+
+        if remap_global_audio_devices(self._hub.global_audio):
+            sync_global_to_legacy(
+                self._hub.global_audio,
+                self._settings.audio_player,
+                self._settings.audio_recorder,
+            )
         g = self._hub.global_audio
         self._select_combo_device(self._combo_input, g.input_device_id)
         self._select_combo_device(self._combo_send, g.send_output_device_id)
@@ -312,19 +320,25 @@ class SoundSettingsWindow(RetranslatableMixin, QMainWindow):
         dev_id = self._combo_input.currentData()
         if not isinstance(dev_id, str):
             dev_id = ""
-        self._hub.set_device_id(ROLE_INPUT, dev_id)
+        self._hub.set_device_id(
+            ROLE_INPUT, dev_id, label=self._combo_input.currentText()
+        )
 
     def _on_send_device(self) -> None:
         dev_id = self._combo_send.currentData()
         if not isinstance(dev_id, str):
             dev_id = ""
-        self._hub.set_device_id(ROLE_SEND, dev_id)
+        self._hub.set_device_id(
+            ROLE_SEND, dev_id, label=self._combo_send.currentText()
+        )
 
     def _on_pc_device(self) -> None:
         dev_id = self._combo_pc.currentData()
         if not isinstance(dev_id, str):
             dev_id = ""
-        self._hub.set_device_id(ROLE_PC, dev_id)
+        self._hub.set_device_id(
+            ROLE_PC, dev_id, label=self._combo_pc.currentText()
+        )
 
     def _on_tx_monitor(self, checked: bool) -> None:
         self._hub.set_tx_monitor_to_pc_enabled(bool(checked))

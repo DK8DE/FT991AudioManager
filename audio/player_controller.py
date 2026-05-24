@@ -169,10 +169,12 @@ class PlayerController(QObject):
         self._resume_after_pause = False
         self._after_rx: AfterRx = "idle"
         self._output_device_id = ""
+        self._output_device_label = ""
         self._volume_percent = 100
         #: Sende-Out zusätzlich auf PC-Ausgabegerät (Mithören, zweiter Player).
         self._tx_monitor_pc_enabled = False
         self._tx_monitor_pc_device_id = ""
+        self._tx_monitor_pc_device_label = ""
         self._tx_monitor_pc_volume_percent = 100
         self._monitor_player = None
         self._monitor_audio_out = None
@@ -379,8 +381,10 @@ class PlayerController(QObject):
     def contest_mode(self) -> bool:
         return self._contest_mode
 
-    def set_output_device_id(self, device_id: str) -> None:
+    def set_output_device_id(self, device_id: str, *, label: str = "") -> None:
         self._output_device_id = device_id or ""
+        if label:
+            self._output_device_label = label
         self._apply_output_device()
 
     def set_volume_percent(self, percent: int) -> None:
@@ -398,8 +402,10 @@ class PlayerController(QObject):
         elif self._state == PlayerState.PLAYING:
             self._sync_monitor_with_main_playback()
 
-    def set_tx_monitor_pc_device_id(self, device_id: str) -> None:
+    def set_tx_monitor_pc_device_id(self, device_id: str, *, label: str = "") -> None:
         self._tx_monitor_pc_device_id = device_id or ""
+        if label:
+            self._tx_monitor_pc_device_label = label
         self._apply_monitor_device()
         if self._tx_monitor_pc_enabled and self._state == PlayerState.PLAYING:
             self._sync_monitor_with_main_playback()
@@ -414,9 +420,16 @@ class PlayerController(QObject):
         mm = qt_multimedia_types()
         if mm is None:
             return
+        from audio.qt_device_resolve import resolve_qt_device_id
+
         _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
         log = self._cat.get_log() if self._cat else None
-        if not self._output_device_id:
+        target_id = resolve_qt_device_id(
+            self._output_device_id,
+            self._output_device_label,
+            input_device=False,
+        )
+        if not target_id:
             chosen = QMediaDevices.defaultAudioOutput()
             self._audio_out.setDevice(chosen)
             if log is not None:
@@ -430,7 +443,7 @@ class PlayerController(QObject):
             for dev in QMediaDevices.audioOutputs():
                 dev_id = dev.id().data().decode("utf-8", errors="replace")
                 available.append((dev_id, dev.description()))
-                if dev_id == self._output_device_id:
+                if dev_id == target_id:
                     matched_dev = dev
                     break
             if matched_dev is not None:
@@ -438,7 +451,7 @@ class PlayerController(QObject):
                 if log is not None:
                     log.log_info(
                         f"Audio-Out: gewählt '{matched_dev.description()}' "
-                        f"(id={self._output_device_id})"
+                        f"(id={target_id})"
                     )
             else:
                 fallback = QMediaDevices.defaultAudioOutput()
@@ -488,13 +501,20 @@ class PlayerController(QObject):
         mm = qt_multimedia_types()
         if mm is None:
             return
+        from audio.qt_device_resolve import resolve_qt_device_id
+
         _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
-        if not self._tx_monitor_pc_device_id:
+        target_id = resolve_qt_device_id(
+            self._tx_monitor_pc_device_id,
+            self._tx_monitor_pc_device_label,
+            input_device=False,
+        )
+        if not target_id:
             self._monitor_audio_out.setDevice(QMediaDevices.defaultAudioOutput())
             return
         for dev in QMediaDevices.audioOutputs():
             dev_id = dev.id().data().decode("utf-8", errors="replace")
-            if dev_id == self._tx_monitor_pc_device_id:
+            if dev_id == target_id:
                 self._monitor_audio_out.setDevice(dev)
                 return
         self._monitor_audio_out.setDevice(QMediaDevices.defaultAudioOutput())

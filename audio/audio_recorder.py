@@ -249,20 +249,25 @@ def list_audio_input_devices() -> list[tuple[str, str]]:
     return out
 
 
-def _find_audio_input_device(device_id: str):
+def _find_audio_input_device(device_id: str, device_label: str = ""):
     """Sucht das ``QAudioDevice`` zu einer Geräte-ID; ``None`` = Default."""
+    from audio.qt_device_resolve import resolve_qt_device_id
+
     mm = qt_multimedia_types()
     if mm is None:
         return None
     _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
-    if not device_id:
+    target_id = resolve_qt_device_id(
+        device_id, device_label, input_device=True
+    )
+    if not target_id:
         return QMediaDevices.defaultAudioInput()
     for dev in QMediaDevices.audioInputs():
         try:
             dev_id = dev.id().data().decode("utf-8", errors="replace")
         except Exception:
             dev_id = ""
-        if dev_id == device_id:
+        if dev_id == target_id:
             return dev
     return QMediaDevices.defaultAudioInput()
 
@@ -386,6 +391,7 @@ class AudioRecorder(QObject):
         self,
         folder: Path,
         device_id: str = "",
+        device_label: str = "",
         bitrate_kbps: int = 64,
         now: Optional[datetime] = None,
     ) -> Optional[Path]:
@@ -420,7 +426,7 @@ class AudioRecorder(QObject):
         # sonst ggf. noch ein altes ``QMediaRecorder`` an der Session.
         self._teardown_session()
 
-        device = _find_audio_input_device(device_id)
+        device = _find_audio_input_device(device_id, device_label)
         try:
             self._audio_input = self._QAudioInput(self)  # type: ignore[misc]
             if device is not None:
