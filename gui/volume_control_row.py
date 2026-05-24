@@ -20,6 +20,7 @@ from audio.windows_endpoint_volume import windows_endpoint_peak_available
 from i18n import tr
 from i18n.retranslatable import RetranslatableMixin
 
+from .touch_slider import TouchSlider
 from .menu_icons import menu_action_icon, volume_role_icon_size
 from .meter_widget import (
     ScaledMeterBar,
@@ -83,7 +84,7 @@ class VolumeControlRow(RetranslatableMixin, QWidget):
             )
             layout.addWidget(self._role_lbl)
 
-        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider = TouchSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(0, 100)
         self._slider.setValue(100)
         self._slider.setTickPosition(QSlider.TickPosition.TicksBelow)

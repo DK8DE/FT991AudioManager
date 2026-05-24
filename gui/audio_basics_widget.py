@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.touch_slider import TouchSlider
 from i18n import tr
 from i18n.retranslatable import RetranslatableMixin
 from mapping.rx_mapping import mic_gain_slider_visible_for_mode_group
@@ -119,7 +120,7 @@ class AudioBasicsWidget(RetranslatableMixin, QGroupBox):
 
         self._mic_gain_title = QLabel()
         universal.addWidget(self._mic_gain_title, 0, 0)
-        self.mic_gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.mic_gain_slider = TouchSlider(Qt.Orientation.Horizontal)
         self.mic_gain_slider.setMinimum(MIC_GAIN_MIN)
         self.mic_gain_slider.setMaximum(MIC_GAIN_MAX)
         self.mic_gain_slider.setSingleStep(1)
@@ -158,7 +159,7 @@ class AudioBasicsWidget(RetranslatableMixin, QGroupBox):
 
         self._processor_level_title = QLabel()
         processor_layout.addWidget(self._processor_level_title, 1, 0)
-        self.processor_level_slider = QSlider(Qt.Orientation.Horizontal)
+        self.processor_level_slider = TouchSlider(Qt.Orientation.Horizontal)
         self.processor_level_slider.setRange(PROCESSOR_LEVEL_MIN, PROCESSOR_LEVEL_MAX)
         self.processor_level_slider.setSingleStep(1)
         self.processor_level_slider.setPageStep(5)

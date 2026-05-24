@@ -61,6 +61,7 @@ from model.audio_player_settings import (
     scan_audio_files,
 )
 
+from .touch_slider import TouchSlider
 from .app_icon import app_icon
 from .audio_hub_binding import (
     connect_level_meters,
@@ -434,7 +435,7 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
         transport.addStretch(1)
         playback_l.addLayout(transport)
 
-        self.progress = QSlider(Qt.Orientation.Horizontal)
+        self.progress = TouchSlider(Qt.Orientation.Horizontal)
         self.progress.setRange(0, 1000)
         self.progress.setValue(0)
         self.progress.setPageStep(50)

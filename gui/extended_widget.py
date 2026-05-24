@@ -56,6 +56,7 @@ from mapping.extended_mapping import (
     SSB_LCUT_SLOPE_MENU,
     SsbSlope,
 )
+from gui.touch_slider import TouchSlider
 from model import ExtendedSettings
 
 
@@ -77,7 +78,7 @@ def _make_slider_row(
     default: int,
     tooltip: str,
 ) -> tuple[QSlider, QLabel]:
-    slider = QSlider(Qt.Orientation.Horizontal)
+    slider = TouchSlider(Qt.Orientation.Horizontal)
     slider.setRange(minimum, maximum)
     slider.setValue(default)
     slider.setSingleStep(1)

@@ -37,6 +37,8 @@ from PySide6.QtWidgets import (
 )
 
 from gui.app_icon import app_icon
+from gui.touch_slider import TouchSlider
+from gui.momentary_hold_button import MomentaryHoldButton
 from i18n import tr
 from i18n.retranslatable import RetranslatableMixin
 from gui.live_eq_editor_widget import LiveEqEditorWidget
@@ -610,7 +612,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             return
         self._kbd_ptt_momentary_engaged = False
         b = getattr(self, "_b_ptt", None)
-        if b is not None and b.isDown():
+        if b is not None and (b.isDown() or getattr(b, "is_held", lambda: False)()):
             return
         self._on_live_ptt_momentary_released()
 
@@ -672,13 +674,16 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             return
         self._kbd_ptt_momentary_engaged = False
         b = getattr(self, "_b_ptt", None)
-        if b is not None and b.isDown():
+        if b is not None and (b.isDown() or getattr(b, "is_held", lambda: False)()):
             return
         self._on_live_ptt_momentary_released()
 
     def changeEvent(self, event: QEvent) -> None:  # type: ignore[override]
         if event.type() == QEvent.Type.WindowDeactivate:
             self._release_keyboard_ptt_momentary()
+            b = getattr(self, "_b_ptt", None)
+            if b is not None and hasattr(b, "release_hold"):
+                b.release_hold()
         elif event.type() == QEvent.Type.WindowStateChange and self.isMinimized():
             self._release_keyboard_ptt_momentary()
         super().changeEvent(event)
@@ -867,11 +872,11 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         srl.setSpacing(12)
 
         vs_style = (
-            "QSlider::groove:vertical { background-color:#353535; width:7px; }"
+            "QSlider::groove:vertical { background-color:#353535; width:10px; }"
             "QSlider::handle:vertical {"
             f" background-color:{_YAESU_GREEN};"
             " border:1px solid #1e5c16;"
-            " min-height:15px; max-height:15px; margin:0 -6px;"
+            " min-height:22px; max-height:22px; min-width:22px; margin:0 -8px;"
             "}"
         )
 
@@ -890,7 +895,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             t.setStyleSheet(
                 "color:#bdbdbd;font-size:10px;font-weight:600;"
             )
-            sl = QSlider(Qt.Orientation.Vertical)
+            sl = TouchSlider(Qt.Orientation.Vertical)
             sl.setRange(0, 200)
             sl.setMinimumHeight(120)
             sl.setTracking(True)
@@ -979,16 +984,16 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         gv.setColumnStretch(1, 1)
         self._g_en = QCheckBox(tr("live.gate.enabled"))
         self._g_en.toggled.connect(self._pull_chk_into_snapshot)
-        self._g_thr = QSlider(Qt.Orientation.Horizontal)
+        self._g_thr = TouchSlider(Qt.Orientation.Horizontal)
         self._g_thr.setRange(-800, -200)
         self._g_thr.valueChanged.connect(self._pull_slider_gate_comp)
-        self._g_att = QSlider(Qt.Orientation.Horizontal)
+        self._g_att = TouchSlider(Qt.Orientation.Horizontal)
         self._g_att.setRange(1, 50)
         self._g_att.valueChanged.connect(self._pull_slider_gate_comp)
-        self._g_hld = QSlider(Qt.Orientation.Horizontal)
+        self._g_hld = TouchSlider(Qt.Orientation.Horizontal)
         self._g_hld.setRange(10, 300)
         self._g_hld.valueChanged.connect(self._pull_slider_gate_comp)
-        self._g_rel = QSlider(Qt.Orientation.Horizontal)
+        self._g_rel = TouchSlider(Qt.Orientation.Horizontal)
         self._g_rel.setRange(20, 1000)
         self._g_rel.valueChanged.connect(self._pull_slider_gate_comp)
 
@@ -1020,19 +1025,19 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         cgrid.setColumnStretch(1, 1)
         self._c_en = QCheckBox(tr("live.comp.enabled"))
         self._c_en.toggled.connect(self._pull_chk_into_snapshot)
-        self._c_thr = QSlider(Qt.Orientation.Horizontal)
+        self._c_thr = TouchSlider(Qt.Orientation.Horizontal)
         self._c_thr.setRange(-400, 0)
         self._c_thr.valueChanged.connect(self._pull_slider_gate_comp)
-        self._c_rat = QSlider(Qt.Orientation.Horizontal)
+        self._c_rat = TouchSlider(Qt.Orientation.Horizontal)
         self._c_rat.setRange(100, 1000)
         self._c_rat.valueChanged.connect(self._pull_slider_gate_comp)
-        self._c_att = QSlider(Qt.Orientation.Horizontal)
+        self._c_att = TouchSlider(Qt.Orientation.Horizontal)
         self._c_att.setRange(1, 50)
         self._c_att.valueChanged.connect(self._pull_slider_gate_comp)
-        self._c_rel = QSlider(Qt.Orientation.Horizontal)
+        self._c_rel = TouchSlider(Qt.Orientation.Horizontal)
         self._c_rel.setRange(20, 500)
         self._c_rel.valueChanged.connect(self._pull_slider_gate_comp)
-        self._c_mk = QSlider(Qt.Orientation.Horizontal)
+        self._c_mk = TouchSlider(Qt.Orientation.Horizontal)
         self._c_mk.setRange(0, 120)
         self._c_mk.valueChanged.connect(self._pull_slider_gate_comp)
 
@@ -1077,13 +1082,13 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             fgv.setColumnStretch(1, 1)
             self._fg_en = QCheckBox(tr("live.funk_gate.enabled"))
             self._fg_en.toggled.connect(self._pull_funk_listen_gate)
-            self._fg_thr = QSlider(Qt.Orientation.Horizontal)
+            self._fg_thr = TouchSlider(Qt.Orientation.Horizontal)
             self._fg_thr.setRange(-700, -10)
             self._fg_thr.valueChanged.connect(self._pull_funk_listen_gate)
-            self._fg_hld = QSlider(Qt.Orientation.Horizontal)
+            self._fg_hld = TouchSlider(Qt.Orientation.Horizontal)
             self._fg_hld.setRange(5, 200)
             self._fg_hld.valueChanged.connect(self._pull_funk_listen_gate)
-            self._fg_rel = QSlider(Qt.Orientation.Horizontal)
+            self._fg_rel = TouchSlider(Qt.Orientation.Horizontal)
             self._fg_rel.setRange(20, 500)
             self._fg_rel.valueChanged.connect(self._pull_funk_listen_gate)
             self._fg_thr_lbl = _mk_read_lbl()
@@ -1114,7 +1119,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             self._fg_rel_lbl = None
 
         row_btn = QHBoxLayout()
-        self._b_ptt = QPushButton(tr("live.btn.ptt"))
+        self._b_ptt = MomentaryHoldButton(tr("live.btn.ptt"))
         self._b_ptt.setToolTip(tr("live.btn.ptt.tooltip"))
         self._b_ptt.setSizePolicy(
             QSizePolicy.Policy.Minimum,

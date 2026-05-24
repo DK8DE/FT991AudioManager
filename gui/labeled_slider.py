@@ -23,6 +23,7 @@ from typing import Any, Callable, List, Optional, Sequence
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QWidget
 
+from gui.touch_slider import TouchSlider
 from i18n import tr
 from i18n.retranslatable import RetranslatableMixin
 
@@ -72,7 +73,7 @@ class LabeledSlider(RetranslatableMixin, QWidget):
         self._name_label.setMinimumWidth(label_min_width)
         layout.addWidget(self._name_label)
 
-        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider = TouchSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(minimum, maximum)
         self._slider.setSingleStep(1)
         self._slider.setPageStep(page_step)

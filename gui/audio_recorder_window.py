@@ -67,6 +67,7 @@ from model.audio_recorder_settings import (
     scan_recordings,
 )
 
+from .touch_slider import TouchSlider
 from .app_icon import app_icon
 from .audio_hub_binding import (
     connect_level_meters,
@@ -468,7 +469,7 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         rep_transport.addStretch(1)
         rep_l.addLayout(rep_transport)
 
-        self.progress_replay = QSlider(Qt.Orientation.Horizontal)
+        self.progress_replay = TouchSlider(Qt.Orientation.Horizontal)
         self.progress_replay.setRange(0, 1000)
         self.progress_replay.setValue(0)
         self.progress_replay.setPageStep(50)

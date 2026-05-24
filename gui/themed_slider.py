@@ -20,12 +20,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QSlider, QStyle, QStyleOptionSlider
 
+from gui.touch_slider import TouchSlider
 from gui.theme import SLIDER_INACTIVE
 
 _TICK_LEN = 5
 
 
-class MeterVerticalSlider(QSlider):
+class MeterVerticalSlider(TouchSlider):
     """Vertikaler Slider für SQL, DSP, AGC, MIC — mit rechts sichtbaren Ticks."""
 
     def __init__(self, parent=None) -> None:

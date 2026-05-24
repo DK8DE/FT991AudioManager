@@ -63,6 +63,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.touch_slider import TouchSlider
 from gui.themed_slider import MeterVerticalSlider
 from i18n import tr
 from i18n.retranslatable import RetranslatableMixin
@@ -2175,7 +2176,7 @@ class GainLevelSlider(RetranslatableMixin, QWidget):
         self._label.setMinimumWidth(22)
         layout.addWidget(self._label)
 
-        self.slider = QSlider(Qt.Orientation.Horizontal)
+        self.slider = TouchSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(0, raw_max)
         self.slider.setSingleStep(1)
         self.slider.setPageStep(max(1, raw_max // 16))
@@ -2304,7 +2305,7 @@ class TxBandwidthPanel(RetranslatableMixin, QWidget):
         self._bar = _SymmetricTxBwBar()
         v.addWidget(self._bar)
 
-        self._slider = QSlider(Qt.Orientation.Horizontal)
+        self._slider = TouchSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(SH_P2_MIN, SH_P2_MAX)
         self._slider.setSingleStep(1)
         self._slider.setPageStep(1)

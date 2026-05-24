@@ -280,15 +280,15 @@ def build_dark_stylesheet() -> str:
     /* --- Slider (SQL, AGC, MIC, DSP) — hellblauer Track + Griff --- */
     QSlider::groove:vertical {{
         background: {SLIDER_INACTIVE};
-        width: 5px;
-        border-radius: 2px;
+        width: 8px;
+        border-radius: 4px;
     }}
     QSlider::handle:vertical {{
         background: {ACCENT_BLUE};
-        height: 14px;
-        width: 14px;
-        margin: 0 -5px;
-        border-radius: 7px;
+        height: 22px;
+        width: 22px;
+        margin: 0 -7px;
+        border-radius: 11px;
         border: none;
     }}
     /* Fusion: sub-page = oberhalb, add-page = unterhalb des Griffs — Blau von unten */
@@ -302,15 +302,15 @@ def build_dark_stylesheet() -> str:
     }}
     QSlider::groove:horizontal {{
         background: {SLIDER_INACTIVE};
-        height: 5px;
-        border-radius: 2px;
+        height: 8px;
+        border-radius: 4px;
     }}
     QSlider::handle:horizontal {{
         background: {ACCENT_BLUE};
-        width: 14px;
-        height: 14px;
-        margin: -5px 0;
-        border-radius: 7px;
+        width: 22px;
+        height: 22px;
+        margin: -7px 0;
+        border-radius: 11px;
         border: none;
     }}
     QSlider::sub-page:horizontal {{
