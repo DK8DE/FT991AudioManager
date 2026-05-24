@@ -828,7 +828,11 @@ class LiveAudioEngine:
 
         in_mic: Optional[int] = None
         if want_mic_meter:
-            in_mic = LiveAudioEngine._parse_input_device_index(mic_sid, allowed_in)
+            in_mic = LiveAudioEngine._parse_input_device_index(
+                mic_sid,
+                allowed_in,
+                saved_label=str(live.input_device_label or ""),
+            )
             if in_mic is None:
                 self.stop_idle_listen_monitor()
                 return False, "Idle‑Monitor: ungültiges PC‑Mikrofon."
@@ -836,7 +840,9 @@ class LiveAudioEngine:
         in_listen: Optional[int] = None
         if want_rx_listen:
             in_listen = LiveAudioEngine._parse_input_device_index(
-                listen_sid, allowed_in
+                listen_sid,
+                allowed_in,
+                saved_label=str(live.funk_listen_input_device_label or ""),
             )
             if in_listen is None:
                 self.stop_idle_listen_monitor()
@@ -844,7 +850,11 @@ class LiveAudioEngine:
 
         out_mon: Optional[int] = None
         if want_monitor_out:
-            out_mon = LiveAudioEngine._parse_output_device_index(mon_sid, allowed_out)
+            out_mon = LiveAudioEngine._parse_output_device_index(
+                mon_sid,
+                allowed_out,
+                saved_label=str(live.output_device_label or ""),
+            )
             if out_mon is None:
                 self.stop_idle_listen_monitor()
                 return False, "Idle‑Monitor: ungültiger Monitor‑Ausgang."
@@ -1072,7 +1082,11 @@ class LiveAudioEngine:
             return True, ""
 
         allowed_in = tuple(x for x, _ in self._enumerate_input_indices())
-        in_dev = LiveAudioEngine._parse_input_device_index(mic_sid, allowed_in)
+        in_dev = LiveAudioEngine._parse_input_device_index(
+            mic_sid,
+            allowed_in,
+            saved_label=str(live.input_device_label or ""),
+        )
         if in_dev is None:
             self.stop_mic_preview_monitor()
             return False, "Mic‑Vorschau: ungültiges PC‑Mikrofon."
@@ -1157,14 +1171,22 @@ class LiveAudioEngine:
         allowed_in = tuple(x for x, _ in self._enumerate_input_indices())
         allowed_out = tuple(x for x, _ in self._enumerate_output_indices())
         in_dev = LiveAudioEngine._parse_input_device_index(
-            str(live.input_device_id or ""), allowed_in
+            str(live.input_device_id or ""),
+            allowed_in,
+            saved_label=str(live.input_device_label or ""),
         )
         out_mon = LiveAudioEngine._parse_output_device_index(
-            str(live.output_device_id or ""), allowed_out
+            str(live.output_device_id or ""),
+            allowed_out,
+            saved_label=str(live.output_device_label or ""),
         )
         funk_sid = str(live.funk_output_device_id or "").strip()
         out_funk = (
-            LiveAudioEngine._parse_output_device_index(funk_sid, allowed_out)
+            LiveAudioEngine._parse_output_device_index(
+                funk_sid,
+                allowed_out,
+                saved_label=str(live.funk_output_device_label or ""),
+            )
             if funk_sid
             else None
         )
@@ -1173,7 +1195,11 @@ class LiveAudioEngine:
         listen_sid = str(live.funk_listen_input_device_id or "").strip()
         listen_on = bool(live.funk_listen_enabled)
         in_listen = (
-            LiveAudioEngine._parse_input_device_index(listen_sid, allowed_in)
+            LiveAudioEngine._parse_input_device_index(
+                listen_sid,
+                allowed_in,
+                saved_label=str(live.funk_listen_input_device_label or ""),
+            )
             if (listen_on and listen_sid)
             else None
         )
@@ -1266,29 +1292,38 @@ class LiveAudioEngine:
             return False, full
 
     @staticmethod
-    def _parse_input_device_index(raw_sid: str, allowed_ids: Sequence[str]) -> Optional[int]:
-        """Gespeicherte Mic‑IDs remappen; Fallback ohne Allowlist statt Std‑Gerät durch ``None``.
-
-        Veraltete PortAudio‑Indizes (nach Dedupe/OS‑Updates) können sonst nicht in der
-        „erlaubten“ Liste liefern — dann wählt PortAudio fälschlich den Host‑Standard.
-        """
-        rem = remap_live_device_id(str(raw_sid or "").strip(), input_device=True).strip()
-        sid = rem or str(raw_sid or "").strip()
-        tup = tuple(allowed_ids)
-        d = parse_device_id(sid, tup)
-        if d is None and sid:
-            d = parse_device_id(sid, None)
-        return d
+    def _parse_input_device_index(
+        raw_sid: str,
+        allowed_ids: Sequence[str],
+        *,
+        saved_label: str = "",
+    ) -> Optional[int]:
+        rem, _ = remap_live_device_id(
+            str(raw_sid or "").strip(),
+            saved_label,
+            input_device=True,
+        )
+        sid = rem.strip()
+        if not sid:
+            return None
+        return parse_device_id(sid, tuple(allowed_ids))
 
     @staticmethod
-    def _parse_output_device_index(raw_sid: str, allowed_ids: Sequence[str]) -> Optional[int]:
-        rem = remap_live_device_id(str(raw_sid or "").strip(), input_device=False).strip()
-        sid = rem or str(raw_sid or "").strip()
-        tup = tuple(allowed_ids)
-        d = parse_device_id(sid, tup)
-        if d is None and sid:
-            d = parse_device_id(sid, None)
-        return d
+    def _parse_output_device_index(
+        raw_sid: str,
+        allowed_ids: Sequence[str],
+        *,
+        saved_label: str = "",
+    ) -> Optional[int]:
+        rem, _ = remap_live_device_id(
+            str(raw_sid or "").strip(),
+            saved_label,
+            input_device=False,
+        )
+        sid = rem.strip()
+        if not sid:
+            return None
+        return parse_device_id(sid, tuple(allowed_ids))
 
     @classmethod
     def _same_physical_input_output(
@@ -1646,20 +1681,40 @@ class LiveAudioEngine:
         mic_sid = str(live.input_device_id or "").strip()
         mon_sid = str(live.output_device_id or "").strip()
         in_dev = (
-            cls._parse_input_device_index(mic_sid, allowed_in) if mic_sid else None
+            cls._parse_input_device_index(
+                mic_sid,
+                allowed_in,
+                saved_label=str(live.input_device_label or ""),
+            )
+            if mic_sid
+            else None
         )
         out_mon = (
-            cls._parse_output_device_index(mon_sid, allowed_out) if mon_sid else None
+            cls._parse_output_device_index(
+                mon_sid,
+                allowed_out,
+                saved_label=str(live.output_device_label or ""),
+            )
+            if mon_sid
+            else None
         )
         funk_sid = str(live.funk_output_device_id or "").strip()
         out_funk = (
-            cls._parse_output_device_index(funk_sid, allowed_out)
+            cls._parse_output_device_index(
+                funk_sid,
+                allowed_out,
+                saved_label=str(live.funk_output_device_label or ""),
+            )
             if funk_sid
             else None
         )
         listen_sid = str(live.funk_listen_input_device_id or "").strip()
         in_listen = (
-            cls._parse_input_device_index(listen_sid, allowed_in)
+            cls._parse_input_device_index(
+                listen_sid,
+                allowed_in,
+                saved_label=str(live.funk_listen_input_device_label or ""),
+            )
             if (bool(live.funk_listen_enabled) and listen_sid)
             else None
         )

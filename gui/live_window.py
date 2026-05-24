@@ -58,7 +58,7 @@ from live.funk_listen_gate import SHOW_TUNING_UI
 from live.live_devices import (
     list_input_devices,
     list_output_devices,
-    remap_live_device_id,
+    remap_live_settings_devices,
 )
 from mapping.rx_mapping import RxMode
 from model import AppSettings
@@ -82,14 +82,23 @@ if TYPE_CHECKING:
 _YAESU_GREEN = "#52c41a"
 
 
-def _live_device_label(device_id: str, *, input_device: bool) -> str:
+def _live_device_label(
+    device_id: str,
+    *,
+    input_device: bool,
+    saved_label: str = "",
+) -> str:
     did = str(device_id or "").strip()
     if not did:
-        return tr("live.device.not_selected")
+        sl = str(saved_label or "").strip()
+        return sl if sl else tr("live.device.not_selected")
     listing = list_input_devices() if input_device else list_output_devices()
     for dev_id, lbl, _tip in listing:
         if str(dev_id) == did:
             return lbl
+    sl = str(saved_label or "").strip()
+    if sl:
+        return sl
     return tr("live.device.unknown", id=did)
 
 
@@ -1170,8 +1179,9 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
     ) -> None:
         invalidate_windows_audio_device_cache()
         liv = LiveSettings.from_dict(self._settings.live.to_dict())
-        liv = self._remap_live_device_ids(liv)
-        self._settings.live = LiveSettings.from_dict(liv.to_dict())
+        if remap_live_settings_devices(liv):
+            self._settings.live = LiveSettings.from_dict(liv.to_dict())
+            self._settings.save()
         self._live_snapshot = LiveSettings.from_dict(liv.to_dict())
         self._idle_monitor_fp_key = None
         self._mic_preview_fp_key = None
@@ -1179,49 +1189,48 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._update_device_summary_labels()
         self._schedule_samplerate_label_update(liv, refresh_monitors_after=refresh_monitors)
 
-    @staticmethod
-    def _remap_live_device_ids(liv: LiveSettings) -> LiveSettings:
-        out = LiveSettings.from_dict(liv.to_dict())
-        ids_in = {did for did, _lbl, _tip in list_input_devices()}
-        ids_out = {did for did, _lbl, _tip in list_output_devices()}
-
-        fin = remap_live_device_id(str(out.input_device_id), input_device=True) or str(
-            out.input_device_id or ""
-        )
-        fout = remap_live_device_id(str(out.output_device_id), input_device=False) or str(
-            out.output_device_id or ""
-        )
-        ffunk = remap_live_device_id(
-            str(out.funk_output_device_id), input_device=False
-        ) or str(out.funk_output_device_id or "")
-        flisten_in = remap_live_device_id(
-            str(out.funk_listen_input_device_id),
-            input_device=True,
-        ) or str(out.funk_listen_input_device_id or "")
-
-        if fin and fin in ids_in:
-            out.input_device_id = fin
-        if fout and fout in ids_out:
-            out.output_device_id = fout
-        if ffunk and ffunk in ids_out:
-            out.funk_output_device_id = ffunk
-        if flisten_in and flisten_in in ids_in:
-            out.funk_listen_input_device_id = flisten_in
-        out.clamp_recursive()
-        return out
-
     def _update_device_summary_labels(self, error: Optional[str] = None) -> None:
         liv = self._live_snapshot
 
-        def _set(lbl: QLabel, device_id: str, *, input_device: bool) -> None:
-            text = _live_device_label(device_id, input_device=input_device)
+        def _set(
+            lbl: QLabel,
+            device_id: str,
+            saved_label: str,
+            *,
+            input_device: bool,
+        ) -> None:
+            text = _live_device_label(
+                device_id,
+                input_device=input_device,
+                saved_label=saved_label,
+            )
             lbl.setText(text)
             lbl.setToolTip(text)
 
-        _set(self._lbl_dev_mic, liv.input_device_id, input_device=True)
-        _set(self._lbl_dev_mon, liv.output_device_id, input_device=False)
-        _set(self._lbl_dev_funk_in, liv.funk_output_device_id, input_device=False)
-        _set(self._lbl_dev_funk_out, liv.funk_listen_input_device_id, input_device=True)
+        _set(
+            self._lbl_dev_mic,
+            liv.input_device_id,
+            liv.input_device_label,
+            input_device=True,
+        )
+        _set(
+            self._lbl_dev_mon,
+            liv.output_device_id,
+            liv.output_device_label,
+            input_device=False,
+        )
+        _set(
+            self._lbl_dev_funk_in,
+            liv.funk_output_device_id,
+            liv.funk_output_device_label,
+            input_device=False,
+        )
+        _set(
+            self._lbl_dev_funk_out,
+            liv.funk_listen_input_device_id,
+            liv.funk_listen_input_device_label,
+            input_device=True,
+        )
         if error:
             self._lbl_dev_error.setText(error)
             self._lbl_dev_error.show()

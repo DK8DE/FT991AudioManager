@@ -289,40 +289,118 @@ def list_output_devices() -> List[Tuple[str, str, str]]:
     return head
 
 
-def remap_live_device_id(saved_id: str, *, input_device: bool) -> str:
-    """Mappt einen alten PA-Index ggf. auf einen noch gültigen Listeneintrag."""
+def remap_live_device_id(
+    saved_id: str,
+    saved_label: str = "",
+    *,
+    input_device: bool,
+) -> tuple[str, str]:
+    """Mappt einen alten PA-Index auf einen aktuellen Listeneintrag.
+
+    Liefert ``(id, anzeigename)``. Ungültige IDs werden geleert (``""``).
+    """
     sid = str(saved_id or "").strip()
-    if not sid or not _HAVE_SD:
-        return sid
+    slabel = str(saved_label or "").strip()
+    if not sid and not slabel:
+        return "", ""
+
     rows = list_input_devices() if input_device else list_output_devices()
     allowed = {r[0] for r in rows if r[0]}
+    id_to_label = {r[0]: r[1] for r in rows if r[0]}
+
     if sid in allowed:
-        return sid
-    assert _sd is not None
-    try:
-        old_i = int(sid)
-    except ValueError:
-        return ""
-    all_d = _sd.query_devices()
-    if old_i < 0 or old_i >= len(all_d):
-        return ""
-    old_name = str(all_d[old_i].get("name", ""))
-    key = _norm_match_key(old_name)
-    if not key:
-        return ""
-    for did, lbl, _tip in rows:
-        if not did:
-            continue
-        if _norm_match_key(lbl) == key:
-            return did
+        return sid, id_to_label.get(sid, slabel)
+
+    needles: list[str] = []
+    if slabel:
+        needles.append(_norm_match_key(slabel))
+    if sid and _HAVE_SD:
         try:
-            j = int(did)
+            old_i = int(sid)
+            all_d = _sd.query_devices()  # type: ignore[union-attr]
+            if 0 <= old_i < len(all_d):
+                old_name = str(all_d[old_i].get("name", ""))
+                key = _norm_match_key(old_name)
+                if key and key not in needles:
+                    needles.append(key)
         except ValueError:
+            pass
+
+    best_id = ""
+    best_lbl = ""
+    best_score = 0.0
+    for needle in needles:
+        if not needle:
             continue
-        if 0 <= j < len(all_d):
-            if _norm_match_key(str(all_d[j].get("name", ""))) == key:
-                return did
-    return ""
+        for did, lbl, _tip in rows:
+            if not did:
+                continue
+            score = _match_score(needle, lbl)
+            if score >= _QT_PA_MATCH_MIN_SCORE and score > best_score:
+                best_score = score
+                best_id = did
+                best_lbl = lbl
+        if best_id:
+            break
+        if _HAVE_SD:
+            assert _sd is not None
+            for did, lbl, _tip in rows:
+                if not did:
+                    continue
+                try:
+                    j = int(did)
+                except ValueError:
+                    continue
+                all_d = _sd.query_devices()
+                if 0 <= j < len(all_d):
+                    pa_name = str(all_d[j].get("name", ""))
+                    score = _match_score(needle, pa_name)
+                    if score >= _QT_PA_MATCH_MIN_SCORE and score > best_score:
+                        best_score = score
+                        best_id = did
+                        best_lbl = lbl
+
+    if best_id:
+        return best_id, best_lbl
+
+    return "", slabel
+
+
+def remap_live_settings_devices(live: object) -> bool:
+    """Remappt alle Live-PortAudio-Rollen; ``True`` wenn sich IDs geändert haben."""
+    specs = (
+        ("input_device_id", "input_device_label", True),
+        ("output_device_id", "output_device_label", False),
+        ("funk_output_device_id", "funk_output_device_label", False),
+        ("funk_listen_input_device_id", "funk_listen_input_device_label", True),
+    )
+    changed = False
+    for id_field, label_field, input_device in specs:
+        old_id = str(getattr(live, id_field, "") or "")
+        old_lbl = str(getattr(live, label_field, "") or "")
+        new_id, new_lbl = remap_live_device_id(
+            old_id, old_lbl, input_device=input_device
+        )
+        rows = list_input_devices() if input_device else list_output_devices()
+        allowed = {r[0] for r in rows if r[0]}
+        if old_id and old_id not in allowed and not new_id:
+            new_id = ""
+        if new_id != old_id:
+            setattr(live, id_field, new_id)
+            changed = True
+        if new_lbl and new_lbl != old_lbl:
+            setattr(live, label_field, new_lbl)
+            changed = True
+        elif new_id and not new_lbl:
+            lbl = device_label_for_id(new_id, input_device=input_device)
+            if lbl:
+                setattr(live, label_field, lbl)
+                if lbl != old_lbl:
+                    changed = True
+    clamp = getattr(live, "clamp_recursive", None)
+    if callable(clamp):
+        clamp()
+    return changed
 
 
 def resolve_duplex_device_indices(
@@ -582,6 +660,7 @@ __all__ = [
     "physical_same_input",
     "physical_same_output",
     "remap_live_device_id",
+    "remap_live_settings_devices",
     "resolve_duplex_device_indices",
     "sounddevice_available",
     "windows_samplerate_hints_for_live",

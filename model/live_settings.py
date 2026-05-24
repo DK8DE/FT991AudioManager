@@ -191,12 +191,16 @@ class LiveEqBandSettings:
 @dataclass
 class LiveSettings:
     input_device_id: str = ""
+    input_device_label: str = ""
     #: PortAudio‑Ausgang „Monitor“ / Kopfhörer (wie bisher ``output_device_id`` in älteren Dateien).
     output_device_id: str = ""
+    output_device_label: str = ""
     #: Zweiter Ausgang („Funk«): gleiches DSP‑Signal wie Monitor, eigener Mixer‑Ausgang optional.
     funk_output_device_id: str = ""
+    funk_output_device_label: str = ""
     #: Zweites Aufnahmegerät (z. B. Funk‑Rückweg/Lin): Rohsignal auf Monitor mischen.
     funk_listen_input_device_id: str = ""
+    funk_listen_input_device_label: str = ""
     funk_listen_enabled: bool = True
     #: Verstärkung 0–2,0 (linear); UI-Slider 0–200 mit logarithmischer Kurve
     #: (:mod:`model.live_volume_curve`, 100 % Regler = 1,0).
@@ -271,10 +275,16 @@ class LiveSettings:
     def to_dict(self) -> dict[str, Any]:
         return {
             "input_device_id": str(self.input_device_id or ""),
+            "input_device_label": str(self.input_device_label or ""),
             "output_device_id": str(self.output_device_id or ""),
+            "output_device_label": str(self.output_device_label or ""),
             "funk_output_device_id": str(self.funk_output_device_id or ""),
+            "funk_output_device_label": str(self.funk_output_device_label or ""),
             "funk_listen_input_device_id": str(
                 self.funk_listen_input_device_id or ""
+            ),
+            "funk_listen_input_device_label": str(
+                self.funk_listen_input_device_label or ""
             ),
             "funk_listen_enabled": bool(self.funk_listen_enabled),
             "input_gain": float(self.input_gain),
@@ -323,9 +333,17 @@ class LiveSettings:
 
         out = cls(
             input_device_id=str(raw.get("input_device_id", "") or ""),
+            input_device_label=str(raw.get("input_device_label", "") or ""),
             output_device_id=str(raw.get("output_device_id", "") or ""),
+            output_device_label=str(raw.get("output_device_label", "") or ""),
             funk_output_device_id=str(raw.get("funk_output_device_id", "") or ""),
+            funk_output_device_label=str(
+                raw.get("funk_output_device_label", "") or ""
+            ),
             funk_listen_input_device_id=str(fl_in or ""),
+            funk_listen_input_device_label=str(
+                raw.get("funk_listen_input_device_label", "") or ""
+            ),
             funk_listen_enabled=True,
             input_gain=float(raw.get("input_gain", 1.0)),
             output_gain=float(raw.get("output_gain", 1.0)),

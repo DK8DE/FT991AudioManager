@@ -26,7 +26,7 @@ from audio.windows_endpoint_volume import windows_endpoint_volume_available
 from live.live_devices import (
     list_input_devices,
     list_output_devices,
-    remap_live_device_id,
+    remap_live_settings_devices,
 )
 from model.global_audio_settings import ROLE_INPUT, ROLE_PC, ROLE_SEND, sync_global_to_legacy
 
@@ -404,42 +404,8 @@ class SoundSettingsWindow(RetranslatableMixin, QMainWindow):
                         cb.setItemData(cb.count() - 1, tip, tip_role)
 
             self._settings.live.clamp_recursive()
-            rin = (
-                remap_live_device_id(
-                    str(self._settings.live.input_device_id),
-                    input_device=True,
-                )
-                or str(self._settings.live.input_device_id or "")
-            )
-            rout = (
-                remap_live_device_id(
-                    str(self._settings.live.output_device_id),
-                    input_device=False,
-                )
-                or str(self._settings.live.output_device_id or "")
-            )
-            rfunk = (
-                remap_live_device_id(
-                    str(self._settings.live.funk_output_device_id),
-                    input_device=False,
-                )
-                or str(self._settings.live.funk_output_device_id or "")
-            )
-            rflisten = (
-                remap_live_device_id(
-                    str(self._settings.live.funk_listen_input_device_id),
-                    input_device=True,
-                )
-                or str(self._settings.live.funk_listen_input_device_id or "")
-            )
-            if rin != self._settings.live.input_device_id:
-                self._settings.live.input_device_id = rin
-            if rout != self._settings.live.output_device_id:
-                self._settings.live.output_device_id = rout
-            if rfunk != self._settings.live.funk_output_device_id:
-                self._settings.live.funk_output_device_id = rfunk
-            if rflisten != self._settings.live.funk_listen_input_device_id:
-                self._settings.live.funk_listen_input_device_id = rflisten
+            if remap_live_settings_devices(self._settings.live):
+                self._settings.save()
 
             self._select_combo_device(self._combo_live_in, self._settings.live.input_device_id)
             self._select_combo_device(self._combo_live_out, self._settings.live.output_device_id)
@@ -458,22 +424,28 @@ class SoundSettingsWindow(RetranslatableMixin, QMainWindow):
     def _on_live_in_dev(self, *_idx: int) -> None:
         rid = self._combo_live_in.currentData()
         self._settings.live.input_device_id = str(rid) if isinstance(rid, str) else ""
+        self._settings.live.input_device_label = self._combo_live_in.currentText()
         self._emit_live_devices_changed()
 
     def _on_live_out_dev(self, *_idx: int) -> None:
         rid = self._combo_live_out.currentData()
         self._settings.live.output_device_id = str(rid) if isinstance(rid, str) else ""
+        self._settings.live.output_device_label = self._combo_live_out.currentText()
         self._emit_live_devices_changed()
 
     def _on_live_funk_dev(self, *_idx: int) -> None:
         rid = self._combo_live_funk.currentData()
         self._settings.live.funk_output_device_id = str(rid) if isinstance(rid, str) else ""
+        self._settings.live.funk_output_device_label = self._combo_live_funk.currentText()
         self._emit_live_devices_changed()
 
     def _on_live_funk_listen_dev(self, *_idx: int) -> None:
         rid = self._combo_live_funk_listen.currentData()
         self._settings.live.funk_listen_input_device_id = (
             str(rid) if isinstance(rid, str) else ""
+        )
+        self._settings.live.funk_listen_input_device_label = (
+            self._combo_live_funk_listen.currentText()
         )
         self._settings.live.funk_listen_enabled = True
         self._emit_live_devices_changed()
