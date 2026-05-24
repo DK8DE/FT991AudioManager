@@ -71,6 +71,64 @@ def rbj_peaking_sos(freq_hz: float, gain_db: float, q: float, sr: float) -> np.n
     return np.array([[b0 * d, b1 * d, b2 * d, 1.0, a1 * d, a2 * d]], dtype=np.float64)
 
 
+def block_peak_linear(x_mono: np.ndarray) -> float:
+    if x_mono.size <= 0:
+        return 0.0
+    peak = float(np.max(np.abs(x_mono.reshape(-1))))
+    if not math.isfinite(peak) or peak < 1e-20:
+        return 0.0
+    return peak
+
+
+@dataclass
+class FunkListenNoiseGateState:
+    """Rauschgate Funk-Rückweg: Peak zum Öffnen, volle Lautheit wenn offen.
+
+    Das Mic-Gate (:class:`NoiseGateState`) nutzt RMS und skaliert den Pegel
+    sanft — am Funk-Eingang würde das echtes RX-Signal zu leise machen.
+    """
+
+    hold_remain_s: float = 0.0
+    open_latched: bool = False
+    close_gain: float = 0.0
+
+    def process(
+        self,
+        x_mono: np.ndarray,
+        fs: float,
+        cfg: LiveGateSettings,
+    ) -> np.ndarray:
+        if x_mono.size == 0 or not cfg.enabled:
+            return x_mono.astype(np.float32, copy=False)
+
+        x = x_mono.reshape(-1).astype(np.float32, copy=False)
+        peak_db = linear_to_db(block_peak_linear(x))
+        dt_block = len(x) / max(fs, 1.0)
+        open_db = float(cfg.threshold_db)
+        close_db = open_db - 8.0
+        hold_ms = float(cfg.hold_ms)
+        rel_ms = max(float(cfg.release_ms), 1.0)
+
+        if peak_db >= open_db:
+            self.open_latched = True
+            self.hold_remain_s = hold_ms / 1000.0
+        elif peak_db < close_db:
+            self.hold_remain_s = max(0.0, self.hold_remain_s - dt_block)
+            if self.hold_remain_s <= 0.0:
+                self.open_latched = False
+
+        if self.open_latched or self.hold_remain_s > 0.0:
+            self.close_gain = 1.0
+            return x
+
+        cr = _smooth_coef_for_block(rel_ms, dt_block)
+        self.close_gain *= cr
+        if self.close_gain < 1e-4:
+            self.close_gain = 0.0
+            return np.zeros_like(x)
+        return (x * np.float32(self.close_gain)).astype(np.float32)
+
+
 @dataclass
 class NoiseGateState:
     smoothed_gate: float = 0.0
@@ -306,6 +364,7 @@ class LiveDSPChain:
 
 __all__ = [
     "CompressorState",
+    "FunkListenNoiseGateState",
     "LiveDSPChain",
     "NoiseGateState",
     "SevenBandEQ",

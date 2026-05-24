@@ -52,6 +52,10 @@ def main() -> int:
     app = QApplication(sys.argv)
     QLocale.setDefault(QLocale(QLocale.Language.German, QLocale.Country.Germany))
     _install_german_qt_translations(app)
+
+    from gui.tooltip_text import install_tooltip_line_wrap
+
+    install_tooltip_line_wrap()
     # GUI erst nach QApplication importieren (QtMultimedia braucht das).
     from gui import MainWindow
     app.setApplicationName("FT-991/A Audiomanager")

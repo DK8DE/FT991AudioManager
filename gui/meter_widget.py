@@ -1452,6 +1452,27 @@ def _bar_gradient_for(warn: float, danger: float, *, enabled: bool) -> QLinearGr
     return grad
 
 
+def _bar_gradient_for_horizontal(warn: float, danger: float, *, enabled: bool) -> QLinearGradient:
+    """Wie :func:`_bar_gradient_for`, aber von links (leise) nach rechts (laut)."""
+    grad = QLinearGradient(0, 0, 1, 0)
+    if enabled:
+        green = QColor("#32CD32")
+        orange = QColor("#ed8a19")
+        red = QColor("#c62828")
+        warn_lo = max(0.0, warn - 0.04)
+        danger_lo = max(warn + 0.01, danger - 0.04)
+        grad.setColorAt(0.0, green)
+        grad.setColorAt(warn_lo, green)
+        grad.setColorAt(warn, orange)
+        grad.setColorAt(danger_lo, orange)
+        grad.setColorAt(danger, red)
+        grad.setColorAt(1.0, red)
+    else:
+        grad.setColorAt(0.0, QColor("#3c5040"))
+        grad.setColorAt(1.0, QColor("#604040"))
+    return grad
+
+
 class ScaledMeterBar(QWidget):
     """Vertikaler Balken mit Skala links, Farbverlauf-Fill und optionalem
     Header-Label sowie Wertanzeige unten.
@@ -1488,10 +1509,12 @@ class ScaledMeterBar(QWidget):
         value_font_scale: float = 0.9,
         tick_font_scale: float = 0.78,
         flex_horizontal: bool = False,
+        level_bar_horizontal: bool = False,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._flex_horizontal = bool(flex_horizontal)
+        self._level_bar_horizontal = bool(level_bar_horizontal)
         self._raw_max = raw_max
         self._fill_ref: Optional[int] = None  # PO: Roh-Max für Tooltip (Balken oft nichtlinear)
         self._fill_fraction_fn: Optional[Callable[[int], float]] = None
@@ -1535,10 +1558,29 @@ class ScaledMeterBar(QWidget):
         # Eigener Mal-Canvas für Skala + Bar + Squelch-Linie.
         self._canvas = _ScaledBarCanvas(self)
         outer.addWidget(self._canvas, stretch=1)
-        self._canvas.setMinimumHeight(bar_min_height)
-        self._canvas.setMinimumWidth(scale_width + bar_width + 6)
-        self._canvas.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
-        if self._flex_horizontal:
+        if self._level_bar_horizontal:
+            strip_h = int(self._bar_width + self._scale_width + 6)
+            self._canvas.setFixedHeight(strip_h)
+            self._canvas.setMinimumWidth(120)
+            csp = self._canvas.sizePolicy()
+            csp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            csp.setVerticalPolicy(QSizePolicy.Policy.Fixed)
+            self._canvas.setSizePolicy(csp)
+            sp = self.sizePolicy()
+            sp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
+            sp.setVerticalPolicy(QSizePolicy.Policy.Fixed)
+            self.setSizePolicy(sp)
+            self.setMaximumHeight(strip_h + 2)
+        else:
+            self._canvas.setMinimumHeight(bar_min_height)
+            self._canvas.setMinimumWidth(scale_width + bar_width + 6)
+            self._canvas.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+            )
+            sp = self.sizePolicy()
+            sp.setVerticalPolicy(QSizePolicy.Policy.Expanding)
+            self.setSizePolicy(sp)
+        if self._flex_horizontal and not self._level_bar_horizontal:
             self._canvas.setMinimumWidth(52)
             csp = self._canvas.sizePolicy()
             csp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
@@ -1553,8 +1595,11 @@ class ScaledMeterBar(QWidget):
         vf.setPointSizeF(vf.pointSizeF() * value_font_scale)
         self._value_label.setFont(vf)
         self._unit_text = unit_text
-        outer.addWidget(self._value_label)
-        if self._flex_horizontal:
+        if self._level_bar_horizontal:
+            self._value_label.hide()
+        else:
+            outer.addWidget(self._value_label)
+        if self._flex_horizontal and not self._level_bar_horizontal:
             self._apply_flex_geometry()
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
@@ -1708,6 +1753,9 @@ class _ScaledBarCanvas(QWidget):
             painter.end()
 
     def _paint(self, painter: QPainter, p: "ScaledMeterBar") -> None:
+        if p._level_bar_horizontal:
+            self._paint_level_horizontal(painter, p)
+            return
         height = self.height()
         bar_x = p._scale_width
         bar_top = p._canvas_header_height()
@@ -1787,6 +1835,76 @@ class _ScaledBarCanvas(QWidget):
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, tick_label,
             )
 
+    def _paint_level_horizontal(self, painter: QPainter, p: "ScaledMeterBar") -> None:
+        """Horizontaler Live-Pegel: Fill links→rechts, dB-Skala unten."""
+        width = self.width()
+        height = self.height()
+        scale_h = max(10, int(p._scale_width))
+        bar_h = max(6, int(p._bar_width))
+        bar_top = 2
+        bar_bottom = bar_top + bar_h
+        scale_top = bar_bottom + 2
+        bar_left = 4
+        bar_right = width - 4
+        bar_w = max(0, bar_right - bar_left)
+
+        border_color = QColor("#3A3A3A") if p._enabled else QColor("#2A2A2A")
+        painter.setPen(QPen(border_color, 1))
+        painter.setBrush(QColor("#1B1B1B"))
+        painter.drawRoundedRect(bar_left, bar_top, bar_w, bar_h, 3, 3)
+
+        denom = p._fill_ref if p._fill_ref is not None else p._raw_max
+        if p._value is not None and p._value > 0 and bar_w > 0:
+            if p._fill_fraction_fn is not None:
+                frac = p._fill_fraction_fn(p._value)
+            else:
+                frac = min(1.0, p._value / denom) if denom > 0 else 0.0
+            fill_w = max(1, int(frac * bar_w))
+            grad = _bar_gradient_for_horizontal(
+                p._warn, p._danger, enabled=p._enabled
+            )
+            grad.setStart(float(bar_left), 0.0)
+            grad.setFinalStop(float(bar_left + bar_w), 0.0)
+            painter.setBrush(grad)
+            painter.setPen(Qt.PenStyle.NoPen)
+            inner_h = max(1, bar_h - 2)
+            painter.drawRoundedRect(bar_left + 1, bar_top + 1, fill_w - 1, inner_h, 2, 2)
+
+        tick_color = QColor("#cccccc") if p._enabled else QColor("#666666")
+        painter.setPen(QPen(tick_color, 1))
+        scale_font = QFont(self.font())
+        scale_font.setPointSizeF(max(6.0, scale_font.pointSizeF() * p._tick_font_scale))
+        painter.setFont(scale_font)
+        fm = QFontMetrics(scale_font)
+        for raw_tick, tick_label in p._ticks:
+            if denom <= 0 and p._fill_fraction_fn is None:
+                continue
+            if p._fill_fraction_fn is not None:
+                tick_frac = p._fill_fraction_fn(raw_tick)
+            else:
+                tick_frac = max(0.0, min(1.0, raw_tick / denom))
+            tx = int(bar_left + tick_frac * bar_w)
+            painter.drawLine(tx, scale_top, tx, scale_top + 3)
+            painter.drawText(
+                tx - 18,
+                scale_top + 3,
+                36,
+                fm.height(),
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                tick_label,
+            )
+        if p._value is not None and p._value > 0 and p._enabled:
+            db_txt = p._value_formatter(int(p._value))
+            painter.setPen(QPen(QColor("#bdbdbd")))
+            painter.drawText(
+                bar_right - 44,
+                bar_top,
+                42,
+                bar_h,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                db_txt,
+            )
+
 
 def make_smeter_bar(*, flex_horizontal: bool = False) -> ScaledMeterBar:
     bar = ScaledMeterBar(
@@ -1854,6 +1972,40 @@ def live_level_ticks() -> List[tuple]:
     return ticks
 
 
+def live_level_raw_from_linear_peak(scalar: float) -> int:
+    """Windows-WASAPI-Peak (0…1) → Live-Balken-Rohwert."""
+    import math
+
+    s = max(0.0, min(1.0, float(scalar)))
+    if s <= 1e-10:
+        return 0
+    return live_dbfs_peak_to_raw(20.0 * math.log10(s))
+
+
+def make_live_level_bar_horizontal(*, bar_min_width: int = 160) -> ScaledMeterBar:
+    """Horizontaler Live-Pegel (Player/Recorder/Sound über dem Lautstärke-Slider)."""
+    bar = ScaledMeterBar(
+        label_text="",
+        unit_text="",
+        raw_max=LIVE_LEVEL_RAW_MAX,
+        ticks=live_level_ticks(),
+        warn=0.65,
+        danger=0.82,
+        value_formatter=_format_live_level_raw,
+        show_squelch=False,
+        bar_width=14,
+        scale_width=12,
+        bar_min_height=14,
+        header_font_scale=1.0,
+        value_font_scale=0.62,
+        tick_font_scale=0.55,
+        level_bar_horizontal=True,
+    )
+    bar.setMinimumWidth(bar_min_width)
+    bar.setToolTip("")
+    return bar
+
+
 def make_live_level_bar(*, bar_min_height: int = 260) -> ScaledMeterBar:
     """Vertikaler Peak‑Balken im S‑Meter‑Look, etwa halbe Breite gegenüber dem Haupt‑S‑Meter."""
     bw, sw = 11, 24
@@ -1876,6 +2028,7 @@ def make_live_level_bar(*, bar_min_height: int = 260) -> ScaledMeterBar:
     )
     wfix = sw + bw + 8
     bar.setFixedWidth(wfix)
+    bar.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
     return bar
 
 

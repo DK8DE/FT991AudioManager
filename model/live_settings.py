@@ -10,10 +10,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, List
 
-from mapping.eq_mapping import LEVEL_DB_MAX, LEVEL_DB_MIN
-
 # Sprach-/Kopfhörer-optimierte 7-Bänder (Hz)
 DEFAULT_LIVE_EQ_FREQ_HZ = (80.0, 160.0, 315.0, 630.0, 1250.0, 2500.0, 5000.0)
+
+# Live-DSP (PortAudio) — symmetrisch ±15 dB; unabhängig vom CAT-EQ (+10 dB Deckel).
+LIVE_EQ_GAIN_DB_MIN = -15.0
+LIVE_EQ_GAIN_DB_MAX = 15.0
 
 DEFAULT_SAMPLERATE = 48000
 DEFAULT_BLOCKSIZES_ALLOWED = frozenset({128, 256, 512})
@@ -64,6 +66,61 @@ class LiveGateSettings:
 
 
 @dataclass
+class LiveFunkListenGateSettings:
+    """Einfaches Rauschgate nur am Funk-Rückweg (Monitor-Mithören)."""
+
+    enabled: bool = True
+    #: Über leises Zirpen/Rauschen, darunter geschlossen; echtes RX-Signal öffnet leicht.
+    threshold_db: float = -34.3
+    attack_ms: float = 1.5
+    hold_ms: float = 80.0
+    release_ms: float = 80.0
+
+    def clamp(self) -> None:
+        self.threshold_db = _clamp(self.threshold_db, -70.0, -1.0)
+        self.attack_ms = _clamp(self.attack_ms, 0.5, 20.0)
+        self.hold_ms = _clamp(self.hold_ms, 5.0, 200.0)
+        self.release_ms = _clamp(self.release_ms, 20.0, 500.0)
+
+    def to_gate_settings(self) -> LiveGateSettings:
+        g = LiveGateSettings(
+            enabled=bool(self.enabled),
+            threshold_db=float(self.threshold_db),
+            attack_ms=float(self.attack_ms),
+            hold_ms=float(self.hold_ms),
+            release_ms=float(self.release_ms),
+        )
+        g.clamp()
+        return g
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, raw: object) -> "LiveFunkListenGateSettings":
+        if not isinstance(raw, dict):
+            return cls()
+        g = cls(
+            enabled=bool(raw.get("enabled", True)),
+            threshold_db=float(raw.get("threshold_db", -34.3)),
+            attack_ms=float(raw.get("attack_ms", 1.5)),
+            hold_ms=float(raw.get("hold_ms", 80.0)),
+            release_ms=float(raw.get("release_ms", 80.0)),
+        )
+        g.clamp()
+        return g
+
+    @classmethod
+    def effective(cls, raw: object) -> "LiveFunkListenGateSettings":
+        """Persistierte Werte (Test-UI) oder fest verdrahtete Konstanten."""
+        from live.funk_listen_gate import SHOW_TUNING_UI, fixed_funk_listen_gate_settings
+
+        if not SHOW_TUNING_UI:
+            return fixed_funk_listen_gate_settings()
+        return cls.from_dict(raw)
+
+
+@dataclass
 class LiveCompressorSettings:
     enabled: bool = True
     threshold_db: float = -18.0
@@ -108,7 +165,9 @@ class LiveEqBandSettings:
     def clamp(self) -> None:
         self.freq_hz = max(20.0, min(float(self.freq_hz), 20000.0))
         self.gain_db = _clamp(
-            self.gain_db, float(LEVEL_DB_MIN), float(LEVEL_DB_MAX)
+            self.gain_db,
+            float(LIVE_EQ_GAIN_DB_MIN),
+            float(LIVE_EQ_GAIN_DB_MAX),
         )
         self.q = _clamp(self.q, 0.5, 10.0)
 
@@ -153,6 +212,9 @@ class LiveSettings:
     #: Optional gespeicherte Fenstergeometrie (Base64 QByteArray wie andere Fenster).
     window_geometry: str = ""
     gate: LiveGateSettings = field(default_factory=LiveGateSettings)
+    funk_listen_gate: LiveFunkListenGateSettings = field(
+        default_factory=lambda: LiveFunkListenGateSettings.effective(None)
+    )
     compressor: LiveCompressorSettings = field(default_factory=LiveCompressorSettings)
     eq_bands: List[LiveEqBandSettings] = field(default_factory=_default_eq_bands)
     #: EQ-Master aktiv (wie „Parametric MIC EQ“ Checkbox am Funkgerät)
@@ -201,6 +263,7 @@ class LiveSettings:
         self._clamp_gain()
         self._normalize_eq_band_count()
         self.gate.clamp()
+        self.funk_listen_gate.clamp()
         self.compressor.clamp()
         for b in self.eq_bands:
             b.clamp()
@@ -234,6 +297,7 @@ class LiveSettings:
             return cls()
 
         gates = LiveGateSettings.from_dict(raw.get("gate"))
+        funk_gate = LiveFunkListenGateSettings.effective(raw.get("funk_listen_gate"))
         comps = LiveCompressorSettings.from_dict(raw.get("compressor"))
         raw_bands = raw.get("eq_bands")
         bands_e: List[LiveEqBandSettings] = []
@@ -271,6 +335,7 @@ class LiveSettings:
             blocksize=int(raw.get("blocksize", DEFAULT_BLOCKSIZE)),
             window_geometry=str(raw.get("window_geometry", "") or ""),
             gate=gates,
+            funk_listen_gate=funk_gate,
             compressor=comps,
             eq_bands=bands_e if bands_e else _default_eq_bands(),
             eq_enabled=bool(raw.get("eq_enabled", True)),
@@ -289,6 +354,7 @@ __all__ = [
     "DEFAULT_LIVE_EQ_FREQ_HZ",
     "LiveCompressorSettings",
     "LiveEqBandSettings",
+    "LiveFunkListenGateSettings",
     "LiveGateSettings",
     "LiveSettings",
 ]

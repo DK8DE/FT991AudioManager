@@ -2755,6 +2755,7 @@ class MainWindow(QMainWindow):
         w = _LiveWin(
             self._settings,
             persist_settings=self._persist_settings,
+            open_sound_settings=self._on_sound_settings_action,
             serial_cat=self._cat,
             audio_radio_session=self._audio_radio_session,
             operating_mode_provider=self._main_operating_mode,
@@ -2823,7 +2824,18 @@ class MainWindow(QMainWindow):
             self._sound_settings_window.closed.connect(
                 self._on_sound_settings_window_closed
             )
+            self._sound_settings_window.live_devices_changed.connect(
+                self._on_sound_settings_live_devices_changed
+            )
         return self._sound_settings_window
+
+    def _on_sound_settings_live_devices_changed(self) -> None:
+        win = self._live_window
+        if win is None:
+            return
+        apply_fn = getattr(win, "apply_devices_from_settings", None)
+        if callable(apply_fn):
+            apply_fn()
 
     def _on_sound_settings_action(self) -> None:
         win = self._ensure_sound_settings_window()
@@ -2833,6 +2845,12 @@ class MainWindow(QMainWindow):
 
     def _on_sound_settings_window_closed(self) -> None:
         self._persist_settings()
+        for win in (self._audio_player_window, self._audio_recorder_window):
+            if win is None:
+                continue
+            reload_fn = getattr(win, "reload_routing_from_settings", None)
+            if callable(reload_fn):
+                reload_fn()
 
     def _ensure_audio_player_window(self) -> AudioPlayerWindow:
         if self._audio_player_window is None:
@@ -2842,6 +2860,7 @@ class MainWindow(QMainWindow):
                 audio_radio_session=self._audio_radio_session,
                 operating_mode_provider=self._main_operating_mode,
                 audio_hub=self._audio_hub,
+                open_sound_settings=self._on_sound_settings_action,
             )
             self._audio_player_window.closed.connect(
                 self._on_audio_player_window_closed
@@ -2871,6 +2890,7 @@ class MainWindow(QMainWindow):
                 audio_radio_session=self._audio_radio_session,
                 operating_mode_provider=self._main_operating_mode,
                 audio_hub=self._audio_hub,
+                open_sound_settings=self._on_sound_settings_action,
             )
             self._audio_recorder_window.closed.connect(
                 self._on_audio_recorder_window_closed

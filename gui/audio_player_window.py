@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QGroupBox,
-    QComboBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -37,7 +36,6 @@ from audio.player_controller import (
     PlayerController,
     PlayerState,
     build_playlist_entries,
-    list_audio_output_devices,
     multimedia_available,
 )
 from model.global_audio_settings import ROLE_PC, ROLE_SEND
@@ -67,8 +65,9 @@ from .app_icon import app_icon
 from .audio_hub_binding import (
     connect_level_meters,
     connect_player_hub,
-    load_global_audio_into_combos,
+    load_global_audio_into_widgets,
 )
+from .audio_routing_display import hub_device_label
 from .file_list_widget_style import FILE_LIST_WIDGET_STYLESHEET
 from .folder_dialog import pick_audio_player_folder
 from .menu_icons import (
@@ -160,12 +159,14 @@ class AudioPlayerWindow(QMainWindow):
         audio_radio_session: Optional[AudioRadioSessionHost] = None,
         operating_mode_provider: Optional[Callable[[], RxMode]] = None,
         audio_hub: Optional[AudioSettingsHub] = None,
+        open_sound_settings: Optional[Callable[[], None]] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         del parent
         super().__init__(None)
         self._settings = settings
         self._audio_hub = audio_hub
+        self._open_sound_settings = open_sound_settings
         self._cat = serial_cat
         self._audio_radio_session = audio_radio_session
         self._operating_mode_provider = operating_mode_provider
@@ -278,8 +279,6 @@ class AudioPlayerWindow(QMainWindow):
         if self._audio_hub is not None:
             connect_player_hub(
                 hub=self._audio_hub,
-                combo_send=self.combo_output,
-                combo_pc=self.combo_pc_output,
                 vol_send=self._vol_send,
                 vol_pc=self._vol_pc,
                 check_tx_monitor=self.check_tx_monitor_pc,
@@ -459,23 +458,23 @@ class AudioPlayerWindow(QMainWindow):
         self._mode_group.addButton(self.radio_single)
         self._mode_group.addButton(self.radio_playlist)
         self.radio_single.toggled.connect(self._sync_mode_to_controller)
-        mode_l.addWidget(self.radio_single)
-        playlist_row = QHBoxLayout()
-        playlist_row.addWidget(self.radio_playlist)
         self.check_warn_transmission_end = QCheckBox(
             "Warnen beim Ende der Aussendung"
         )
         self.check_warn_transmission_end.setToolTip(
             "In den letzten 10 Sekunden der letzten Datei ertönt ein kurzer \n"
-            "Hinweis auf dem PC-Ausgabegerät (Combobox „PC-Ausgabe“). \n"
+            "Hinweis auf dem PC-Ausgabegerät. \n"
             "Nicht über die Sende-Soundkarte / nicht über den CAT-Audiopfad.\n"
         )
         self.check_warn_transmission_end.toggled.connect(
             self._on_warn_transmission_end_toggled
         )
-        playlist_row.addWidget(self.check_warn_transmission_end)
-        playlist_row.addStretch(1)
-        mode_l.addLayout(playlist_row)
+        playlist_mode_row = QHBoxLayout()
+        playlist_mode_row.addWidget(self.radio_single)
+        playlist_mode_row.addWidget(self.radio_playlist)
+        playlist_mode_row.addWidget(self.check_warn_transmission_end)
+        playlist_mode_row.addStretch(1)
+        mode_l.addLayout(playlist_mode_row)
 
         self.check_contest = QCheckBox("Kontest-Loop")
         self.check_contest.setToolTip(
@@ -485,10 +484,14 @@ class AudioPlayerWindow(QMainWindow):
             "MIC-PTT bricht den Loop ab — kein automatischer Neustart.\n"
         )
         self.check_contest.toggled.connect(self._on_contest_toggled)
-        mode_l.addWidget(self.check_contest)
-
-        listen_row = QHBoxLayout()
-        listen_row.addWidget(_form_label("Hörpause:"))
+        contest_row = QHBoxLayout()
+        contest_row.addWidget(self.check_contest)
+        contest_row.addSpacing(8)
+        lbl_hoerpause = QLabel("Hörpause:")
+        lbl_hoerpause.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        contest_row.addWidget(lbl_hoerpause)
         self.spin_contest_listen = QSpinBox()
         self.spin_contest_listen.setRange(0, MAX_CONTEST_LISTEN_MS)
         self.spin_contest_listen.setSuffix(" ms")
@@ -497,20 +500,9 @@ class AudioPlayerWindow(QMainWindow):
             "Dauer der Hörpause zwischen den Wiederholungen (Sprach-Mode)."
         )
         self.spin_contest_listen.valueChanged.connect(self._sync_contest_to_controller)
-        listen_row.addWidget(self.spin_contest_listen)
-        listen_row.addStretch(1)
-        mode_l.addLayout(listen_row)
-
-        dev_row = QHBoxLayout()
-        dev_row.addWidget(_form_label("Sende-Ausgabe:"))
-        self.combo_output = QComboBox()
-        self.combo_output.setToolTip(
-            "Soundkarte für die CAT-Sendung (TX / Modulation ins Funkgerät)."
-        )
-        self._fill_output_devices()
-        self.combo_output.currentIndexChanged.connect(self._on_output_changed)
-        dev_row.addWidget(self.combo_output, 1)
-        mode_l.addLayout(dev_row)
+        contest_row.addWidget(self.spin_contest_listen)
+        contest_row.addStretch(1)
+        mode_l.addLayout(contest_row)
 
         vol_row = QHBoxLayout()
         vol_row.addWidget(_form_label("Sende-Lautstärke:"))
@@ -522,17 +514,6 @@ class AudioPlayerWindow(QMainWindow):
         self._vol_send.mute_toggled.connect(self._on_send_mute_toggled)
         vol_row.addWidget(self._vol_send, 1)
         mode_l.addLayout(vol_row)
-
-        pc_dev_row = QHBoxLayout()
-        pc_dev_row.addWidget(_form_label("PC-Ausgabe:"))
-        self.combo_pc_output = QComboBox()
-        self.combo_pc_output.setToolTip(
-            "Zweites Ausgabegerät für lokale Vorhöre (Play PC) — kein CAT, kein TX."
-        )
-        self._fill_pc_output_devices()
-        self.combo_pc_output.currentIndexChanged.connect(self._on_pc_output_changed)
-        pc_dev_row.addWidget(self.combo_pc_output, 1)
-        mode_l.addLayout(pc_dev_row)
 
         pc_vol_row = QHBoxLayout()
         pc_vol_row.addWidget(_form_label("PC-Lautstärke:"))
@@ -551,7 +532,19 @@ class AudioPlayerWindow(QMainWindow):
             "zusätzlich auf dem PC-Ausgabegerät ausgeben (gleiche Datei, zweiter Player)."
         )
         self.check_tx_monitor_pc.toggled.connect(self._on_tx_monitor_pc_toggled)
-        mode_l.addWidget(self.check_tx_monitor_pc)
+        monitor_row = QHBoxLayout()
+        monitor_row.addWidget(self.check_tx_monitor_pc)
+        monitor_row.addStretch(1)
+        self._btn_audio_routing = QPushButton("Zur Audio‑Zuordnung…")
+        self._btn_audio_routing.setToolTip(
+            "Soundeinstellungen öffnen — Sende- und PC-Ausgabe dort wählen."
+        )
+        if self._open_sound_settings is not None:
+            self._btn_audio_routing.clicked.connect(self._open_sound_settings)
+        else:
+            self._btn_audio_routing.setEnabled(False)
+        monitor_row.addWidget(self._btn_audio_routing)
+        mode_l.addLayout(monitor_row)
 
         root.addWidget(mode_box)
 
@@ -575,41 +568,27 @@ class AudioPlayerWindow(QMainWindow):
 
         self.setCentralWidget(central)
 
-    def _fill_output_devices(self) -> None:
-        self.combo_output.blockSignals(True)
-        try:
-            self.combo_output.clear()
-            saved = (
-                self._audio_hub.device_id(ROLE_SEND)
-                if self._audio_hub
-                else self._settings.audio_player.output_device_id
-            )
-            select_idx = 0
-            for i, (dev_id, label) in enumerate(list_audio_output_devices()):
-                self.combo_output.addItem(label, dev_id)
-                if dev_id == saved:
-                    select_idx = i
-            self.combo_output.setCurrentIndex(select_idx)
-        finally:
-            self.combo_output.blockSignals(False)
+    def _send_device_id(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_id(ROLE_SEND)
+        return str(self._settings.audio_player.output_device_id or "")
 
-    def _fill_pc_output_devices(self) -> None:
-        self.combo_pc_output.blockSignals(True)
-        try:
-            self.combo_pc_output.clear()
-            saved = (
-                self._audio_hub.device_id(ROLE_PC)
-                if self._audio_hub
-                else self._settings.audio_player.pc_output_device_id
-            )
-            select_idx = 0
-            for i, (dev_id, label) in enumerate(list_audio_output_devices()):
-                self.combo_pc_output.addItem(label, dev_id)
-                if dev_id == saved:
-                    select_idx = i
-            self.combo_pc_output.setCurrentIndex(select_idx)
-        finally:
-            self.combo_pc_output.blockSignals(False)
+    def _pc_device_id(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_id(ROLE_PC)
+        return str(self._settings.audio_player.pc_output_device_id or "")
+
+    def _refresh_volume_device_tooltips(self) -> None:
+        self._vol_send.set_assigned_device(
+            hub_device_label(self._send_device_id(), input_device=False)
+        )
+        self._vol_pc.set_assigned_device(
+            hub_device_label(self._pc_device_id(), input_device=False)
+        )
+
+    def reload_routing_from_settings(self) -> None:
+        """Nach Soundeinstellungen Gerätenamen in Tooltips aktualisieren."""
+        self._refresh_volume_device_tooltips()
 
     def _load_settings_to_ui(self) -> None:
         ap = self._settings.audio_player
@@ -638,10 +617,8 @@ class AudioPlayerWindow(QMainWindow):
         self._sync_mode_to_controller()
         self._sync_contest_to_controller()
         if self._audio_hub is not None:
-            load_global_audio_into_combos(
+            load_global_audio_into_widgets(
                 self._audio_hub,
-                combo_send=self.combo_output,
-                combo_pc=self.combo_pc_output,
                 vol_send=self._vol_send,
                 vol_pc=self._vol_pc,
                 check_tx_monitor=self.check_tx_monitor_pc,
@@ -654,18 +631,13 @@ class AudioPlayerWindow(QMainWindow):
         else:
             self._vol_send.set_value(ap.volume_percent)
             self._apply_send_volume(ap.volume_percent)
-            saved_device = self.combo_output.currentData()
-            if not isinstance(saved_device, str):
-                saved_device = ""
-            self._apply_send_device(saved_device)
-            saved_pc = self.combo_pc_output.currentData()
-            if not isinstance(saved_pc, str):
-                saved_pc = ""
-            self._pc_pending_device_id = saved_pc
+            self._apply_send_device(str(ap.output_device_id or ""))
+            self._pc_pending_device_id = str(ap.pc_output_device_id or "")
             self._vol_pc.set_value(ap.pc_output_volume_percent)
             self._apply_pc_volume(ap.pc_output_volume_percent)
             self.check_tx_monitor_pc.setChecked(bool(ap.tx_monitor_to_pc_enabled))
             self._apply_tx_monitor(bool(ap.tx_monitor_to_pc_enabled))
+            self._refresh_volume_device_tooltips()
 
     def _restore_geometry(self) -> None:
         geo = self._settings.audio_player.window_geometry
@@ -866,32 +838,12 @@ class AudioPlayerWindow(QMainWindow):
         self.radio_single.setEnabled(not on)
         self.radio_playlist.setEnabled(not on)
 
-    def _on_output_changed(self) -> None:
-        dev_id = self.combo_output.currentData()
-        if not isinstance(dev_id, str):
-            dev_id = ""
-        if self._audio_hub is not None:
-            self._audio_hub.set_device_id(ROLE_SEND, dev_id)
-        else:
-            self._settings.audio_player.output_device_id = dev_id
-        self._apply_send_device(dev_id)
-
     def _on_volume_changed(self, value: int) -> None:
         if self._audio_hub is not None:
             self._audio_hub.set_volume_percent(ROLE_SEND, int(value))
         else:
             self._settings.audio_player.volume_percent = int(value)
         self._apply_send_volume(int(value))
-
-    def _on_pc_output_changed(self) -> None:
-        dev_id = self.combo_pc_output.currentData()
-        if not isinstance(dev_id, str):
-            dev_id = ""
-        if self._audio_hub is not None:
-            self._audio_hub.set_device_id(ROLE_PC, dev_id)
-        else:
-            self._settings.audio_player.pc_output_device_id = dev_id
-        self._apply_pc_output_device(dev_id)
 
     def _on_pc_volume_changed(self, value: int) -> None:
         value = max(0, min(100, int(value)))
@@ -953,10 +905,7 @@ class AudioPlayerWindow(QMainWindow):
 
     def _apply_tx_monitor_pc_to_controller(self) -> None:
         """PC-Gerät/Lautstärke + Checkbox an PlayerController (CAT-Mithören)."""
-        pc_id = self.combo_pc_output.currentData()
-        if not isinstance(pc_id, str):
-            pc_id = ""
-        self._apply_pc_output_device(pc_id)
+        self._apply_pc_output_device(self._pc_device_id())
         self._apply_pc_volume(self._vol_pc.value())
         self._apply_tx_monitor(self.check_tx_monitor_pc.isChecked())
 
@@ -1176,8 +1125,8 @@ class AudioPlayerWindow(QMainWindow):
         if mm is None:
             return None
         _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
-        dev_id = self.combo_pc_output.currentData()
-        if isinstance(dev_id, str) and dev_id:
+        dev_id = self._pc_device_id()
+        if dev_id:
             for dev in QMediaDevices.audioOutputs():
                 try:
                     uid = dev.id().data().decode("utf-8", errors="replace")
@@ -1850,8 +1799,6 @@ class AudioPlayerWindow(QMainWindow):
         self.check_contest.setEnabled(not busy and not pc_busy)
         self.spin_contest_listen.setEnabled(contest_on and not busy and not pc_busy)
         self._vol_send.setEnabled(multimedia_available() and not pc_busy)
-        self.combo_output.setEnabled(not pc_busy)
-        self.combo_pc_output.setEnabled(not pc_busy)
         self._vol_pc.setEnabled(not busy)
         self.check_tx_monitor_pc.setEnabled(multimedia_available())
         self.progress.setEnabled(
@@ -1947,8 +1894,7 @@ class AudioPlayerWindow(QMainWindow):
         self._sync_playlist_from_list()
         ap = self._settings.audio_player
         ap.folder_path = str(self._folder) if self._folder.is_dir() else ""
-        pc_id = self.combo_pc_output.currentData()
-        ap.pc_output_device_id = pc_id if isinstance(pc_id, str) else ""
+        ap.pc_output_device_id = self._pc_device_id()
         ap.pc_output_volume_percent = max(0, min(100, int(self._vol_pc.value())))
         ap.volume_percent = max(0, min(100, int(self._vol_send.value())))
         ap.tx_monitor_to_pc_enabled = bool(self.check_tx_monitor_pc.isChecked())

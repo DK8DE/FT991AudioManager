@@ -38,8 +38,7 @@ _WARNING_HTML = """
     <b>100&nbsp;W</b> belastbar.</li>
 <li>Frequenz im 10-m-Band wählen mit
     <b>"QRG setzen Tuner starten"</b>.</li>
-<li>Der Test sendet per CAT-TX je 2&nbsp;s in 5-W-Schritten von 5–100&nbsp;W
-    (FM, Leistung über <b>PC</b>, Deckel über <b>EX137</b>).</li>
+<li>Der Test sendet per CAT-TX je 2&nbsp;s in 5-W-Schritten von 5–100&nbsp;W FM</li>
 <li>Die gespeicherte Kurve gilt für alle die <b>POWER-Anzeige auf allen KW-Bändern.</b></li>
 </ul><p> </p>
 """

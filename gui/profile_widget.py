@@ -748,23 +748,51 @@ class ProfileWidget(QWidget):
         return self._current_profile_name
 
     def enter_live_eq_session(self) -> bool:
-        """Live-Fenster geöffnet: „Default“ ans Radio, UI-Auswahl unverändert."""
+        """Live-Fenster geöffnet: „Default“ ans Radio und in der Profil-Combo."""
         if self._live_eq_session_saved_profile is not None:
             return True
         self._live_eq_session_saved_profile = self._current_profile_name
         self._auto_write_timer.stop()
         self.set_cat_blocked(True)
-        return self._push_profile_to_radio(DEFAULT_PROFILE_NAME)
+        ok = self._push_profile_to_radio(DEFAULT_PROFILE_NAME)
+        self._set_profile_combo_display(DEFAULT_PROFILE_NAME)
+        self.profile_combo.setEnabled(False)
+        self.profile_combo_eq.setEnabled(False)
+        return ok
 
     def exit_live_eq_session(self) -> None:
-        """Live-Fenster geschlossen: vorheriges EQ-Profil wieder ans Radio."""
+        """Live-Fenster geschlossen: vorheriges EQ-Profil wieder ans Radio + UI."""
         saved = self._live_eq_session_saved_profile
         if saved is None:
             return
         self._live_eq_session_saved_profile = None
         self.set_cat_blocked(False)
+        connected = self._cat.is_connected()
+        self.profile_combo.setEnabled(connected)
+        self.profile_combo_eq.setEnabled(connected)
         if saved:
             self._push_profile_to_radio(saved)
+            self._set_profile_combo_display(saved)
+
+    def _set_profile_combo_display(self, name: str) -> bool:
+        """Profil-Combos und Editoren anzeigen, ohne CAT-Schreiben."""
+        n = str(name or "").strip()
+        if not n:
+            return False
+        idx = self.profile_combo.findText(n)
+        if idx < 0:
+            return False
+        with self._hold_suppress_dirty():
+            self.profile_combo.blockSignals(True)
+            self.profile_combo_eq.blockSignals(True)
+            try:
+                self.profile_combo.setCurrentIndex(idx)
+                self.profile_combo_eq.setCurrentIndex(idx)
+            finally:
+                self.profile_combo.blockSignals(False)
+                self.profile_combo_eq.blockSignals(False)
+            self._apply_profile_to_editors(n)
+        return True
 
     def _push_profile_to_radio(self, name: str) -> bool:
         """Schreibt ein gespeichertes Profil ins Gerät, ohne die UI-Auswahl."""

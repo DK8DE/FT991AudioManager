@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -18,12 +18,16 @@ from PySide6.QtWidgets import (
 
 from audio.windows_endpoint_volume import windows_endpoint_peak_available
 
-from .audio_level_bar import AudioLevelBar
 from .menu_icons import menu_action_icon, volume_role_icon_size
+from .meter_widget import (
+    ScaledMeterBar,
+    live_level_raw_from_linear_peak,
+    make_live_level_bar_horizontal,
+)
 
 
 class VolumeControlRow(QWidget):
-    """Pegelanzeige + Lautstärke-Slider, Prozent, Stumm-Button."""
+    """Horizontaler Live-Pegel + Lautstärke-Slider, Prozent, Stumm-Button."""
 
     value_changed = Signal(int)
     mute_toggled = Signal(bool)
@@ -42,30 +46,43 @@ class VolumeControlRow(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(4)
 
-        self._level_bar: Optional[AudioLevelBar] = None
+        self._level_bar: Optional[ScaledMeterBar] = None
+        self._role_lbl: Optional[QLabel] = None
+        self._meter_active = False
+        self._peak = 0.0
+        self._display = 0.0
+        self._help_tooltip = str(tooltip or "").strip()
+        self._mute_help = (
+            "Stumm am Windows-Gerät ein/aus (überschreibt System-Stumm)"
+        )
+        self._device_name = ""
         if show_level_meter:
-            self._level_bar = AudioLevelBar(self)
-            self._level_bar.set_active(windows_endpoint_peak_available())
+            self._level_bar = make_live_level_bar_horizontal()
+            self._meter_active = windows_endpoint_peak_available()
+            if not self._meter_active:
+                self._level_bar.set_enabled_visual(False)
             root.addWidget(self._level_bar)
+            self._meter_timer = QTimer(self)
+            self._meter_timer.setInterval(40)
+            self._meter_timer.timeout.connect(self._meter_tick)
+            self._meter_timer.start()
 
         row = QWidget(self)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        root.addWidget(row)
 
         if leading_icon is not None and not leading_icon.isNull():
-            role_lbl = QLabel()
-            role_lbl.setFixedSize(volume_role_icon_size())
-            role_lbl.setPixmap(
+            self._role_lbl = QLabel()
+            self._role_lbl.setFixedSize(volume_role_icon_size())
+            self._role_lbl.setPixmap(
                 leading_icon.pixmap(
                     volume_role_icon_size(),
                     QIcon.Mode.Normal,
                     QIcon.State.Off,
                 )
             )
-            role_lbl.setToolTip(tooltip)
-            layout.addWidget(role_lbl)
+            layout.addWidget(self._role_lbl)
 
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(0, 100)
@@ -73,8 +90,6 @@ class VolumeControlRow(QWidget):
         self._slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self._slider.setTickInterval(10)
         self._slider.setPageStep(10)
-        if tooltip:
-            self._slider.setToolTip(tooltip)
         self._slider.valueChanged.connect(self._on_slider)
         layout.addWidget(self._slider, 1)
 
@@ -85,16 +100,52 @@ class VolumeControlRow(QWidget):
         self._btn_mute = QPushButton()
         self._btn_mute.setCheckable(True)
         self._btn_mute.setFixedSize(28, 28)
-        self._btn_mute.setToolTip(
-            "Stumm am Windows-Gerät ein/aus (überschreibt System-Stumm)"
-        )
         self._btn_mute.toggled.connect(self._on_mute_toggled)
         self._update_mute_icon(False)
         layout.addWidget(self._btn_mute)
 
-    def set_peak_level(self, level: float) -> None:
+        root.addWidget(row)
+        self._apply_tooltips()
+
+    def set_assigned_device(self, device_label: str) -> None:
+        """Zugeordnetes Gerät — erscheint im Tooltip von Slider, Pegel und Stumm."""
+        self._device_name = str(device_label or "").strip()
+        self._apply_tooltips()
+
+    def _apply_tooltips(self) -> None:
+        dev = self._device_name or "— nicht gewählt —"
+        dev_line = f"Gerät: {dev}"
+        parts = [p for p in (self._help_tooltip, dev_line) if p]
+        slider_tip = "\n".join(parts)
+        mute_tip = f"{self._mute_help}\n{dev_line}"
+        level_tip = f"Pegelanzeige\n{dev_line}"
+        self._slider.setToolTip(slider_tip)
+        self._btn_mute.setToolTip(mute_tip)
         if self._level_bar is not None:
-            self._level_bar.set_peak_level(level)
+            self._level_bar.setToolTip(level_tip)
+        if self._role_lbl is not None:
+            self._role_lbl.setToolTip(slider_tip)
+
+    def set_peak_level(self, level: float) -> None:
+        if self._level_bar is None or not self._meter_active:
+            return
+        v = max(0.0, min(1.0, float(level)))
+        if v >= self._peak:
+            self._peak = v
+        elif v > self._display:
+            self._display = v
+
+    def _meter_tick(self) -> None:
+        if self._level_bar is None or not self._meter_active:
+            return
+        decay = 0.82
+        self._display = max(self._peak, self._display * decay)
+        self._peak *= decay
+        if self._peak < 0.002:
+            self._peak = 0.0
+        if self._display < 0.002:
+            self._display = 0.0
+        self._level_bar.set_value(live_level_raw_from_linear_peak(self._display))
 
     def value(self) -> int:
         return int(self._slider.value())

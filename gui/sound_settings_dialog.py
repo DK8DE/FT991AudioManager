@@ -7,6 +7,7 @@ import sys
 from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtCore import QByteArray, Qt, Signal
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -47,6 +48,7 @@ class SoundSettingsWindow(QMainWindow):
     """Zentrale Auswahl von Aufnahme-, Sende- und PC-Soundkarte inkl. Windows-Lautstärke."""
 
     closed = Signal()
+    live_devices_changed = Signal()
 
     def __init__(
         self,
@@ -192,10 +194,11 @@ class SoundSettingsWindow(QMainWindow):
 
         root.addWidget(box)
 
-        live = QGroupBox("Live‑Monitoring — PC‑Mikrofon zu Kopfhörer/Soundkarte")
+        live = QGroupBox("Zuordnungen für Live")
         liv_lay = QVBoxLayout(live)
         tip = QLabel(
-            "PortAudio‑Geräteindeizes (wie im Live‑Fenster)."
+            "PortAudio‑Geräte für das Live‑Fenster. Änderungen gelten sofort "
+            "für Mithören und Live‑Sendung."
         )
         tip.setWordWrap(True)
         liv_lay.addWidget(tip)
@@ -215,17 +218,20 @@ class SoundSettingsWindow(QMainWindow):
         liv_lay.addLayout(rout)
 
         rfunk = QHBoxLayout()
-        rfunk.addWidget(form_label("Funk‑Ausgang:"))
+        rfunk.addWidget(form_label("Funk‑Eingabe:"))
         self._combo_live_funk = QComboBox()
+        self._combo_live_funk.setToolTip(
+            "PC‑Wiedergabe zum Funkgerät (Sendepfad — Eingang am Transceiver)."
+        )
         self._combo_live_funk.currentIndexChanged.connect(self._on_live_funk_dev)
         rfunk.addWidget(self._combo_live_funk, 1)
         liv_lay.addLayout(rfunk)
 
         r_listen = QHBoxLayout()
-        r_listen.addWidget(form_label("Funk‑Eingang:"))
+        r_listen.addWidget(form_label("Funk‑Ausgabe:"))
         self._combo_live_funk_listen = QComboBox()
         self._combo_live_funk_listen.setToolTip(
-            "Funkeingabe wird immer auf den Live‑Monitor gemischt (Mithören)."
+            "Funkausgabe (vom Gerät) wird auf den Live‑Monitor gemischt (Mithören)."
         )
         self._combo_live_funk_listen.currentIndexChanged.connect(
             self._on_live_funk_listen_dev
@@ -422,14 +428,17 @@ class SoundSettingsWindow(QMainWindow):
     def _on_live_in_dev(self, *_idx: int) -> None:
         rid = self._combo_live_in.currentData()
         self._settings.live.input_device_id = str(rid) if isinstance(rid, str) else ""
+        self._emit_live_devices_changed()
 
     def _on_live_out_dev(self, *_idx: int) -> None:
         rid = self._combo_live_out.currentData()
         self._settings.live.output_device_id = str(rid) if isinstance(rid, str) else ""
+        self._emit_live_devices_changed()
 
     def _on_live_funk_dev(self, *_idx: int) -> None:
         rid = self._combo_live_funk.currentData()
         self._settings.live.funk_output_device_id = str(rid) if isinstance(rid, str) else ""
+        self._emit_live_devices_changed()
 
     def _on_live_funk_listen_dev(self, *_idx: int) -> None:
         rid = self._combo_live_funk_listen.currentData()
@@ -437,6 +446,10 @@ class SoundSettingsWindow(QMainWindow):
             str(rid) if isinstance(rid, str) else ""
         )
         self._settings.live.funk_listen_enabled = True
+        self._emit_live_devices_changed()
+
+    def _emit_live_devices_changed(self) -> None:
+        self.live_devices_changed.emit()
 
     def _save_geometry(self) -> None:
         geo = self.saveGeometry()
@@ -457,6 +470,13 @@ class SoundSettingsWindow(QMainWindow):
                 self.restoreGeometry(geo)
         except Exception:
             pass
+
+    def showEvent(self, event: QShowEvent) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        from audio.windows_endpoint_volume import invalidate_windows_audio_device_cache
+
+        invalidate_windows_audio_device_cache()
+        self._load_live_devices_from_settings()
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._save_geometry()

@@ -50,6 +50,8 @@ except ImportError:
     _HAVE_DSP = False
 
 _SPLIT_QUEUE_BLOCKS = 128
+# Getrennte In/Out-Streams: größere Puffer — weniger Drift vs. WASAPI-Treiber.
+_SPLIT_STREAM_LATENCY = "high"
 
 # Probed-Reihenfolge absteigend; höchste gemeinsam gültige Rate gewinnt
 # (Bluetooth-HFP-Mics sind oft nur 8/16 kHz, Monitor ggf. 48 kHz).
@@ -80,7 +82,7 @@ def _portaudio_cb_status_problematic(status: object) -> bool:
     """
     return bool(status)
 if TYPE_CHECKING:
-    from live.live_dsp import LiveDSPChain
+    from live.live_dsp import FunkListenNoiseGateState, LiveDSPChain
 
 
 class LiveAudioEngine:
@@ -96,6 +98,7 @@ class LiveAudioEngine:
         self._stream_idle_listen_in: Optional[_SdStream] = None
         self._stream_idle_mic_in: Optional[_SdStream] = None
         self._stream_idle_mon_out: Optional[_SdStream] = None
+        self._stream_idle_duplex: Optional[_SdStream] = None
         self._stream_mic_preview_in: Optional[_SdStream] = None
         self._boxed: LiveSettings = LiveSettings()
         self._dsp: Optional["LiveDSPChain"] = None
@@ -104,6 +107,44 @@ class LiveAudioEngine:
         self._idle_listen_snap = LiveSettings()
         self._mic_preview_running = False
         self._mic_preview_snap = LiveSettings()
+        self._funk_listen_gate: FunkListenNoiseGateState
+        self._reset_funk_listen_gate()
+
+    def reset_funk_listen_noise_gate(self) -> None:
+        """Gate-Zustand zurücksetzen (z. B. nach Schwellen-Änderung in der Test-UI)."""
+        self._reset_funk_listen_gate()
+
+    def _reset_funk_listen_gate(self) -> None:
+        from live.live_dsp import FunkListenNoiseGateState
+
+        self._funk_listen_gate = FunkListenNoiseGateState()
+
+    def _process_funk_listen_block(
+        self,
+        raw: object,
+        ls: LiveSettings,
+        frames: int,
+        in_channels: int,
+    ) -> Any:
+        """Mono Funk-Rückweg nach Lautheit und optionalem Rauschgate."""
+        import numpy as np
+
+        nf_i = int(frames)
+        ch = max(1, int(in_channels))
+        data = np.asarray(raw, dtype=np.float32)
+        if data.ndim == 2 and data.shape[1] >= 2:
+            mono_rx = np.mean(data, axis=1).astype(np.float32)
+        else:
+            mono_rx = data[..., 0].astype(np.float32)
+        gv_l = np.float32(max(0.0, min(2.0, float(ls.funk_listen_gain))))
+        yr = mono_rx.reshape(-1) * gv_l
+        fs = max(1000.0, float(ls.samplerate))
+        yr = self._funk_listen_gate.process(
+            yr.astype(np.float32, copy=False),
+            fs,
+            ls.funk_listen_gate.to_gate_settings(),
+        )
+        return LiveAudioEngine._fit_mono_to_frames(yr, nf_i)
 
     def _get_dsp(self) -> "LiveDSPChain":
         if self._dsp is None:
@@ -170,6 +211,7 @@ class LiveAudioEngine:
             self.mic_meter_db = float(-120.0)
         objs: list[_SdStream] = []
         for attr in (
+            "_stream_idle_duplex",
             "_stream_idle_mon_out",
             "_stream_idle_listen_in",
             "_stream_idle_mic_in",
@@ -451,6 +493,79 @@ class LiveAudioEngine:
             raise
         self._stream_duplex = stream
 
+    def _start_idle_duplex(
+        self,
+        live: LiveSettings,
+        *,
+        in_dev: Optional[int],
+        out_dev: Optional[int],
+        sr: float,
+        bs: int,
+    ) -> None:
+        """Idle-Mithören: ein Duplex-Stream (Mic → Monitor), ohne Queue-Drift."""
+        assert sd is not None
+
+        in_ch = max(1, int(self._in_channels_hint(in_dev)))
+        weak_self = self
+
+        def callback(
+            indata: object,
+            outdata: object,
+            frames: int,
+            time_info: object,
+            status: object,
+        ) -> None:
+            del time_info
+            import numpy as np
+
+            nf = int(frames)
+            if not weak_self._idle_listen_running:
+                LiveAudioEngine._stereo_fill_mono(
+                    outdata, np.zeros(nf, dtype=np.float32)
+                )
+                return
+            if _portaudio_cb_status_problematic(status):
+                safe_in = np.zeros((nf, in_ch), dtype=np.float32)
+            else:
+                safe_in = np.asarray(indata, dtype=np.float32)
+            ls = weak_self._idle_listen_snap
+            y_dsp = weak_self._dsp_mono_without_output_gain(ls, safe_in)
+            weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(
+                LiveAudioEngine._fit_mono_to_frames(
+                    np.asarray(y_dsp, dtype=np.float32).reshape(-1), nf
+                )
+            )
+            gv = np.float32(max(0.0, min(2.0, float(ls.output_gain))))
+            mic_sig = np.zeros(nf, dtype=np.float32)
+            if not bool(ls.suppress_live_monitor_mic):
+                mic_sig = LiveAudioEngine._fit_mono_to_frames(
+                    np.asarray(y_dsp, dtype=np.float32).reshape(-1), nf
+                )
+            y_mono = mic_sig.astype(np.float32) * gv
+            weak_self.monitor_meter_db = LiveAudioEngine._mono_peak_dbfs(y_mono)
+            weak_self.funk_meter_db = float(-120.0)
+            weak_self.funk_listen_meter_db = float(-120.0)
+            LiveAudioEngine._stereo_fill_mono(outdata, y_mono)
+
+        stream = sd.Stream(
+            samplerate=float(sr),
+            blocksize=int(bs),
+            device=(in_dev, out_dev),
+            channels=(in_ch, 2),
+            dtype="float32",
+            latency="low",
+            callback=callback,
+        )
+        try:
+            stream.start()
+        except Exception:
+            try:
+                stream.close()
+            except Exception:
+                pass
+            raise
+        self._stream_idle_duplex = stream
+
     def _start_split_streams(
         self,
         live: LiveSettings,
@@ -545,17 +660,13 @@ class LiveAudioEngine:
                 with lock:
                     q_listen_in.append(fit_r.astype(np.float32, copy=True))
                 return
-            gv_l = np.float32(max(0.0, min(2.0, float(ls.funk_listen_gain))))
             if _portaudio_cb_status_problematic(status):
                 raw = np.zeros((nf_i, listen_in_ch), dtype=np.float32)
             else:
                 raw = np.asarray(indata, dtype=np.float32)
-            if raw.ndim == 2 and raw.shape[1] >= 2:
-                mono_rx = np.mean(raw.astype(np.float32), axis=1).astype(np.float32)
-            else:
-                mono_rx = raw[..., 0].astype(np.float32)
-            yr = mono_rx.reshape(-1) * gv_l
-            fit_r = LiveAudioEngine._fit_mono_to_frames(yr, nf_i)
+            fit_r = weak_self._process_funk_listen_block(
+                raw, ls, nf_i, listen_in_ch
+            )
             weak_self.funk_listen_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_r)
             with lock:
                 q_listen_in.append(fit_r.astype(np.float32, copy=True))
@@ -625,7 +736,7 @@ class LiveAudioEngine:
             dtype="float32",
             samplerate=sr,
             blocksize=bs,
-            latency="low",
+            latency=_SPLIT_STREAM_LATENCY,
             callback=input_cb_main,
         )
         o_mon = sd.OutputStream(
@@ -634,7 +745,7 @@ class LiveAudioEngine:
             dtype="float32",
             samplerate=sr,
             blocksize=bs,
-            latency="low",
+            latency=_SPLIT_STREAM_LATENCY,
             callback=output_cb_monitor,
         )
 
@@ -647,7 +758,7 @@ class LiveAudioEngine:
                 dtype="float32",
                 samplerate=sr,
                 blocksize=bs,
-                latency="low",
+                latency=_SPLIT_STREAM_LATENCY,
                 callback=input_cb_listen,
             )
             objs.insert(1, i_listen_obj)
@@ -777,6 +888,33 @@ class LiveAudioEngine:
             )
             dsp.reset(float(sr), tpl)
 
+        want_idle_duplex = (
+            in_listen is None
+            and in_mic is not None
+            and want_monitor_out
+            and want_mic_monitor
+            and out_mon is not None
+        )
+        if want_idle_duplex:
+            rin, rout = resolve_duplex_device_indices(in_mic, out_mon)
+            try:
+                snap = LiveSettings.from_dict(live.to_dict())
+                self._idle_listen_snap = snap
+                self._mic_preview_snap = LiveSettings.from_dict(snap.to_dict())
+                self._reset_funk_listen_gate()
+                self._idle_listen_running = True
+                self._mic_preview_running = bool(want_mic_meter)
+                self._start_idle_duplex(
+                    live,
+                    in_dev=rin,
+                    out_dev=rout,
+                    sr=float(sr),
+                    bs=int(bs),
+                )
+                return True, ""
+            except BaseException:
+                self.stop_idle_listen_monitor()
+
         import numpy as np
 
         weak_self = self
@@ -823,17 +961,11 @@ class LiveAudioEngine:
                 return
             ls = weak_self._idle_listen_snap
             nf_i = int(frames)
-            gv_l = np.float32(max(0.0, min(2.0, float(ls.funk_listen_gain))))
             if _portaudio_cb_status_problematic(status):
                 raw = np.zeros((nf_i, in_ch_l), dtype=np.float32)
             else:
                 raw = np.asarray(indata, dtype=np.float32)
-            if raw.ndim == 2 and raw.shape[1] >= 2:
-                mono_rx = np.mean(raw.astype(np.float32), axis=1).astype(np.float32)
-            else:
-                mono_rx = raw[..., 0].astype(np.float32)
-            yr = mono_rx.reshape(-1) * gv_l
-            fit_r = LiveAudioEngine._fit_mono_to_frames(yr, nf_i)
+            fit_r = weak_self._process_funk_listen_block(raw, ls, nf_i, in_ch_l)
             weak_self.funk_listen_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_r)
             if not want_monitor_out:
                 return
@@ -876,6 +1008,7 @@ class LiveAudioEngine:
             snap = LiveSettings.from_dict(live.to_dict())
             self._idle_listen_snap = snap
             self._mic_preview_snap = LiveSettings.from_dict(snap.to_dict())
+            self._reset_funk_listen_gate()
             self._idle_listen_running = True
             self._mic_preview_running = bool(want_mic_meter)
 
@@ -886,7 +1019,7 @@ class LiveAudioEngine:
                     dtype="float32",
                     samplerate=sr,
                     blocksize=bs,
-                    latency="low",
+                    latency=_SPLIT_STREAM_LATENCY,
                     callback=input_cb_idle_mic,
                 )
                 self._stream_idle_mic_in = istream_mic
@@ -899,7 +1032,7 @@ class LiveAudioEngine:
                     dtype="float32",
                     samplerate=sr,
                     blocksize=bs,
-                    latency="low",
+                    latency=_SPLIT_STREAM_LATENCY,
                     callback=input_cb_idle_listen,
                 )
                 self._stream_idle_listen_in = istream_rx
@@ -912,7 +1045,7 @@ class LiveAudioEngine:
                     dtype="float32",
                     samplerate=sr,
                     blocksize=bs,
-                    latency="low",
+                    latency=_SPLIT_STREAM_LATENCY,
                     callback=output_cb_idle,
                 )
                 self._stream_idle_mon_out = ostream
@@ -1078,6 +1211,7 @@ class LiveAudioEngine:
 
         duplex_err: Optional[BaseException] = None
 
+        self._reset_funk_listen_gate()
         self._running = True
 
         if want_duplex:
@@ -1328,7 +1462,7 @@ class LiveAudioEngine:
 
         bs = int(DEFAULT_BLOCKSIZE)
         best: Optional[tuple[float, int, float, int]] = None
-        best_pair = (in_dev, out_dev)
+        best_pair: Optional[tuple[int, int]] = None
 
         extra_ins: list[tuple[Optional[int], int]] = []
         extra_outs: list[tuple[Optional[int], int]] = []
@@ -1418,11 +1552,11 @@ class LiveAudioEngine:
                         best_pair = (i_in, i_out)
                     break
 
-        if best is None:
+        if best is None or best_pair is None:
             return in_dev, out_dev
         if best_pair[0] == in_dev and best_pair[1] == out_dev:
             return in_dev, out_dev
-        return int(best_pair[0]), int(best_pair[1])
+        return best_pair
 
     @classmethod
     def _apply_stream_device_remapping(
@@ -1707,7 +1841,7 @@ class LiveAudioEngine:
         funk_out_dev: Optional[int] = None,
         listen_in_dev: Optional[int] = None,
     ) -> int:
-        """Erste gültige Blockgröße: PortAudio-Latenz-Hint → 256/128/512."""
+        """Erste passende Blockgröße: 256 → Treiber-Hint → gespeichert → 512 → 128."""
         checks_in, checks_out = cls._stream_checks(
             mic_dev=mic_dev,
             monitor_dev=monitor_dev,
@@ -1727,12 +1861,15 @@ class LiveAudioEngine:
             seen.add(bs)
             candidates.append(bs)
 
+        _add(DEFAULT_BLOCKSIZE)
         hint = cls._latency_blocksize_hint(sr, checks_in, checks_out)
         if hint is not None:
             _add(hint)
-        for fallback in (DEFAULT_BLOCKSIZE, 128, 512):
-            _add(fallback)
-        _add(int(live.blocksize))
+        saved = int(live.blocksize or 0)
+        if saved in DEFAULT_BLOCKSIZES_ALLOWED:
+            _add(saved)
+        _add(512)
+        _add(128)
 
         for bs in candidates:
             if cls._streams_ok_at(sr, bs, checks_in, checks_out):

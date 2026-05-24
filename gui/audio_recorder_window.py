@@ -39,14 +39,12 @@ from PySide6.QtWidgets import (
 from audio.audio_recorder import (
     AudioRecorder,
     RecorderState,
-    list_audio_input_devices,
 )
 from audio.audio_settings_hub import AudioSettingsHub
 from audio.player_controller import (
     PlayerController,
     PlayerState,
     build_playlist_entries,
-    list_audio_output_devices,
     multimedia_available,
 )
 from audio.qt_multimedia_lazy import qt_multimedia_types, recorder_import_ok
@@ -73,8 +71,9 @@ from .app_icon import app_icon
 from .audio_hub_binding import (
     connect_level_meters,
     connect_recorder_hub,
-    load_global_audio_into_combos,
+    load_global_audio_into_widgets,
 )
+from .audio_routing_display import hub_device_label
 from .file_list_widget_style import FILE_LIST_WIDGET_STYLESHEET
 from .folder_dialog import pick_audio_recorder_folder
 from .menu_icons import (
@@ -158,12 +157,14 @@ class AudioRecorderWindow(QMainWindow):
         audio_radio_session: Optional[AudioRadioSessionHost] = None,
         operating_mode_provider: Optional[Callable[[], RxMode]] = None,
         audio_hub: Optional[AudioSettingsHub] = None,
+        open_sound_settings: Optional[Callable[[], None]] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         del parent
         super().__init__(None)
         self._settings = settings
         self._audio_hub = audio_hub
+        self._open_sound_settings = open_sound_settings
         self._cat = serial_cat
         self._audio_radio_session = audio_radio_session
         self._operating_mode_provider = operating_mode_provider
@@ -269,9 +270,6 @@ class AudioRecorderWindow(QMainWindow):
         if self._audio_hub is not None:
             connect_recorder_hub(
                 hub=self._audio_hub,
-                combo_input=self.combo_input,
-                combo_send=self.combo_output,
-                combo_pc=self.combo_pc_output,
                 vol_input=self._vol_input,
                 vol_send=self._vol_send,
                 vol_pc=self._vol_pc,
@@ -468,23 +466,12 @@ class AudioRecorderWindow(QMainWindow):
         dev_box = QGroupBox("Geräte & Format")
         dev_l = QVBoxLayout(dev_box)
 
-        # Einheitliche Label-Breite, damit alle Combos/Slider untereinander
-        # bündig auf derselben x-Position beginnen. Wert deckt das längste
-        # Label ("Wiedergabe-Lautstärke:") komfortabel ab.
         _LABEL_W = 170
 
         def _form_label(text: str) -> QLabel:
             lbl = QLabel(text)
             lbl.setMinimumWidth(_LABEL_W)
             return lbl
-
-        in_row = QHBoxLayout()
-        in_row.addWidget(_form_label("Aufnahme-Gerät:"))
-        self.combo_input = QComboBox()
-        self._fill_input_devices()
-        self.combo_input.currentIndexChanged.connect(self._on_input_changed)
-        in_row.addWidget(self.combo_input, 1)
-        dev_l.addLayout(in_row)
 
         in_vol_row = QHBoxLayout()
         in_vol_row.addWidget(_form_label("Aufnahme-Lautstärke:"))
@@ -497,14 +484,6 @@ class AudioRecorderWindow(QMainWindow):
         in_vol_row.addWidget(self._vol_input, 1)
         dev_l.addLayout(in_vol_row)
 
-        out_row = QHBoxLayout()
-        out_row.addWidget(_form_label("Wiedergabe-Gerät:"))
-        self.combo_output = QComboBox()
-        self._fill_output_devices()
-        self.combo_output.currentIndexChanged.connect(self._on_output_changed)
-        out_row.addWidget(self.combo_output, 1)
-        dev_l.addLayout(out_row)
-
         out_vol_row = QHBoxLayout()
         out_vol_row.addWidget(_form_label("Wiedergabe-Lautstärke:"))
         self._vol_send = VolumeControlRow(
@@ -515,17 +494,6 @@ class AudioRecorderWindow(QMainWindow):
         self._vol_send.mute_toggled.connect(self._on_send_mute_toggled)
         out_vol_row.addWidget(self._vol_send, 1)
         dev_l.addLayout(out_vol_row)
-
-        pc_row = QHBoxLayout()
-        pc_row.addWidget(_form_label("PC-Ausgabegerät:"))
-        self.combo_pc_output = QComboBox()
-        self.combo_pc_output.setToolTip(
-            "Soundkarte für die lokale Vorhöre (Play PC) — kein TX, kein CAT."
-        )
-        self._fill_pc_output_devices()
-        self.combo_pc_output.currentIndexChanged.connect(self._on_pc_output_changed)
-        pc_row.addWidget(self.combo_pc_output, 1)
-        dev_l.addLayout(pc_row)
 
         pc_vol_row = QHBoxLayout()
         pc_vol_row.addWidget(_form_label("PC-Lautstärke:"))
@@ -544,16 +512,26 @@ class AudioRecorderWindow(QMainWindow):
             "zusätzlich auf dem PC-Ausgabegerät ausgeben."
         )
         self.check_tx_monitor_pc.toggled.connect(self._on_tx_monitor_pc_toggled)
-        dev_l.addWidget(self.check_tx_monitor_pc)
-
         fmt_row = QHBoxLayout()
-        fmt_row.addWidget(_form_label("MP3-Bitrate:"))
+        fmt_row.addWidget(self.check_tx_monitor_pc)
+        fmt_row.addSpacing(12)
+        fmt_row.addWidget(QLabel("MP3-Bitrate:"))
         self.combo_bitrate = QComboBox()
         for kbps in ALLOWED_BITRATES_KBPS:
             self.combo_bitrate.addItem(f"{kbps} kbps", kbps)
         self.combo_bitrate.currentIndexChanged.connect(self._on_bitrate_changed)
         fmt_row.addWidget(self.combo_bitrate)
         fmt_row.addStretch(1)
+        self._btn_audio_routing = QPushButton("Zur Audio‑Zuordnung…")
+        self._btn_audio_routing.setToolTip(
+            "Soundeinstellungen öffnen — Aufnahme-, Wiedergabe- und "
+            "PC-Ausgabegerät dort wählen."
+        )
+        if self._open_sound_settings is not None:
+            self._btn_audio_routing.clicked.connect(self._open_sound_settings)
+        else:
+            self._btn_audio_routing.setEnabled(False)
+        fmt_row.addWidget(self._btn_audio_routing)
         dev_l.addLayout(fmt_row)
 
         root.addWidget(dev_box)
@@ -570,59 +548,35 @@ class AudioRecorderWindow(QMainWindow):
 
         self.setCentralWidget(central)
 
-    def _fill_input_devices(self) -> None:
-        self.combo_input.blockSignals(True)
-        try:
-            self.combo_input.clear()
-            saved = (
-                self._audio_hub.device_id(ROLE_INPUT)
-                if self._audio_hub
-                else self._settings.audio_recorder.input_device_id
-            )
-            select_idx = 0
-            for i, (dev_id, label) in enumerate(list_audio_input_devices()):
-                self.combo_input.addItem(label, dev_id)
-                if dev_id == saved:
-                    select_idx = i
-            self.combo_input.setCurrentIndex(select_idx)
-        finally:
-            self.combo_input.blockSignals(False)
+    def _input_device_id(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_id(ROLE_INPUT)
+        return str(self._settings.audio_recorder.input_device_id or "")
 
-    def _fill_output_devices(self) -> None:
-        self.combo_output.blockSignals(True)
-        try:
-            self.combo_output.clear()
-            saved = (
-                self._audio_hub.device_id(ROLE_SEND)
-                if self._audio_hub
-                else self._settings.audio_recorder.output_device_id
-            )
-            select_idx = 0
-            for i, (dev_id, label) in enumerate(list_audio_output_devices()):
-                self.combo_output.addItem(label, dev_id)
-                if dev_id == saved:
-                    select_idx = i
-            self.combo_output.setCurrentIndex(select_idx)
-        finally:
-            self.combo_output.blockSignals(False)
+    def _send_device_id(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_id(ROLE_SEND)
+        return str(self._settings.audio_recorder.output_device_id or "")
 
-    def _fill_pc_output_devices(self) -> None:
-        self.combo_pc_output.blockSignals(True)
-        try:
-            self.combo_pc_output.clear()
-            saved = (
-                self._audio_hub.device_id(ROLE_PC)
-                if self._audio_hub
-                else self._settings.audio_recorder.pc_output_device_id
-            )
-            select_idx = 0
-            for i, (dev_id, label) in enumerate(list_audio_output_devices()):
-                self.combo_pc_output.addItem(label, dev_id)
-                if dev_id == saved:
-                    select_idx = i
-            self.combo_pc_output.setCurrentIndex(select_idx)
-        finally:
-            self.combo_pc_output.blockSignals(False)
+    def _pc_device_id(self) -> str:
+        if self._audio_hub is not None:
+            return self._audio_hub.device_id(ROLE_PC)
+        return str(self._settings.audio_recorder.pc_output_device_id or "")
+
+    def _refresh_volume_device_tooltips(self) -> None:
+        self._vol_input.set_assigned_device(
+            hub_device_label(self._input_device_id(), input_device=True)
+        )
+        self._vol_send.set_assigned_device(
+            hub_device_label(self._send_device_id(), input_device=False)
+        )
+        self._vol_pc.set_assigned_device(
+            hub_device_label(self._pc_device_id(), input_device=False)
+        )
+
+    def reload_routing_from_settings(self) -> None:
+        """Nach Soundeinstellungen Gerätenamen in Tooltips aktualisieren."""
+        self._refresh_volume_device_tooltips()
 
     def _load_settings_to_ui(self) -> None:
         ar = self._settings.audio_recorder
@@ -636,11 +590,8 @@ class AudioRecorderWindow(QMainWindow):
             self.combo_bitrate.setCurrentIndex(idx)
             self.combo_bitrate.blockSignals(False)
         if self._audio_hub is not None:
-            load_global_audio_into_combos(
+            load_global_audio_into_widgets(
                 self._audio_hub,
-                combo_input=self.combo_input,
-                combo_send=self.combo_output,
-                combo_pc=self.combo_pc_output,
                 vol_input=self._vol_input,
                 vol_send=self._vol_send,
                 vol_pc=self._vol_pc,
@@ -654,18 +605,12 @@ class AudioRecorderWindow(QMainWindow):
             self._apply_pc_volume(self._audio_hub.volume_percent(ROLE_PC))
             self._apply_tx_monitor(self._audio_hub.tx_monitor_to_pc_enabled())
         else:
-            saved_out = self.combo_output.currentData()
-            if not isinstance(saved_out, str):
-                saved_out = ""
-            self._apply_send_device(saved_out)
+            self._apply_send_device(str(ar.output_device_id or ""))
             self._vol_input.set_value(ar.input_volume_percent)
             self._apply_input_volume(ar.input_volume_percent)
             self._vol_send.set_value(ar.output_volume_percent)
             self._apply_send_volume(ar.output_volume_percent)
-            saved_pc = self.combo_pc_output.currentData()
-            if not isinstance(saved_pc, str):
-                saved_pc = ""
-            self._pc_pending_device_id = saved_pc
+            self._pc_pending_device_id = str(ar.pc_output_device_id or "")
             self._vol_pc.set_value(ar.pc_output_volume_percent)
             self._apply_pc_volume(ar.pc_output_volume_percent)
             self.check_tx_monitor_pc.blockSignals(True)
@@ -676,6 +621,7 @@ class AudioRecorderWindow(QMainWindow):
             finally:
                 self.check_tx_monitor_pc.blockSignals(False)
             self._apply_tx_monitor_pc_to_player()
+            self._refresh_volume_device_tooltips()
         # Soft-Kompressor nach Aufnahme: fest eingeschaltet (keine UI-Option).
         self._settings.audio_recorder.normalize_enabled = True
         self._recorder.set_normalize_enabled(True)
@@ -818,9 +764,7 @@ class AudioRecorderWindow(QMainWindow):
         self._recorder.stop()
 
     def _start_recording_now(self) -> None:
-        device_id = self.combo_input.currentData()
-        if not isinstance(device_id, str):
-            device_id = ""
+        device_id = self._input_device_id()
         bitrate = self.combo_bitrate.currentData()
         if not isinstance(bitrate, int):
             bitrate = DEFAULT_BITRATE_KBPS
@@ -1080,24 +1024,6 @@ class AudioRecorderWindow(QMainWindow):
     # Geräte / Format
     # ------------------------------------------------------------------
 
-    def _on_input_changed(self) -> None:
-        dev_id = self.combo_input.currentData()
-        if not isinstance(dev_id, str):
-            dev_id = ""
-        if self._audio_hub is not None:
-            self._audio_hub.set_device_id(ROLE_INPUT, dev_id)
-        else:
-            self._settings.audio_recorder.input_device_id = dev_id
-
-    def _on_output_changed(self) -> None:
-        dev_id = self.combo_output.currentData()
-        if not isinstance(dev_id, str):
-            dev_id = ""
-        if self._audio_hub is not None:
-            self._audio_hub.set_device_id(ROLE_SEND, dev_id)
-        else:
-            self._apply_send_device(dev_id)
-
     def _on_input_volume_changed(self, value: int) -> None:
         if self._audio_hub is not None:
             self._audio_hub.set_volume_percent(ROLE_INPUT, int(value))
@@ -1109,15 +1035,6 @@ class AudioRecorderWindow(QMainWindow):
             self._audio_hub.set_volume_percent(ROLE_SEND, int(value))
         else:
             self._apply_send_volume(int(value))
-
-    def _on_pc_output_changed(self) -> None:
-        dev_id = self.combo_pc_output.currentData()
-        if not isinstance(dev_id, str):
-            dev_id = ""
-        if self._audio_hub is not None:
-            self._audio_hub.set_device_id(ROLE_PC, dev_id)
-        else:
-            self._apply_pc_output_device(dev_id)
 
     def _on_pc_volume_changed(self, value: int) -> None:
         if self._audio_hub is not None:
@@ -1186,10 +1103,7 @@ class AudioRecorderWindow(QMainWindow):
         self._player.set_tx_monitor_to_pc_enabled(bool(enabled))
 
     def _apply_tx_monitor_pc_to_player(self) -> None:
-        pc_id = self.combo_pc_output.currentData()
-        if not isinstance(pc_id, str):
-            pc_id = ""
-        self._apply_pc_output_device(pc_id)
+        self._apply_pc_output_device(self._pc_device_id())
         self._apply_pc_volume(self._vol_pc.value())
         self._apply_tx_monitor(self.check_tx_monitor_pc.isChecked())
 
@@ -1676,12 +1590,8 @@ class AudioRecorderWindow(QMainWindow):
         # Löschen: keine Aktivität, gültige Auswahl.
         self.btn_delete.setEnabled(has_selection and not any_busy)
 
-        # Geräte/Format-Combos während Aufnahme sperren (Live-Wechsel würde Pipeline reissen).
-        self.combo_input.setEnabled(not rec_busy)
+        # Bitrate während Aufnahme sperren (Live-Wechsel würde Pipeline reissen).
         self.combo_bitrate.setEnabled(not rec_busy)
-        # PC-Output darf während aktiver PC-Wiedergabe nicht gewechselt werden,
-        # sonst hört man Audio-Glitches / Backend kann sich verschlucken.
-        self.combo_pc_output.setEnabled(not pc_busy)
         self.btn_folder.setEnabled(not any_busy)
         self.btn_refresh.setEnabled(not any_busy)
         self.btn_open_folder.setEnabled(True)

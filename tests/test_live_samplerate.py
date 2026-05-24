@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 from live.live_audio_engine import LiveAudioEngine
@@ -155,20 +156,23 @@ class LiveBtRemapTest(unittest.TestCase):
                 "max_output_channels": out,
             }
 
-        def _query(dev: object | None = None, kind: object | None = None) -> object:
+        def _query(
+            dev: int | None = None,
+            kind: str | None = None,
+        ) -> list[dict[str, object] | None] | dict[str, object] | None:
             del kind
             if dev is None:
                 return all_devices
-            return all_devices[int(dev)]
+            return all_devices[dev]
 
         mock_sd.query_devices.side_effect = _query
 
         def _ok(
             sr: float,
             *,
-            in_dev: object,
+            in_dev: int | None,
             in_ch: int,
-            out_dev: object,
+            out_dev: int | None,
             out_ch: int,
             blocksize: int,
         ) -> bool:
@@ -214,20 +218,30 @@ class LiveEndpointRemapRankTest(unittest.TestCase):
             "max_output_channels": 2,
         }
 
-        def _query(dev: object | None = None, kind: object | None = None) -> object:
+        def _query(
+            dev: int | None = None,
+            kind: str | None = None,
+        ) -> list[dict[str, object] | None] | dict[str, object] | None:
             del kind
             if dev is None:
                 return all_devices
-            return all_devices[int(dev)]
+            return all_devices[dev]
 
         mock_sd.query_devices.side_effect = _query
 
-        def _api(_sd: object, info: dict) -> str:
-            return "Windows WASAPI" if int(info.get("hostapi", 0)) == 0 else "Windows WDM-KS"
+        def _api(_sd: object, info: dict[str, object]) -> str:
+            hostapi = info.get("hostapi")
+            if isinstance(hostapi, int) and hostapi == 0:
+                return "Windows WASAPI"
+            return "Windows WDM-KS"
 
         mock_api.side_effect = _api
 
-        def _max_sr(_bs: int, _cin: object, cout: object) -> float:
+        def _max_sr(
+            _bs: int,
+            _cin: list[tuple[Optional[int], int]],
+            cout: list[tuple[Optional[int], int]],
+        ) -> float:
             outs = [d for d, _ch in cout]
             if 5 in outs:
                 return 48000.0
@@ -255,11 +269,16 @@ class LiveListenRemapTest(unittest.TestCase):
     ) -> None:
         mock_siblings.side_effect = lambda dev, **_: [dev, dev + 100]
 
-        def _max_sr(_bs: int, cin: object, cout: object) -> float:
+        def _max_sr(
+            _bs: int,
+            cin: list[tuple[Optional[int], int]],
+            cout: list[tuple[Optional[int], int]],
+        ) -> float:
             outs = [d for d, _ch in cout]
-            if 5 in [d for d, _ch in cin] and 300 in outs:
+            ins = [d for d, _ch in cin]
+            if 5 in ins and 300 in outs:
                 return 48000.0
-            if 5 in [d for d, _ch in cin] and 200 in outs:
+            if 5 in ins and 200 in outs:
                 return 0.0
             return 0.0
 
@@ -278,7 +297,50 @@ class LiveBlocksizeTest(unittest.TestCase):
     @patch.object(LiveAudioEngine, "_out_channels_hint", return_value=2)
     @patch.object(LiveAudioEngine, "_streams_ok_at")
     @patch.object(LiveAudioEngine, "_latency_blocksize_hint", return_value=128)
-    def test_resolve_prefers_latency_hint(
+    def test_resolve_prefers_default_over_latency_hint(
+        self,
+        _mock_hint: MagicMock,
+        mock_ok: MagicMock,
+        _mock_out_ch: MagicMock,
+        _mock_in_ch: MagicMock,
+    ) -> None:
+        mock_ok.side_effect = lambda _sr, bs, *_a, **_k: bs in (128, DEFAULT_BLOCKSIZE)
+        live = LiveSettings()
+        bs = LiveAudioEngine._resolve_blocksize(
+            live,
+            sr=48000.0,
+            mic_dev=1,
+            monitor_dev=2,
+        )
+        self.assertEqual(bs, DEFAULT_BLOCKSIZE)
+
+    @patch.object(LiveAudioEngine, "_in_channels_hint", return_value=1)
+    @patch.object(LiveAudioEngine, "_out_channels_hint", return_value=2)
+    @patch.object(LiveAudioEngine, "_streams_ok_at")
+    @patch.object(LiveAudioEngine, "_latency_blocksize_hint", return_value=128)
+    def test_resolve_prefers_default_over_512(
+        self,
+        _mock_hint: MagicMock,
+        mock_ok: MagicMock,
+        _mock_out_ch: MagicMock,
+        _mock_in_ch: MagicMock,
+    ) -> None:
+        mock_ok.return_value = True
+        live = LiveSettings()
+        live.blocksize = 512
+        bs = LiveAudioEngine._resolve_blocksize(
+            live,
+            sr=48000.0,
+            mic_dev=1,
+            monitor_dev=2,
+        )
+        self.assertEqual(bs, DEFAULT_BLOCKSIZE)
+
+    @patch.object(LiveAudioEngine, "_in_channels_hint", return_value=1)
+    @patch.object(LiveAudioEngine, "_out_channels_hint", return_value=2)
+    @patch.object(LiveAudioEngine, "_streams_ok_at")
+    @patch.object(LiveAudioEngine, "_latency_blocksize_hint", return_value=128)
+    def test_resolve_uses_hint_when_only_small_works(
         self,
         _mock_hint: MagicMock,
         mock_ok: MagicMock,

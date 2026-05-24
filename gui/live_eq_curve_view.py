@@ -28,15 +28,19 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
-from mapping.eq_mapping import LEVEL_DB_MAX, LEVEL_DB_MIN
-from model.live_settings import DEFAULT_LIVE_EQ_FREQ_HZ, LiveEqBandSettings
+from model.live_settings import (
+    DEFAULT_LIVE_EQ_FREQ_HZ,
+    LIVE_EQ_GAIN_DB_MAX,
+    LIVE_EQ_GAIN_DB_MIN,
+    LiveEqBandSettings,
+)
 
 _NUM_LIVE_BANDS = len(DEFAULT_LIVE_EQ_FREQ_HZ)
 
 _F_MIN = 60.0
 _F_MAX = 5000.0
-_DB_MAX = max(20.0, float(LEVEL_DB_MAX))
-_DB_MIN = min(-20.0, float(LEVEL_DB_MIN))
+_DB_MAX = float(LIVE_EQ_GAIN_DB_MAX)
+_DB_MIN = float(LIVE_EQ_GAIN_DB_MIN)
 
 _NUM_SAMPLES = 160
 
@@ -148,7 +152,7 @@ class _LiveEqCurveCanvas(QWidget):
         ]
         self._hover: Optional[_DragState] = None
         self._drag: Optional[_DragState] = None
-        self.setMinimumSize(380, 150)
+        self.setMinimumSize(380, 120)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
@@ -287,7 +291,9 @@ class _LiveEqCurveCanvas(QWidget):
             db_raw = self._db_for_y(y, plot_y, plot_h)
             new_lvl = float(
                 int(
-                    round(max(LEVEL_DB_MIN, min(LEVEL_DB_MAX, db_raw)))
+                    round(
+                        max(LIVE_EQ_GAIN_DB_MIN, min(LIVE_EQ_GAIN_DB_MAX, db_raw))
+                    )
                 )
             )
             nb = LiveEqBandSettings(
@@ -467,7 +473,7 @@ class _LiveEqCurveCanvas(QWidget):
                 plot_y + plot_h + fm.ascent() + 1,
                 lbl,
             )
-        for db_lab in (-10, 0, 10):
+        for db_lab in (-15, 0, 15):
             yd = self._y_for_db(db_lab, plot_y, plot_h)
             tex = f"{db_lab:+d}" if db_lab != 0 else "0"
             painter.drawText(2, int(yd) + fm.ascent() // 2 - 1, tex)
