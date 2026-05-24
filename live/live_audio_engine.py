@@ -20,6 +20,7 @@ from live.live_devices import (
     physical_same_input,
     physical_same_output,
     remap_live_device_id,
+    resolve_live_pa_index,
     resolve_duplex_device_indices,
     sounddevice_available,
     windows_samplerate_hints_for_live,
@@ -1298,15 +1299,12 @@ class LiveAudioEngine:
         *,
         saved_label: str = "",
     ) -> Optional[int]:
-        rem, _ = remap_live_device_id(
+        _ = allowed_ids
+        return resolve_live_pa_index(
             str(raw_sid or "").strip(),
             saved_label,
             input_device=True,
         )
-        sid = rem.strip()
-        if not sid:
-            return None
-        return parse_device_id(sid, tuple(allowed_ids))
 
     @staticmethod
     def _parse_output_device_index(
@@ -1315,15 +1313,12 @@ class LiveAudioEngine:
         *,
         saved_label: str = "",
     ) -> Optional[int]:
-        rem, _ = remap_live_device_id(
+        _ = allowed_ids
+        return resolve_live_pa_index(
             str(raw_sid or "").strip(),
             saved_label,
             input_device=False,
         )
-        sid = rem.strip()
-        if not sid:
-            return None
-        return parse_device_id(sid, tuple(allowed_ids))
 
     @classmethod
     def _same_physical_input_output(

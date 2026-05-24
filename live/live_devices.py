@@ -1,8 +1,7 @@
 """PortAudio-/sounddevice-Geräteliste (getrennt von Qt Multimedia).
 
-Anzeigenamen wie im **Audio-Player** / **Recorder** (Qt ``QMediaDevices`` =
-Windows-Geräteliste). Intern bleibt die Auswahl der **PortAudio-Index** für
-``sounddevice``.
+Persistiert werden **Qt-MMDevice-GUIDs** (wie Player/Recorder). Zur Laufzeit
+werden daraus PortAudio-Indizes für ``sounddevice`` aufgelöst.
 """
 
 from __future__ import annotations
@@ -171,16 +170,20 @@ def _best_pa_row_for_qt_name(
     *,
     want_input: bool,
     min_score: float = _QT_PA_MATCH_MIN_SCORE,
+    exclude_indices: Optional[set[int]] = None,
 ) -> Optional[Tuple[int, str, str]]:
     """Beste PortAudio-Zeile (index, pa_name, tooltip) für einen Qt-Anzeigenamen."""
     qkey = _norm_match_key(qt_desc)
     if not qkey:
         return None
 
+    skip = exclude_indices or set()
     best: Optional[Tuple[int, int, float, str, str]] = None
     # (hostapi_rank, index, match_score, pa_name, api)
 
     for i, d in enumerate(sd.query_devices()):  # type: ignore[union-attr]
+        if i in skip:
+            continue
         if want_input:
             if int(d.get("max_input_channels") or 0) <= 0:
                 continue
@@ -216,6 +219,35 @@ def _best_pa_row_for_qt_name(
     return idx, pa_name, tip
 
 
+def _disambiguate_device_rows(
+    entries: List[Tuple[str, str, str, int]],
+    sd: object,
+) -> List[Tuple[str, str, str]]:
+    """Eindeutige Anzeigenamen bei Duplikaten; ``entries``: (qt_id, label, tip, pa_index)."""
+    if not entries:
+        return []
+    from collections import Counter
+
+    label_counts = Counter(e[1].strip().lower() for e in entries)
+    out: List[Tuple[str, str, str]] = []
+    for qid, label, tip, pa_idx in entries:
+        if label_counts[label.strip().lower()] <= 1:
+            out.append((qid, label, tip))
+            continue
+        api = ""
+        try:
+            all_d = sd.query_devices()  # type: ignore[union-attr]
+            if 0 <= pa_idx < len(all_d):
+                api = _hostapi_name_for_device(sd, all_d[pa_idx])
+        except Exception:
+            pass
+        suffix = f" [PA #{pa_idx}]"
+        if api:
+            suffix = f" [PA #{pa_idx}, {api}]"
+        out.append((qid, f"{label}{suffix}", tip))
+    return out
+
+
 def _raw_pa_device_rows(
     sd: object,
     *,
@@ -241,30 +273,137 @@ def _device_rows(
     sd: object,
     *,
     want_input: bool,
-) -> List[Tuple[int, str, str]]:
-    """Geräteliste: Qt-Anzeigenamen mit PortAudio-Index, sonst rohe PA-Liste."""
-    qt_labels = _qt_multimedia_device_labels(want_input=want_input)
-    if qt_labels:
-        out: List[Tuple[int, str, str]] = []
-        for qdesc in qt_labels:
-            row = _best_pa_row_for_qt_name(sd, qdesc, want_input=want_input)
+) -> List[Tuple[str, str, str]]:
+    """Geräteliste für Live: stabile Qt-ID, Anzeigename, Tooltip (PortAudio-Hinweis)."""
+    from audio.qt_device_resolve import list_qt_audio_devices
+
+    entries: List[Tuple[str, str, str, int]] = []
+    qt_rows = list_qt_audio_devices(input_device=want_input)
+    if qt_rows and any(qid for qid, _lbl in qt_rows):
+        used_indices: set[int] = set()
+        for qid, qdesc in qt_rows:
+            if not qid:
+                continue
+            row = _best_pa_row_for_qt_name(
+                sd,
+                qdesc,
+                want_input=want_input,
+                exclude_indices=used_indices,
+            )
             if row is None:
                 row = _best_pa_row_for_qt_name(
                     sd,
                     qdesc,
                     want_input=want_input,
                     min_score=0.30,
+                    exclude_indices=used_indices,
                 )
             if row is None:
                 continue
-            idx, pa_label, tip = row
+            pa_idx, pa_label, tip = row
+            used_indices.add(pa_idx)
             tip_full = tip
             if pa_label.lower() != qdesc.lower():
                 tip_full = f"{tip}\nPortAudio: {pa_label}"
-            out.append((idx, qdesc, tip_full))
-        if out:
-            return out
-    return _raw_pa_device_rows(sd, want_input=want_input)
+            entries.append((qid, qdesc, tip_full, pa_idx))
+        if entries:
+            return _disambiguate_device_rows(entries, sd)
+    for pa_idx, display, tip in _raw_pa_device_rows(sd, want_input=want_input):
+        entries.append((f"pa:{pa_idx}", display, tip, pa_idx))
+    return _disambiguate_device_rows(entries, sd)
+
+
+def _looks_like_legacy_pa_index(device_id: str) -> bool:
+    sid = str(device_id or "").strip()
+    return bool(sid) and sid.isdigit()
+
+
+def _migrate_legacy_pa_index_to_qt_id(
+    pa_index_str: str,
+    saved_label: str,
+    *,
+    input_device: bool,
+) -> tuple[str, str]:
+    """Alte PortAudio-Indizes (``\"27\"``) → stabile Qt-MMDevice-GUID."""
+    from audio.qt_device_resolve import list_qt_audio_devices, remap_qt_device_id
+
+    slabel = str(saved_label or "").strip()
+    by_label = remap_qt_device_id("", slabel, input_device=input_device)
+    if by_label[0]:
+        return by_label
+    if not _HAVE_SD or _sd is None:
+        return "", slabel
+    try:
+        pa_index = int(str(pa_index_str).strip())
+    except ValueError:
+        return "", slabel
+    for qid, qlbl in list_qt_audio_devices(input_device=input_device):
+        if not qid:
+            continue
+        row = _best_pa_row_for_qt_name(_sd, qlbl, want_input=input_device)
+        if row is not None and row[0] == pa_index:
+            return qid, qlbl
+    return "", slabel
+
+
+def _normalize_device_id(raw: object) -> str:
+    """Geräte-ID aus Combo-``userData`` normalisieren."""
+    if raw is None:
+        return ""
+    return str(raw).strip()
+
+
+def _qt_to_pa_map(*, input_device: bool) -> dict[str, int]:
+    """Aktuelle Zuordnung Qt-Geräte-ID → PortAudio-Index."""
+    if not _HAVE_SD or _sd is None:
+        return {}
+    from audio.qt_device_resolve import list_qt_audio_devices
+
+    used: set[int] = set()
+    out: dict[str, int] = {}
+    for qid, qlbl in list_qt_audio_devices(input_device=input_device):
+        if not qid:
+            continue
+        row = _best_pa_row_for_qt_name(
+            _sd,
+            qlbl,
+            want_input=input_device,
+            exclude_indices=used,
+        )
+        if row is None:
+            continue
+        used.add(row[0])
+        out[qid] = row[0]
+    return out
+
+
+def resolve_live_pa_index(
+    saved_id: str,
+    saved_label: str = "",
+    *,
+    input_device: bool,
+) -> Optional[int]:
+    """PortAudio-Laufzeit-Index aus gespeicherter Qt-Geräte-ID (oder Legacy ``pa:N``)."""
+    qt_id, qt_label = remap_live_device_id(
+        saved_id, saved_label, input_device=input_device
+    )
+    if not qt_id and not qt_label:
+        return None
+    if not _HAVE_SD or _sd is None:
+        return None
+    if qt_id.startswith("pa:"):
+        try:
+            return int(qt_id[3:])
+        except ValueError:
+            return None
+    pa_map = _qt_to_pa_map(input_device=input_device)
+    if qt_id in pa_map:
+        return pa_map[qt_id]
+    label = qt_label or device_label_for_id(qt_id, input_device=input_device)
+    if not label:
+        return None
+    row = _best_pa_row_for_qt_name(_sd, label, want_input=input_device)
+    return row[0] if row is not None else None
 
 
 def list_input_devices() -> List[Tuple[str, str, str]]:
@@ -294,80 +433,38 @@ def remap_live_device_id(
     saved_label: str = "",
     *,
     input_device: bool,
+    saved_pa_name: str = "",
+    saved_host_api: str = "",
 ) -> tuple[str, str]:
-    """Mappt einen alten PA-Index auf einen aktuellen Listeneintrag.
+    """Mappt gespeicherte Live-Geräte-ID (Qt-GUID) auf aktuelle Qt-Liste.
 
-    Liefert ``(id, anzeigename)``. Ungültige IDs werden geleert (``""``).
+    Legacy: numerische PortAudio-Indizes (``\"27\"``) werden einmalig in Qt-GUIDs
+    überführt. ``saved_pa_name`` / ``saved_host_api`` werden ignoriert (Altformat).
     """
+    _ = saved_pa_name, saved_host_api
+    from audio.qt_device_resolve import remap_qt_device_id
+
     sid = str(saved_id or "").strip()
-    slabel = str(saved_label or "").strip()
-    if not sid and not slabel:
-        return "", ""
+    slabel = str(saved_label or "").split(" [PA #", 1)[0].strip()
 
-    rows = list_input_devices() if input_device else list_output_devices()
-    allowed = {r[0] for r in rows if r[0]}
-    id_to_label = {r[0]: r[1] for r in rows if r[0]}
+    if sid.startswith("pa:"):
+        migrated = remap_qt_device_id("", slabel, input_device=input_device)
+        if migrated[0]:
+            return migrated
+        return sid, slabel
 
-    if sid in allowed:
-        return sid, id_to_label.get(sid, slabel)
+    if _looks_like_legacy_pa_index(sid):
+        migrated_id, migrated_lbl = _migrate_legacy_pa_index_to_qt_id(
+            sid, slabel, input_device=input_device
+        )
+        if migrated_id:
+            return migrated_id, migrated_lbl or slabel
 
-    needles: list[str] = []
-    if slabel:
-        needles.append(_norm_match_key(slabel))
-    if sid and _HAVE_SD:
-        try:
-            old_i = int(sid)
-            all_d = _sd.query_devices()  # type: ignore[union-attr]
-            if 0 <= old_i < len(all_d):
-                old_name = str(all_d[old_i].get("name", ""))
-                key = _norm_match_key(old_name)
-                if key and key not in needles:
-                    needles.append(key)
-        except ValueError:
-            pass
-
-    best_id = ""
-    best_lbl = ""
-    best_score = 0.0
-    for needle in needles:
-        if not needle:
-            continue
-        for did, lbl, _tip in rows:
-            if not did:
-                continue
-            score = _match_score(needle, lbl)
-            if score >= _QT_PA_MATCH_MIN_SCORE and score > best_score:
-                best_score = score
-                best_id = did
-                best_lbl = lbl
-        if best_id:
-            break
-        if _HAVE_SD:
-            assert _sd is not None
-            for did, lbl, _tip in rows:
-                if not did:
-                    continue
-                try:
-                    j = int(did)
-                except ValueError:
-                    continue
-                all_d = _sd.query_devices()
-                if 0 <= j < len(all_d):
-                    pa_name = str(all_d[j].get("name", ""))
-                    score = _match_score(needle, pa_name)
-                    if score >= _QT_PA_MATCH_MIN_SCORE and score > best_score:
-                        best_score = score
-                        best_id = did
-                        best_lbl = lbl
-
-    if best_id:
-        return best_id, best_lbl
-
-    return "", slabel
+    return remap_qt_device_id(sid, slabel, input_device=input_device)
 
 
 def remap_live_settings_devices(live: object) -> bool:
-    """Remappt alle Live-PortAudio-Rollen; ``True`` wenn sich IDs geändert haben."""
+    """Remappt alle Live-Geräte (Qt-GUIDs); ``True`` wenn sich IDs/Labels geändert haben."""
     specs = (
         ("input_device_id", "input_device_label", True),
         ("output_device_id", "output_device_label", False),
@@ -381,10 +478,6 @@ def remap_live_settings_devices(live: object) -> bool:
         new_id, new_lbl = remap_live_device_id(
             old_id, old_lbl, input_device=input_device
         )
-        rows = list_input_devices() if input_device else list_output_devices()
-        allowed = {r[0] for r in rows if r[0]}
-        if old_id and old_id not in allowed and not new_id:
-            new_id = ""
         if new_id != old_id:
             setattr(live, id_field, new_id)
             changed = True
@@ -610,14 +703,19 @@ def physical_same_input(pa_a: Optional[int], pa_b: Optional[int]) -> bool:
 
 
 def device_label_for_id(device_id: str, *, input_device: bool) -> str:
-    """Anzeigename aus der Live-Geräteliste für einen PortAudio-Index."""
+    """Anzeigename für eine gespeicherte Live-Geräte-ID (Qt-GUID)."""
     sid = str(device_id or "").strip()
     if not sid:
         return ""
+    from audio.qt_device_resolve import qt_device_label_for_id
+
+    lbl = qt_device_label_for_id(sid, input_device=input_device)
+    if lbl:
+        return lbl
     rows = list_input_devices() if input_device else list_output_devices()
-    for did, lbl, _tip in rows:
+    for did, row_lbl, _tip in rows:
         if did == sid:
-            return lbl
+            return row_lbl
     return ""
 
 
@@ -662,6 +760,7 @@ __all__ = [
     "remap_live_device_id",
     "remap_live_settings_devices",
     "resolve_duplex_device_indices",
+    "resolve_live_pa_index",
     "sounddevice_available",
     "windows_samplerate_hints_for_live",
 ]

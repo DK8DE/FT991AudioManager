@@ -1,90 +1,108 @@
-"""Tests für PortAudio-Live-Geräte-Remapping."""
+"""Tests für Live-Geräte (Qt-GUID persistent, PortAudio zur Laufzeit)."""
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from live.live_devices import remap_live_device_id, remap_live_settings_devices
+from live.live_devices import (
+    _disambiguate_device_rows,
+    _looks_like_legacy_pa_index,
+    _migrate_legacy_pa_index_to_qt_id,
+    remap_live_device_id,
+    remap_live_settings_devices,
+    resolve_live_pa_index,
+)
 from model.live_settings import LiveSettings
 
 
-def test_remap_live_exact_id_still_valid() -> None:
-    rows = [
-        ("", "System-Standard", ""),
-        ("24", "Kopfhörer (USB Audio CODEC)", ""),
+def test_disambiguate_duplicate_labels() -> None:
+    sd = MagicMock()
+    entries = [
+        ("guid-a", "USB Audio CODEC", "tip-a", 10),
+        ("guid-b", "USB Audio CODEC", "tip-b", 22),
     ]
-    with patch("live.live_devices.list_output_devices", return_value=rows):
+    out = _disambiguate_device_rows(entries, sd)
+    assert out[0][1] != out[1][1]
+    assert "[PA #10]" in out[0][1]
+    assert "[PA #22]" in out[1][1]
+
+
+def test_legacy_pa_index_detection() -> None:
+    assert _looks_like_legacy_pa_index("27") is True
+    assert _looks_like_legacy_pa_index("{0.0.1.x}") is False
+
+
+def test_migrate_legacy_pa_index_by_label() -> None:
+    with patch(
+        "audio.qt_device_resolve.remap_qt_device_id",
+        return_value=("guid-mic", "Mikrofon (USB)"),
+    ):
+        qid, lbl = _migrate_legacy_pa_index_to_qt_id(
+            "27", "Mikrofon (USB)", input_device=True
+        )
+    assert qid == "guid-mic"
+    assert lbl == "Mikrofon (USB)"
+
+
+def test_remap_live_uses_qt_resolver() -> None:
+    with patch(
+        "audio.qt_device_resolve.remap_qt_device_id",
+        return_value=("guid-out", "Out 1-2 (MOTU)"),
+    ):
         dev_id, label = remap_live_device_id(
-            "24",
-            "Kopfhörer (USB Audio CODEC)",
+            "guid-old",
+            "Out 1-2 (MOTU)",
             input_device=False,
         )
-    assert dev_id == "24"
-    assert label == "Kopfhörer (USB Audio CODEC)"
+    assert dev_id == "guid-out"
+    assert label == "Out 1-2 (MOTU)"
 
 
-def test_remap_live_by_saved_label_after_index_shift() -> None:
-    rows = [
-        ("", "System-Standard", ""),
-        ("32", "Lautsprecher (2- USB Audio CODEC)", ""),
-    ]
-    with patch("live.live_devices.list_output_devices", return_value=rows):
+def test_remap_legacy_numeric_to_qt_guid() -> None:
+    with patch(
+        "live.live_devices._migrate_legacy_pa_index_to_qt_id",
+        return_value=("guid-new", "In 1-2 (MOTU)"),
+    ):
         dev_id, label = remap_live_device_id(
-            "33",
-            "Lautsprecher (USB Audio CODEC)",
-            input_device=False,
-        )
-    assert dev_id == "32"
-    assert "USB Audio CODEC" in label
-
-
-def test_remap_live_clears_stale_id_without_match() -> None:
-    rows = [("", "System-Standard", ""), ("5", "Realtek Audio", "")]
-    with patch("live.live_devices.list_input_devices", return_value=rows):
-        dev_id, label = remap_live_device_id(
-            "99",
-            "",
+            "27",
+            "In 1-2 (MOTU)",
             input_device=True,
         )
-    assert dev_id == ""
-    assert label == ""
+    assert dev_id == "guid-new"
+    assert label == "In 1-2 (MOTU)"
 
 
-def test_remap_live_settings_updates_all_roles() -> None:
+def test_resolve_live_pa_index_from_qt_guid() -> None:
+    with patch(
+        "live.live_devices.remap_live_device_id",
+        return_value=("guid-in", "In 1-2 (MOTU)"),
+    ), patch(
+        "live.live_devices._qt_to_pa_map",
+        return_value={"guid-in": 27},
+    ):
+        pa = resolve_live_pa_index("guid-in", "In 1-2 (MOTU)", input_device=True)
+    assert pa == 27
+
+
+def test_remap_live_settings_migrates_numeric_ids() -> None:
     live = LiveSettings(
         input_device_id="33",
         input_device_label="Mikrofon (USB Audio CODEC)",
         output_device_id="24",
         output_device_label="Kopfhörer (USB Audio CODEC)",
-        funk_output_device_id="32",
-        funk_output_device_label="Lautsprecher (USB Audio CODEC)",
-        funk_listen_input_device_id="25",
-        funk_listen_input_device_label="Line In (USB Audio CODEC)",
     )
-    in_rows = [
-        ("", "System-Standard", ""),
-        ("10", "Mikrofon (2- USB Audio CODEC)", ""),
-        ("11", "Line In (2- USB Audio CODEC)", ""),
-    ]
-    out_rows = [
-        ("", "System-Standard", ""),
-        ("20", "Kopfhörer (2- USB Audio CODEC)", ""),
-        ("21", "Lautsprecher (2- USB Audio CODEC)", ""),
-    ]
 
-    def _in() -> list[tuple[str, str, str]]:
-        return in_rows
+    def _fake_remap(saved_id: str, saved_label: str, *, input_device: bool):
+        if saved_id.isdigit():
+            return (
+                f"guid-{'in' if input_device else 'out'}-{saved_id}",
+                saved_label,
+            )
+        return saved_id, saved_label
 
-    def _out() -> list[tuple[str, str, str]]:
-        return out_rows
-
-    with patch("live.live_devices.list_input_devices", side_effect=_in), patch(
-        "live.live_devices.list_output_devices", side_effect=_out
-    ):
+    with patch("live.live_devices.remap_live_device_id", side_effect=_fake_remap):
         changed = remap_live_settings_devices(live)
 
     assert changed is True
-    assert live.input_device_id == "10"
-    assert live.funk_listen_input_device_id == "11"
-    assert live.output_device_id == "20"
-    assert live.funk_output_device_id == "21"
+    assert live.input_device_id == "guid-in-33"
+    assert live.output_device_id == "guid-out-24"

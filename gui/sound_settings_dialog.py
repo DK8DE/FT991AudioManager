@@ -282,9 +282,11 @@ class SoundSettingsWindow(RetranslatableMixin, QMainWindow):
     def _select_combo_device(self, combo: QComboBox, device_id: str) -> None:
         combo.blockSignals(True)
         try:
+            target = str(device_id or "").strip()
             idx = 0
             for i in range(combo.count()):
-                if combo.itemData(i) == device_id:
+                data = combo.itemData(i)
+                if str(data or "").strip() == target:
                     idx = i
                     break
             combo.setCurrentIndex(idx)
@@ -421,31 +423,53 @@ class SoundSettingsWindow(RetranslatableMixin, QMainWindow):
             self._combo_live_funk.blockSignals(False)
             self._combo_live_funk_listen.blockSignals(False)
 
+    def _apply_live_device_selection(
+        self,
+        combo: QComboBox,
+        *,
+        id_attr: str,
+        label_attr: str,
+        input_device: bool,
+    ) -> None:
+        rid = combo.currentData()
+        did = "" if rid is None else str(rid).strip()
+        setattr(self._settings.live, id_attr, did)
+        label = combo.currentText().split(" [PA #", 1)[0].strip()
+        setattr(self._settings.live, label_attr, label)
+
     def _on_live_in_dev(self, *_idx: int) -> None:
-        rid = self._combo_live_in.currentData()
-        self._settings.live.input_device_id = str(rid) if isinstance(rid, str) else ""
-        self._settings.live.input_device_label = self._combo_live_in.currentText()
+        self._apply_live_device_selection(
+            self._combo_live_in,
+            id_attr="input_device_id",
+            label_attr="input_device_label",
+            input_device=True,
+        )
         self._emit_live_devices_changed()
 
     def _on_live_out_dev(self, *_idx: int) -> None:
-        rid = self._combo_live_out.currentData()
-        self._settings.live.output_device_id = str(rid) if isinstance(rid, str) else ""
-        self._settings.live.output_device_label = self._combo_live_out.currentText()
+        self._apply_live_device_selection(
+            self._combo_live_out,
+            id_attr="output_device_id",
+            label_attr="output_device_label",
+            input_device=False,
+        )
         self._emit_live_devices_changed()
 
     def _on_live_funk_dev(self, *_idx: int) -> None:
-        rid = self._combo_live_funk.currentData()
-        self._settings.live.funk_output_device_id = str(rid) if isinstance(rid, str) else ""
-        self._settings.live.funk_output_device_label = self._combo_live_funk.currentText()
+        self._apply_live_device_selection(
+            self._combo_live_funk,
+            id_attr="funk_output_device_id",
+            label_attr="funk_output_device_label",
+            input_device=False,
+        )
         self._emit_live_devices_changed()
 
     def _on_live_funk_listen_dev(self, *_idx: int) -> None:
-        rid = self._combo_live_funk_listen.currentData()
-        self._settings.live.funk_listen_input_device_id = (
-            str(rid) if isinstance(rid, str) else ""
-        )
-        self._settings.live.funk_listen_input_device_label = (
-            self._combo_live_funk_listen.currentText()
+        self._apply_live_device_selection(
+            self._combo_live_funk_listen,
+            id_attr="funk_listen_input_device_id",
+            label_attr="funk_listen_input_device_label",
+            input_device=True,
         )
         self._settings.live.funk_listen_enabled = True
         self._emit_live_devices_changed()

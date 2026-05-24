@@ -35,14 +35,15 @@ def main() -> int:
     from model import AppSettings
 
     settings = AppSettings.load()
-    from live.live_devices import remap_live_settings_devices
-
-    if remap_live_settings_devices(settings.live):
-        settings.save()
     init_language(settings.ui.language)
 
     app = QApplication(sys.argv)
     install_qt_translations(app, settings.ui.language)
+
+    from live.live_devices import remap_live_settings_devices
+
+    if remap_live_settings_devices(settings.live):
+        settings.save()
 
     from gui.tooltip_text import install_tooltip_line_wrap
 

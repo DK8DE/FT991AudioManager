@@ -1,8 +1,7 @@
 """Persistierte Einstellungen für Live-Monitoring (sounddevice DSP-Pfad).
 
-Von Audio-Player/Recorder-QMediaDevices getrennt; Geräte-IDs entsprechen
-PortAudio-Host-API-Indices (Zeichenketten ganzer Zahlen) oder „“ für Geräte-
-Standard.
+Geräte-IDs entsprechen den **Qt-MMDevice-GUIDs** (wie Player/Recorder in
+``global_audio``). PortAudio-Indizes werden nur zur Laufzeit aufgelöst.
 """
 
 from __future__ import annotations
