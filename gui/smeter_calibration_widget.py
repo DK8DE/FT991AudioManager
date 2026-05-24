@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QSpinBox,
     QTabWidget,
@@ -109,7 +110,7 @@ class _SmeterBandPointEditor(QWidget):
             fill = pts[:4]
         else:
             fill = [pts[i] if i < len(pts) else defaults[i] for i in range(4)]
-        for (raw_spin, stage), pt in zip(self._rows, fill):
+        for (raw_spin, stage, _lbl), pt in zip(self._rows, fill):
             raw_spin.setValue(max(0, min(255, int(pt.raw))))
             stage.setCurrentIndex(_combo_index_for_db(stage, float(pt.db_over_s9)))
 

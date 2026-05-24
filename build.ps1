@@ -174,16 +174,16 @@ import importlib
 import sys
 
 missing = []
-for name in ("numpy", "scipy", "sounddevice"):
+for name in ('numpy', 'scipy', 'sounddevice'):
     try:
         importlib.import_module(name)
     except ImportError:
         missing.append(name)
 if missing:
-    print("FEHLEND im Build-venv:", ", ".join(missing), file=sys.stderr)
-    print("Tipp: pip install -r requirements.txt", file=sys.stderr)
+    print('FEHLEND im Build-venv:', ', '.join(missing), file=sys.stderr)
+    print('Tipp: pip install -r requirements.txt', file=sys.stderr)
     sys.exit(1)
-print("Live-Abhaengigkeiten OK")
+print('Live-Abhaengigkeiten OK')
 '@
     Invoke-Checked "Live-Abhaengigkeiten fehlen im Build-venv" $VenvPython "-c" $liveDepsCheck
 
