@@ -64,6 +64,9 @@ from model import (
 )
 from model.preset_store import DEFAULT_PROFILE_NAME
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
+
 from .audio_basics_widget import AudioBasicsValues, AudioBasicsWidget
 from .eq_editor_widget import EQEditorWidget
 from .extended_widget import ExtendedSettingsWidget
@@ -147,23 +150,23 @@ class _ProfileIoWorker(QObject):
                 profile = self._do_read()
                 self.read_done.emit(profile, list(self._skipped))
         except TxLockError as exc:
-            self.failed.emit("TX aktiv", str(exc))
+            self.failed.emit(tr("profile.worker.failed.tx"), str(exc))
         except CatConnectionLostError:
             # USB/Strom weg während der Operation — stillschweigend
             # abbrechen. MainWindow erfährt es über andere Pfade
             # (MeterPoller emittiert ebenfalls).
             self.connection_lost.emit()
         except CatTimeoutError as exc:
-            self.failed.emit("Timeout", str(exc))
+            self.failed.emit(tr("profile.worker.failed.timeout"), str(exc))
         except CatError as exc:
-            self.failed.emit("CAT-Fehler", str(exc))
+            self.failed.emit(tr("profile.worker.failed.cat"), str(exc))
         except Exception as exc:  # noqa: BLE001
             log = self._ft.get_log()
             if log is not None:
                 log.log_error(
                     "Unerwarteter Fehler im EQ-Profil-Worker:\n" + traceback.format_exc()
                 )
-            self.failed.emit("Unerwarteter Fehler", repr(exc))
+            self.failed.emit(tr("profile.worker.failed.unexpected"), repr(exc))
 
     # ---- Fault-Tolerance --------------------------------------------
 
@@ -404,7 +407,7 @@ class _ProfileIoWorker(QObject):
 # ---------------------------------------------------------------------
 
 
-class ProfileWidget(QWidget):
+class ProfileWidget(QWidget, RetranslatableMixin):
     """Vereint EQ-Profilauswahl, Grundwerte, Normal-EQ und Processor-EQ."""
 
     #: Wird emittiert, wenn ein laufender Read/Write feststellt, dass die
@@ -492,6 +495,32 @@ class ProfileWidget(QWidget):
 
         self._build_ui()
         self._reload_profile_list()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._lbl_eq_profile.setText(tr("profile.label.eq_profile_bold"))
+        self._lbl_mode_group.setText(tr("profile.label.mode_group"))
+        self.save_button.setText(tr("profile.btn.save"))
+        self.save_as_button.setText(tr("profile.btn.save_as"))
+        self.rename_button.setText(tr("profile.btn.rename"))
+        self.delete_button.setText(tr("profile.btn.delete"))
+        self.export_button.setText(tr("profile.btn.export"))
+        self.import_button.setText(tr("profile.btn.import"))
+        self.normal_eq_box.setTitle(tr("profile.group.normal_eq"))
+        self._normal_hint.setText(tr("profile.hint.normal_eq"))
+        self.processor_eq_box.setTitle(tr("profile.group.processor_eq"))
+        self._processor_hint.setText(tr("profile.hint.processor_eq"))
+        self._refresh_status()
+        self._update_eq_active_path()
+
+    def _sync_label_text(self) -> None:
+        """Aktualisiert Sync-Label je nach Verbindungsstatus (nach Retranslate)."""
+        if self._cat.is_connected():
+            self._sync_label.setText(tr("profile.sync.on"))
+            self._sync_label.setStyleSheet("color: #2ea043;")
+        else:
+            self._sync_label.setText(tr("profile.sync.off"))
+            self._sync_label.setStyleSheet("color: gray;")
 
     @contextlib.contextmanager
     def _hold_suppress_dirty(self):
@@ -546,7 +575,8 @@ class ProfileWidget(QWidget):
         eq_header_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         outer.addWidget(eq_header)
 
-        eq_header_layout.addWidget(QLabel("<b>EQ-Profil:</b>"))
+        self._lbl_eq_profile = QLabel(tr("profile.label.eq_profile_bold"))
+        eq_header_layout.addWidget(self._lbl_eq_profile)
         self.profile_combo_eq = QComboBox()
         self.profile_combo_eq.setMinimumWidth(280)
         self.profile_combo_eq.setSizePolicy(
@@ -558,7 +588,8 @@ class ProfileWidget(QWidget):
         eq_header_layout.addWidget(self.profile_combo_eq, stretch=1)
 
         eq_header_layout.addSpacing(18)
-        eq_header_layout.addWidget(QLabel("Mode-Gruppe:"))
+        self._lbl_mode_group = QLabel(tr("profile.label.mode_group"))
+        eq_header_layout.addWidget(self._lbl_mode_group)
         self.mode_combo_eq = QComboBox()
         self.mode_combo_eq.setSizePolicy(
             QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred
@@ -569,7 +600,7 @@ class ProfileWidget(QWidget):
         eq_header_layout.addWidget(self.mode_combo_eq)
 
         eq_header_layout.addSpacing(18)
-        self._sync_label = QLabel("Live-Sync: aus")
+        self._sync_label = QLabel(tr("profile.sync.off"))
         self._sync_label.setStyleSheet("color: gray;")
         self._sync_label.setMinimumWidth(160)
         self._sync_label.setAlignment(
@@ -588,34 +619,34 @@ class ProfileWidget(QWidget):
         button_policy = QSizePolicy(
             QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred
         )
-        self.save_button = QPushButton("EQ-Profil speichern")
+        self.save_button = QPushButton(tr("profile.btn.save"))
         self.save_button.setSizePolicy(button_policy)
         self.save_button.clicked.connect(self._on_save_clicked)
         toolbar_layout.addWidget(self.save_button)
 
-        self.save_as_button = QPushButton("Speichern unter…")
+        self.save_as_button = QPushButton(tr("profile.btn.save_as"))
         self.save_as_button.setSizePolicy(button_policy)
         self.save_as_button.clicked.connect(self._on_save_as_clicked)
         toolbar_layout.addWidget(self.save_as_button)
 
-        self.rename_button = QPushButton("Umbenennen…")
+        self.rename_button = QPushButton(tr("profile.btn.rename"))
         self.rename_button.setSizePolicy(button_policy)
         self.rename_button.clicked.connect(self._on_rename_clicked)
         toolbar_layout.addWidget(self.rename_button)
 
-        self.delete_button = QPushButton("EQ-Profil löschen")
+        self.delete_button = QPushButton(tr("profile.btn.delete"))
         self.delete_button.setSizePolicy(button_policy)
         self.delete_button.clicked.connect(self._on_delete_clicked)
         toolbar_layout.addWidget(self.delete_button)
 
         toolbar_layout.addSpacing(12)
 
-        self.export_button = QPushButton("Exportieren…")
+        self.export_button = QPushButton(tr("profile.btn.export"))
         self.export_button.setSizePolicy(button_policy)
         self.export_button.clicked.connect(self._on_export_clicked)
         toolbar_layout.addWidget(self.export_button)
 
-        self.import_button = QPushButton("Importieren…")
+        self.import_button = QPushButton(tr("profile.btn.import"))
         self.import_button.setSizePolicy(button_policy)
         self.import_button.clicked.connect(self._on_import_clicked)
         toolbar_layout.addWidget(self.import_button)
@@ -625,6 +656,11 @@ class ProfileWidget(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setMinimumHeight(280)
+        scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._editor_scroll = scroll
         outer.addWidget(scroll, stretch=1)
 
         body = QWidget()
@@ -638,37 +674,27 @@ class ProfileWidget(QWidget):
         self.basics.changed.connect(self._update_eq_active_path)
         body_layout.addWidget(self.basics)
 
-        self.normal_eq_box = QGroupBox(
-            "Parametric MIC EQ — Normal  (aktiv wenn Speech Processor aus)"
-        )
+        self.normal_eq_box = QGroupBox(tr("profile.group.normal_eq"))
         normal_layout = QVBoxLayout(self.normal_eq_box)
         normal_layout.setContentsMargins(8, 12, 8, 8)
         normal_layout.setSpacing(4)
-        normal_hint = QLabel(
-            "Greift in den Audio-Pfad, solange der Speech Processor "
-            "ausgeschaltet ist. Menüs EX119–EX127."
-        )
-        normal_hint.setWordWrap(True)
-        normal_hint.setStyleSheet("color: gray;")
-        normal_layout.addWidget(normal_hint)
+        self._normal_hint = QLabel(tr("profile.hint.normal_eq"))
+        self._normal_hint.setWordWrap(True)
+        self._normal_hint.setStyleSheet("color: gray;")
+        normal_layout.addWidget(self._normal_hint)
         self.normal_eq_editor = EQEditorWidget()
         self.normal_eq_editor.changed.connect(self._mark_dirty)
         normal_layout.addWidget(self.normal_eq_editor)
         body_layout.addWidget(self.normal_eq_box)
 
-        self.processor_eq_box = QGroupBox(
-            "Processor EQ  (aktiv wenn Speech Processor an)"
-        )
+        self.processor_eq_box = QGroupBox(tr("profile.group.processor_eq"))
         processor_layout = QVBoxLayout(self.processor_eq_box)
         processor_layout.setContentsMargins(8, 12, 8, 8)
         processor_layout.setSpacing(4)
-        processor_hint = QLabel(
-            "Greift erst bei eingeschaltetem Speech Processor und ersetzt "
-            "dann den Normal-EQ. Menüs EX128–EX136."
-        )
-        processor_hint.setWordWrap(True)
-        processor_hint.setStyleSheet("color: gray;")
-        processor_layout.addWidget(processor_hint)
+        self._processor_hint = QLabel(tr("profile.hint.processor_eq"))
+        self._processor_hint.setWordWrap(True)
+        self._processor_hint.setStyleSheet("color: gray;")
+        processor_layout.addWidget(self._processor_hint)
         self.processor_eq_editor = EQEditorWidget()
         self.processor_eq_editor.changed.connect(self._mark_dirty)
         processor_layout.addWidget(self.processor_eq_editor)
@@ -677,9 +703,8 @@ class ProfileWidget(QWidget):
         self.extended_editor = ExtendedSettingsWidget()
         self.extended_editor.changed.connect(self._mark_dirty)
         body_layout.addWidget(self.extended_editor)
-        body_layout.addStretch(1)
 
-        self.status_label = QLabel("Bereit.")
+        self.status_label = QLabel(tr("common.ready_with_dot"))
         self.status_label.setStyleSheet("color: gray;")
         outer.addWidget(self.status_label)
         return panel
@@ -716,7 +741,7 @@ class ProfileWidget(QWidget):
 
     def set_cat_available(self, available: bool) -> None:
         if available:
-            self._sync_label.setText("Live-Sync: aktiv")
+            self._sync_label.setText(tr("profile.sync.on"))
             self._sync_label.setStyleSheet("color: #2ea043;")
             # Beim Connect das aktive EQ-Profil ins Gerät schreiben (nicht
             # umgekehrt vom Radio lesen — sonst würde das zuletzt gewählte
@@ -726,7 +751,7 @@ class ProfileWidget(QWidget):
             else:
                 self.request_apply_active_profile()
         else:
-            self._sync_label.setText("Live-Sync: aus")
+            self._sync_label.setText(tr("profile.sync.off"))
             self._sync_label.setStyleSheet("color: gray;")
             # Bei Verlust der Verbindung Auto-Write-Pending verwerfen, damit
             # nach Reconnect nicht stale Werte überschrieben werden.
@@ -965,27 +990,27 @@ class ProfileWidget(QWidget):
         if not is_ssb:
             self.normal_eq_editor.set_path_status(
                 active=True,
-                hint_text="● aktiv — in dieser Betriebsart gibt es keinen Speech Processor",
+                hint_text=tr("profile.eq_path.active_no_sp"),
             )
             return
 
         if processor_on:
             self.normal_eq_editor.set_path_status(
                 active=False,
-                hint_text="○ inaktiv — Speech Processor ist an, der Processor-EQ greift",
+                hint_text=tr("profile.eq_path.normal_inactive_sp_on"),
             )
             self.processor_eq_editor.set_path_status(
                 active=True,
-                hint_text="● aktiv — wird gerade verwendet",
+                hint_text=tr("profile.eq_path.processor_active"),
             )
         else:
             self.normal_eq_editor.set_path_status(
                 active=True,
-                hint_text="● aktiv — wird gerade verwendet",
+                hint_text=tr("profile.eq_path.normal_active"),
             )
             self.processor_eq_editor.set_path_status(
                 active=False,
-                hint_text="○ inaktiv — Speech Processor ist aus",
+                hint_text=tr("profile.eq_path.processor_inactive"),
             )
 
     def _on_mode_changed(self, _idx: int) -> None:
@@ -1031,10 +1056,9 @@ class ProfileWidget(QWidget):
         if self._dirty and self._current_profile_name:
             answer = QMessageBox.question(
                 self,
-                "Ungespeicherte Änderungen",
-                (
-                    f"EQ-Profil ‘{self._current_profile_name}’ hat ungespeicherte "
-                    "Änderungen. Vorher speichern?"
+                tr("profile.dialog.unsaved.title"),
+                tr("profile.dialog.unsaved.text").format(
+                    name=self._current_profile_name
                 ),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Yes,
@@ -1077,9 +1101,11 @@ class ProfileWidget(QWidget):
             self._auto_write_timer.start()
 
     def _refresh_status(self) -> None:
-        name = self._current_profile_name or "—"
-        flag = " • ungespeichert" if self._dirty else ""
-        self.status_label.setText(f"Aktives EQ-Profil: {name}{flag}")
+        name = self._current_profile_name or tr("common.dash")
+        dirty = tr("profile.status.dirty_suffix") if self._dirty else ""
+        self.status_label.setText(
+            tr("profile.status.active").format(name=name, dirty=dirty)
+        )
 
     # ------------------------------------------------------------------
     # Profil speichern / löschen
@@ -1110,7 +1136,9 @@ class ProfileWidget(QWidget):
         try:
             self._store.upsert(profile)
         except OSError as exc:
-            QMessageBox.critical(self, "Speichern fehlgeschlagen", str(exc))
+            QMessageBox.critical(
+                self, tr("profile.msg.save_failed.title"), str(exc)
+            )
             return
         self._dirty = False
         self._refresh_status()
@@ -1122,11 +1150,11 @@ class ProfileWidget(QWidget):
         self._save_current_profile_inplace()
 
     def _on_save_as_clicked(self) -> None:
-        default_name = self._current_profile_name or "Neues EQ-Profil"
+        default_name = self._current_profile_name or tr("profile.default_new_name")
         new_name, ok = QInputDialog.getText(
             self,
-            "EQ-Profil speichern unter…",
-            "Name des neuen EQ-Profils:",
+            tr("profile.dialog.save_as.title"),
+            tr("profile.dialog.save_as.label"),
             text=default_name,
         )
         if not ok:
@@ -1137,8 +1165,8 @@ class ProfileWidget(QWidget):
         if self._store.find(new_name) is not None:
             answer = QMessageBox.question(
                 self,
-                "Überschreiben?",
-                f"Ein EQ-Profil ‘{new_name}’ existiert bereits. Überschreiben?",
+                tr("profile.dialog.overwrite.title"),
+                tr("profile.dialog.overwrite.text").format(name=new_name),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -1149,7 +1177,9 @@ class ProfileWidget(QWidget):
         try:
             self._store.upsert(profile)
         except OSError as exc:
-            QMessageBox.critical(self, "Speichern fehlgeschlagen", str(exc))
+            QMessageBox.critical(
+                self, tr("profile.msg.save_failed.title"), str(exc)
+            )
             return
 
         self._current_profile_name = new_name
@@ -1161,8 +1191,8 @@ class ProfileWidget(QWidget):
         name = self._current_profile_name
         answer = QMessageBox.question(
             self,
-            "EQ-Profil löschen?",
-            f"EQ-Profil ‘{name}’ wirklich löschen?",
+            tr("profile.dialog.delete.title"),
+            tr("profile.dialog.delete.text").format(name=name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1178,8 +1208,8 @@ class ProfileWidget(QWidget):
         old_name = self._current_profile_name
         new_name, ok = QInputDialog.getText(
             self,
-            "EQ-Profil umbenennen",
-            "Neuer Name:",
+            tr("profile.dialog.rename.title"),
+            tr("profile.dialog.rename.label"),
             text=old_name,
         )
         if not ok:
@@ -1190,14 +1220,18 @@ class ProfileWidget(QWidget):
         if self._store.find(new_name) is not None:
             QMessageBox.warning(
                 self,
-                "Name vergeben",
-                f"Ein EQ-Profil mit dem Namen „{new_name}“ existiert bereits.",
+                tr("profile.msg.name_taken.title"),
+                tr("profile.msg.name_taken").format(name=new_name),
             )
             return
         if self._dirty:
             self._save_current_profile_inplace()
         if not self._store.rename(old_name, new_name):
-            QMessageBox.warning(self, "Umbenennen", "Umbenennen fehlgeschlagen.")
+            QMessageBox.warning(
+                self,
+                tr("profile.msg.rename_failed.title"),
+                tr("profile.msg.rename_failed"),
+            )
             return
         self._current_profile_name = new_name
         self._reload_profile_list()
@@ -1207,46 +1241,47 @@ class ProfileWidget(QWidget):
     def _on_export_clicked(self) -> None:
         if not self._store.profiles:
             QMessageBox.information(
-                self, "Export", "Es sind keine EQ-Profile zum Exportieren vorhanden."
+                self,
+                tr("profile.msg.export_empty.title"),
+                tr("profile.msg.export_empty"),
             )
             return
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "EQ-Profile exportieren",
-            "eq_profile_export.json",
-            "JSON-Dateien (*.json);;Alle Dateien (*.*)",
+            tr("profile.file.export.title"),
+            tr("profile.file.export.default"),
+            tr("profile.file.filter.json"),
         )
         if not path:
             return
         try:
             self._store.export_to_file(Path(path))
         except OSError as exc:
-            QMessageBox.critical(self, "Export fehlgeschlagen", str(exc))
+            QMessageBox.critical(
+                self, tr("profile.msg.export_failed.title"), str(exc)
+            )
             return
         QMessageBox.information(
             self,
-            "Export",
-            f"{len(self._store.profiles)} EQ-Profil(e) exportiert nach:\n{path}",
+            tr("profile.msg.export_ok.title"),
+            tr("profile.msg.export_ok").format(
+                count=len(self._store.profiles), path=path
+            ),
         )
 
     def _on_import_clicked(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "EQ-Profile importieren",
+            tr("profile.file.import.title"),
             "",
-            "JSON-Dateien (*.json);;Alle Dateien (*.*)",
+            tr("profile.file.filter.json"),
         )
         if not path:
             return
         answer = QMessageBox.warning(
             self,
-            "EQ-Profile importieren",
-            (
-                "Alle vorhandenen EQ-Profile werden durch den Inhalt der "
-                "gewählten JSON-Datei ersetzt.\n\n"
-                "Ungespeicherte Änderungen am aktuellen Profil gehen verloren.\n\n"
-                "Fortfahren?"
-            ),
+            tr("profile.dialog.import.title"),
+            tr("profile.dialog.import.warning"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1255,7 +1290,9 @@ class ProfileWidget(QWidget):
         try:
             count = self._store.import_replace_all_from_file(Path(path))
         except (OSError, json.JSONDecodeError, ValueError) as exc:
-            QMessageBox.critical(self, "Import fehlgeschlagen", str(exc))
+            QMessageBox.critical(
+                self, tr("profile.msg.import_failed.title"), str(exc)
+            )
             return
         self._current_profile_name = None
         self._last_synced_profile = None
@@ -1263,8 +1300,8 @@ class ProfileWidget(QWidget):
         self._reload_profile_list(select_first=True)
         QMessageBox.information(
             self,
-            "Import",
-            f"{count} EQ-Profil(e) importiert und gespeichert.",
+            tr("profile.msg.import_ok.title"),
+            tr("profile.msg.import_ok").format(count=count),
         )
 
     # ------------------------------------------------------------------
@@ -1335,7 +1372,7 @@ class ProfileWidget(QWidget):
             if self._tx_active:
                 self._pending_action = (kind, payload)
                 self._tx_block_pending = True
-                self._sync_label.setText("Sync: ⏸ TX aktiv")
+                self._sync_label.setText(tr("profile.sync.tx_active"))
                 self._sync_label.setStyleSheet("color: #ffae42;")
                 return
             self._start_worker(
@@ -1353,7 +1390,7 @@ class ProfileWidget(QWidget):
             if self._tx_active:
                 self._pending_action = (kind, prof)
                 self._tx_block_pending = True
-                self._sync_label.setText("Sync: ⏸ TX aktiv")
+                self._sync_label.setText(tr("profile.sync.tx_active"))
                 self._sync_label.setStyleSheet("color: #ffae42;")
                 return
             self._start_worker(write=True, profile=prof, silent=True)
@@ -1483,10 +1520,16 @@ class ProfileWidget(QWidget):
         # dessen läuft eine kurze Info im Sync-Label rechts neben den
         # Buttons.
         dialog: Optional[QProgressDialog] = None
-        title = "EQ-Profil ins Gerät schreiben…" if write else "EQ-Profil aus Gerät lesen…"
+        title = (
+            tr("profile.progress.write.title")
+            if write
+            else tr("profile.progress.read.title")
+        )
         if not silent:
             total_steps = _total_steps_for(self.mode_combo.currentText())
-            dialog = QProgressDialog(title, "Abbrechen", 0, total_steps, self)
+            dialog = QProgressDialog(
+                title, tr("profile.progress.cancel"), 0, total_steps, self
+            )
             dialog.setWindowTitle(title)
             dialog.setWindowModality(Qt.WindowModality.WindowModal)
             dialog.setMinimumDuration(0)
@@ -1497,7 +1540,7 @@ class ProfileWidget(QWidget):
 
         if silent:
             self._sync_label.setText(
-                "Sync: schreibe…" if write else "Sync: lese…"
+                tr("profile.sync.writing") if write else tr("profile.sync.reading")
             )
             self._sync_label.setStyleSheet("color: #2ea043;")
 
@@ -1572,8 +1615,9 @@ class ProfileWidget(QWidget):
                     + "; ".join(skipped_list)
                 )
         self.status_label.setText(
-            f"Aktives EQ-Profil: {self._current_profile_name or '—'} "
-            "• Synchron mit Gerät"
+            tr("profile.status.synced").format(
+                name=self._current_profile_name or tr("common.dash")
+            )
         )
 
     def _on_write_done(self) -> None:
@@ -1583,13 +1627,13 @@ class ProfileWidget(QWidget):
             self._last_synced_profile = self._writing_profile
             self._writing_profile = None
         if self._worker_silent:
-            self._sync_label.setText("Sync: ✓")
+            self._sync_label.setText(tr("profile.sync.ok"))
             self._sync_label.setStyleSheet("color: #2ea043;")
         else:
             QMessageBox.information(
                 self,
-                "Geschrieben",
-                "Das EQ-Profil wurde erfolgreich ins Gerät übertragen.",
+                tr("profile.msg.written.title"),
+                tr("profile.msg.written"),
             )
 
     def _on_worker_failed(self, title: str, message: str) -> None:
@@ -1601,14 +1645,16 @@ class ProfileWidget(QWidget):
         if self._worker_silent:
             # Stille Auto-Aktion: kein Pop-up, nur ein Hinweis im Sync-Label.
             short = message.splitlines()[0] if message else title
-            self._sync_label.setText(f"Sync: ⚠ {short}")
+            self._sync_label.setText(
+                tr("profile.sync.warning").format(message=short)
+            )
             self._sync_label.setStyleSheet("color: #ffae42;")
             # Bei TX-Lock markieren wir „warte auf RX" — die Edge-Erkennung
             # in notify_tx_state() triggert dann automatisch den nächsten
             # Versuch, sobald TX endet.
-            if "TX" in title or "TX" in message:
+            if title == tr("profile.worker.failed.tx") or "TX" in message:
                 self._tx_block_pending = True
-                self._sync_label.setText("Sync: ⏸ wartet auf RX")
+                self._sync_label.setText(tr("profile.sync.wait_rx"))
         else:
             QMessageBox.warning(self, title, message)
 
@@ -1652,10 +1698,10 @@ class ProfileWidget(QWidget):
         if self._worker_thread is not None:
             return
         if self._cat.is_connected():
-            self._sync_label.setText("Live-Sync: aktiv")
+            self._sync_label.setText(tr("profile.sync.on"))
             self._sync_label.setStyleSheet("color: #2ea043;")
         else:
-            self._sync_label.setText("Live-Sync: aus")
+            self._sync_label.setText(tr("profile.sync.off"))
             self._sync_label.setStyleSheet("color: gray;")
 
     def _set_buttons_busy(self, busy: bool) -> None:

@@ -17,6 +17,7 @@ import urllib.request
 
 from PySide6.QtCore import QObject, QThread, Signal
 
+from i18n import tr
 from version import APP_NAME, APP_VERSION
 
 #: REST: neuestes Release (öffentlich, ohne Token; niedriges Rate-Limit).
@@ -81,36 +82,25 @@ def fetch_latest_release(
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
-            raise ReleaseCheckError(
-                "Auf GitHub wurde kein Release gefunden (404)."
-            ) from exc
+            raise ReleaseCheckError(tr("update.error.no_release")) from exc
         if exc.code in (403, 429):
-            raise ReleaseCheckError(
-                "GitHub hat die Anfrage abgelehnt (zu viele Abfragen oder "
-                "Rate-Limit). Bitte später erneut versuchen."
-            ) from exc
-        raise ReleaseCheckError(
-            f"GitHub-API-Fehler: HTTP {exc.code}."
-        ) from exc
+            raise ReleaseCheckError(tr("update.error.rate_limit")) from exc
+        raise ReleaseCheckError(tr("update.error.http", code=exc.code)) from exc
     except urllib.error.URLError as exc:
-        raise ReleaseCheckError(
-            f"Netzwerkfehler: {exc.reason!s}"
-        ) from exc
+        raise ReleaseCheckError(tr("update.error.network", reason=str(exc.reason))) from exc
     except TimeoutError as exc:
-        raise ReleaseCheckError(
-            "Zeitüberschreitung — Server antwortet nicht rechtzeitig."
-        ) from exc
+        raise ReleaseCheckError(tr("update.error.timeout")) from exc
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ReleaseCheckError("Ungültige JSON-Antwort von GitHub.") from exc
+        raise ReleaseCheckError(tr("update.error.invalid_json")) from exc
 
     tag = (data.get("tag_name") or "").strip()
     url = (data.get("html_url") or "").strip() or RELEASES_PAGE_URL
     ver = tag.lstrip("vV").strip() if tag else ""
     if not ver:
-        raise ReleaseCheckError("Release enthält kein auswertbares Tag (tag_name).")
+        raise ReleaseCheckError(tr("update.error.no_tag"))
     return ver, url
 
 
@@ -161,6 +151,6 @@ class UpdateCheckThread(QThread):
                 UpdateCheckOutcome(
                     current=APP_VERSION,
                     ok=False,
-                    error_message=f"Unerwarteter Fehler: {exc}",
+                    error_message=tr("update.error.unexpected", error=exc),
                 )
             )

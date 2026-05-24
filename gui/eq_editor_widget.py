@@ -36,6 +36,9 @@ from PySide6.QtWidgets import (
 
 from model.eq_band import EQBand, EQSettings
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
+
 from .eq_curve_view import EqCurveView
 
 
@@ -52,7 +55,7 @@ _CAPTION_STYLE = (
 )
 _INACTIVE_OPACITY = "color: #6a6a6a;"
 
-_BAND_LABELS = ("LOW", "MID", "HIGH")
+_BAND_KEYS = ("common.band.low", "common.band.mid", "common.band.high")
 # Reihenfolge im rechten Stack: HIGH oben, LOW unten — wie an einem
 # Mischpult-EQ. (Indizes 0=LOW, 1=MID, 2=HIGH.)
 _DB_STACK_ORDER = (2, 1, 0)
@@ -60,17 +63,17 @@ _DB_STACK_ORDER = (2, 1, 0)
 
 def _format_level(band: EQBand) -> str:
     if band.freq == "OFF":
-        return "—"
-    return f"{int(band.level):+d} dB"
+        return tr("common.dash")
+    return tr("common.db", value=int(band.level))
 
 
 def _format_bw(band: EQBand) -> str:
     if band.freq == "OFF":
-        return "—"
-    return f"Q = {int(band.bw)}"
+        return tr("common.dash")
+    return tr("common.q", value=int(band.bw))
 
 
-class EQEditorWidget(QWidget):
+class EQEditorWidget(RetranslatableMixin, QWidget):
     """Komplettes 3-Band-EQ-Editorwidget — vollständig per Maus bedienbar."""
 
     changed = Signal()
@@ -111,13 +114,14 @@ class EQEditorWidget(QWidget):
         bw_row = QHBoxLayout()
         bw_row.setSpacing(0)
         self._bw_value_labels: List[QLabel] = []
-        for i, label_text in enumerate(_BAND_LABELS):
+        self._bw_name_labels: List[QLabel] = []
+        for i, band_key in enumerate(_BAND_KEYS):
             cell = QHBoxLayout()
             cell.setSpacing(4)
             cell.setContentsMargins(0, 0, 0, 0)
-            name_label = QLabel(label_text)
+            name_label = QLabel(tr(band_key))
             name_label.setStyleSheet(_CAPTION_STYLE)
-            value_label = QLabel("Q = 5")
+            value_label = QLabel(tr("common.q", value=5))
             value_label.setStyleSheet(_VALUE_LABEL_STYLE)
             value_label.setMinimumWidth(46)
             cell_wrapper = QHBoxLayout()
@@ -130,6 +134,7 @@ class EQEditorWidget(QWidget):
             cell_wrapper.addStretch(1)
             bw_row.addLayout(cell_wrapper, stretch=1)
             self._bw_value_labels.append(value_label)
+            self._bw_name_labels.append(name_label)
         left_column.addLayout(bw_row)
 
         self.curve_view = EqCurveView()
@@ -138,18 +143,26 @@ class EQEditorWidget(QWidget):
 
         plot_row.addWidget(self._build_db_stack())
 
-        # Hinweis-Zeile zur Bedienung
-        hint = QLabel(
-            "Punkt ziehen = Frequenz/Level · hellblauer Rand ziehen = Bandbreite · "
-            "Rechtsklick = an/aus"
-        )
-        hint.setStyleSheet(_CAPTION_STYLE)
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setWordWrap(True)
-        outer.addWidget(hint)
+        self._hint = QLabel()
+        self._hint.setStyleSheet(_CAPTION_STYLE)
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint.setWordWrap(True)
+        outer.addWidget(self._hint)
 
         # Programmatischer Initialwert (alles ``OFF``) ---------------------
         self._update_value_labels(EQSettings.default())
+        self._register_retranslate()
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        self._hint.setText(tr("eq_editor.hint"))
+        for name_label, band_key in zip(self._bw_name_labels, _BAND_KEYS):
+            name_label.setText(tr(band_key))
+        if hasattr(self, "_db_caption"):
+            self._db_caption.setText(tr("common.level"))
+        for name_label, band_index in zip(self._db_name_labels, _DB_STACK_ORDER):
+            name_label.setText(tr(_BAND_KEYS[band_index]))
+        self._update_value_labels(self.get_settings())
 
     # ------------------------------------------------------------------
     # Sub-Layout: rechter dB-Stack
@@ -164,18 +177,20 @@ class EQEditorWidget(QWidget):
         layout.setHorizontalSpacing(4)
         layout.setVerticalSpacing(8)
 
-        caption = QLabel("Level")
+        caption = QLabel()
         caption.setStyleSheet(_CAPTION_STYLE)
         caption.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(caption, 0, 0, 1, 1)
+        self._db_caption = caption
 
         # 3 Zeilen für HIGH / MID / LOW (Reihenfolge in _DB_STACK_ORDER).
         self._db_value_labels: List[Optional[QLabel]] = [None, None, None]
+        self._db_name_labels: List[QLabel] = []
         for row_offset, band_index in enumerate(_DB_STACK_ORDER, start=1):
-            name_label = QLabel(_BAND_LABELS[band_index])
+            name_label = QLabel()
             name_label.setStyleSheet(_CAPTION_STYLE)
             name_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            value_label = QLabel("—")
+            value_label = QLabel(tr("common.dash"))
             value_label.setStyleSheet(_VALUE_LABEL_STYLE)
             value_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             value_label.setMinimumWidth(60)
@@ -192,6 +207,7 @@ class EQEditorWidget(QWidget):
             cell_container.setLayout(cell)
             layout.addWidget(cell_container, row_offset, 0)
             self._db_value_labels[band_index] = value_label
+            self._db_name_labels.append(name_label)
         return frame
 
     # ------------------------------------------------------------------

@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from i18n import tr
+
 
 class FavoritesPanelWidget(QWidget):
     """Inhalt der Favoriten-Steuerung (ohne Umriss — den setzt das Eltern-``QFrame``)."""
@@ -27,27 +29,32 @@ class FavoritesPanelWidget(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
 
-        row.addWidget(QLabel("Favoriten:"))
+        self._lbl_favorites = QLabel(tr("favorites.label"))
+        row.addWidget(self._lbl_favorites)
         self.combo = QComboBox(self)
         self.combo.setMinimumWidth(220)
         self.combo.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
-        self.combo.setToolTip(
-            "Gespeicherte Soll-Vorgaben (Frequenz, Mode, EQ-Profil, SQL, AF, RF, Power). "
-            "Erste Zeile „Favoriten“ bedeutet keine Auswahl; nach Wechsel des "
-            "Speicherkanals oder VFO erscheint sie wieder."
-        )
+        self.combo.setToolTip(tr("favorites.combo_tooltip"))
         row.addWidget(self.combo, stretch=1)
 
-        self.btn_save = QPushButton("Speichern…", self)
-        self.btn_delete = QPushButton("Löschen", self)
-        self.btn_edit = QPushButton("Ändern", self)
-        self.btn_save.setToolTip("Aktuellen Funkzustand als Favorit speichern")
-        self.btn_delete.setToolTip("Gewählten Favoriten entfernen")
-        self.btn_edit.setToolTip(
-            "Gewählten Favorit mit dem aktuellen Funkzustand überschreiben"
-        )
+        self.btn_save = QPushButton(tr("favorites.btn_save"), self)
+        self.btn_delete = QPushButton(tr("favorites.btn_delete"), self)
+        self.btn_edit = QPushButton(tr("favorites.btn_edit"), self)
+        self.btn_save.setToolTip(tr("favorites.btn_save_tooltip"))
+        self.btn_delete.setToolTip(tr("favorites.btn_delete_tooltip"))
+        self.btn_edit.setToolTip(tr("favorites.btn_edit_tooltip"))
         row.addWidget(self.btn_save)
         row.addWidget(self.btn_delete)
         row.addWidget(self.btn_edit)
+
+    def retranslate_ui(self) -> None:
+        self._lbl_favorites.setText(tr("favorites.label"))
+        self.combo.setToolTip(tr("favorites.combo_tooltip"))
+        self.btn_save.setText(tr("favorites.btn_save"))
+        self.btn_delete.setText(tr("favorites.btn_delete"))
+        self.btn_edit.setText(tr("favorites.btn_edit"))
+        self.btn_save.setToolTip(tr("favorites.btn_save_tooltip"))
+        self.btn_delete.setToolTip(tr("favorites.btn_delete_tooltip"))
+        self.btn_edit.setToolTip(tr("favorites.btn_edit_tooltip"))

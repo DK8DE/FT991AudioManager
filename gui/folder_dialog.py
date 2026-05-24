@@ -7,22 +7,19 @@ from typing import Optional
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QWidget
 
+from i18n import tr
+
 # Windows-Ordnerdialog zeigt keine Dateien — Qt-Dialog mit Filter nutzen.
 _USE_QT_FOLDER_DIALOG = True
 
-_PLAYER_FOLDER_FILTER = (
-    "Audio-Dateien (*.mp3 *.wav);;MP3 (*.mp3);;WAV (*.wav);;Alle Dateien (*.*)"
-)
-_RECORDER_FOLDER_FILTER = "MP3-Aufnahmen (*.mp3);;Alle Dateien (*.*)"
 
-
-def _apply_german_file_dialog_labels(dlg: QFileDialog) -> None:
-    """Qt-Dateidialog: feste deutsche Texte (DontUseNativeDialog nutzt sonst Englisch)."""
-    dlg.setLabelText(QFileDialog.DialogLabel.LookIn, "Suchen in:")
-    dlg.setLabelText(QFileDialog.DialogLabel.FileName, "Ordner:")
-    dlg.setLabelText(QFileDialog.DialogLabel.FileType, "Dateitypen:")
-    dlg.setLabelText(QFileDialog.DialogLabel.Accept, "Ordner wählen")
-    dlg.setLabelText(QFileDialog.DialogLabel.Reject, "Abbrechen")
+def _apply_file_dialog_labels(dlg: QFileDialog) -> None:
+    """Qt-Dateidialog: UI-Texte (DontUseNativeDialog nutzt sonst Englisch)."""
+    dlg.setLabelText(QFileDialog.DialogLabel.LookIn, tr("folder_dialog.look_in"))
+    dlg.setLabelText(QFileDialog.DialogLabel.FileName, tr("folder_dialog.file_name"))
+    dlg.setLabelText(QFileDialog.DialogLabel.FileType, tr("folder_dialog.file_type"))
+    dlg.setLabelText(QFileDialog.DialogLabel.Accept, tr("folder_dialog.accept"))
+    dlg.setLabelText(QFileDialog.DialogLabel.Reject, tr("folder_dialog.reject"))
 
 
 def pick_folder_showing_files(
@@ -40,7 +37,7 @@ def pick_folder_showing_files(
         dlg.setOption(QFileDialog.Option.ShowDirsOnly, False)
         dlg.setNameFilter(name_filter)
         dlg.setOption(QFileDialog.Option.DontUseNativeDialog, True)
-        _apply_german_file_dialog_labels(dlg)
+        _apply_file_dialog_labels(dlg)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return None
         selected = dlg.selectedFiles()
@@ -54,9 +51,9 @@ def pick_audio_player_folder(
 ) -> Optional[str]:
     return pick_folder_showing_files(
         parent,
-        "Audio-Ordner",
+        tr("folder_dialog.player_title"),
         start_dir,
-        name_filter=_PLAYER_FOLDER_FILTER,
+        name_filter=tr("folder_dialog.filter.player"),
     )
 
 
@@ -65,7 +62,7 @@ def pick_audio_recorder_folder(
 ) -> Optional[str]:
     return pick_folder_showing_files(
         parent,
-        "Aufnahme-Ordner",
+        tr("folder_dialog.recorder_title"),
         start_dir,
-        name_filter=_RECORDER_FOLDER_FILTER,
+        name_filter=tr("folder_dialog.filter.recorder"),
     )

@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
 
 from cat import CatError, FT991CAT, SerialCAT
 from gui.app_icon import app_icon
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 from gui.memory_editor_io import (
     backup_path,
     export_csv,
@@ -60,7 +62,7 @@ from model.memory_editor_channel import (
 )
 
 
-class MemoryEditorWindow(QMainWindow):
+class MemoryEditorWindow(QMainWindow, RetranslatableMixin):
     """Editor für Speicherplätze 001..100."""
 
     def __init__(
@@ -79,7 +81,7 @@ class MemoryEditorWindow(QMainWindow):
     ) -> None:
         del parent
         super().__init__(None)
-        self.setWindowTitle("FT-991/A Speicherkanal-Editor")
+        self.setWindowTitle(tr("memory.window.title"))
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         # Kein Parent — frei beweglich, MainWindow kann darüber liegen (s. LogWindow).
@@ -104,24 +106,56 @@ class MemoryEditorWindow(QMainWindow):
         self._build_ui()
         self._wire_signals()
         self._bootstrap_initial_data()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("memory.window.title"))
+        self._lbl_search.setText(tr("memory.label.search"))
+        self.search_edit.setPlaceholderText(tr("memory.search.placeholder"))
+        self._lbl_band.setText(tr("memory.label.band"))
+        cur_band = self.band_filter.currentData()
+        self.band_filter.blockSignals(True)
+        self.band_filter.clear()
+        for key, label_key in self._band_filter_items:
+            self.band_filter.addItem(tr(label_key), key)
+        idx = self.band_filter.findData(cur_band)
+        if idx >= 0:
+            self.band_filter.setCurrentIndex(idx)
+        self.band_filter.blockSignals(False)
+        self._toolbar.setWindowTitle(tr("memory.toolbar.actions"))
+        for label_key, btn in self._toolbar_buttons:
+            btn.setText(tr(label_key))
+        for act, label_key in self._file_menu_actions:
+            act.setText(tr(label_key))
+        self._file_menu.setTitle(tr("memory.menu.file"))
+        self.table.retranslate_ui()
 
     def _build_ui(self) -> None:
         central = QWidget()
         layout = QVBoxLayout(central)
 
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Suche:"))
+        self._lbl_search = QLabel(tr("memory.label.search"))
+        filter_row.addWidget(self._lbl_search)
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText(
-            "Name, Frequenz, Notiz, SQL/Power (Local) …"
-        )
+        self.search_edit.setPlaceholderText(tr("memory.search.placeholder"))
         self.search_edit.textChanged.connect(self._apply_filter)
         filter_row.addWidget(self.search_edit, 1)
 
         self.band_filter = QComboBox()
-        self.band_filter.addItems(["Alle", "2m", "70cm", "HF", "leer", "belegt"])
-        self.band_filter.currentTextChanged.connect(self._apply_filter)
-        filter_row.addWidget(QLabel("Band:"))
+        self._band_filter_items = (
+            ("all", "memory.filter.all"),
+            ("2m", "memory.filter.2m"),
+            ("70cm", "memory.filter.70cm"),
+            ("HF", "memory.filter.hf"),
+            ("empty", "memory.filter.empty"),
+            ("used", "memory.filter.used"),
+        )
+        for key, label_key in self._band_filter_items:
+            self.band_filter.addItem(tr(label_key), key)
+        self.band_filter.currentIndexChanged.connect(self._apply_filter)
+        self._lbl_band = QLabel(tr("memory.label.band"))
+        filter_row.addWidget(self._lbl_band)
         filter_row.addWidget(self.band_filter)
 
         layout.addLayout(filter_row)
@@ -144,7 +178,7 @@ class MemoryEditorWindow(QMainWindow):
         attach_delegates(self.table)
         layout.addWidget(self.table, 1)
 
-        self.status_label = QLabel("Bereit.")
+        self.status_label = QLabel(tr("common.ready_with_dot"))
         layout.addWidget(self.status_label)
 
         self.setCentralWidget(central)
@@ -152,39 +186,43 @@ class MemoryEditorWindow(QMainWindow):
         self._build_menu()
 
     def _build_toolbar(self) -> None:
-        tb = QToolBar("Aktionen")
-        self.addToolBar(tb)
-        for text, slot in (
-            ("Neu laden", self._start_read_from_radio),
-            ("Speichern", self._save_to_radio),
-            ("Exportieren", self._show_export_menu),
-            ("Importieren", self._show_import_menu),
-            ("Nach oben", lambda: self._move_row(-1)),
-            ("Nach unten", lambda: self._move_row(1)),
-            ("Einfügen", self._insert_row),
-            ("Leeren", self._clear_row),
-            ("Duplizieren", self._duplicate_row),
-            ("Lücken schließen", self._close_gaps),
-            ("Kanal → VFO", self._channel_to_vfo),
-            ("VFO → Kanal", self._vfo_to_channel),
-            ("Kanal setzen", self._set_channel_on_radio),
+        self._toolbar = QToolBar(tr("memory.toolbar.actions"))
+        self.addToolBar(self._toolbar)
+        self._toolbar_buttons: list[tuple[str, QPushButton]] = []
+        for label_key, slot in (
+            ("memory.btn.reload", self._start_read_from_radio),
+            ("memory.btn.save", self._save_to_radio),
+            ("memory.btn.export", self._show_export_menu),
+            ("memory.btn.import", self._show_import_menu),
+            ("memory.btn.move_up", lambda: self._move_row(-1)),
+            ("memory.btn.move_down", lambda: self._move_row(1)),
+            ("memory.btn.insert", self._insert_row),
+            ("memory.btn.clear", self._clear_row),
+            ("memory.btn.duplicate", self._duplicate_row),
+            ("memory.btn.close_gaps", self._close_gaps),
+            ("memory.btn.channel_to_vfo", self._channel_to_vfo),
+            ("memory.btn.vfo_to_channel", self._vfo_to_channel),
+            ("memory.btn.set_channel", self._set_channel_on_radio),
         ):
-            btn = QPushButton(text)
+            btn = QPushButton(tr(label_key))
             btn.clicked.connect(slot)
-            tb.addWidget(btn)
+            self._toolbar.addWidget(btn)
+            self._toolbar_buttons.append((label_key, btn))
 
     def _build_menu(self) -> None:
-        menu = self.menuBar().addMenu("&Datei")
-        for label, slot in (
-            ("&JSON exportieren …", self._export_json),
-            ("&JSON importieren …", self._import_json),
-            ("&CSV exportieren …", self._export_csv),
-            ("&CSV importieren …", self._import_csv),
-            ("&Sicherung erstellen …", self._manual_backup),
+        self._file_menu = self.menuBar().addMenu(tr("memory.menu.file"))
+        self._file_menu_actions: list[tuple[QAction, str]] = []
+        for label_key, slot in (
+            ("memory.menu.export_json", self._export_json),
+            ("memory.menu.import_json", self._import_json),
+            ("memory.menu.export_csv", self._export_csv),
+            ("memory.menu.import_csv", self._import_csv),
+            ("memory.menu.backup", self._manual_backup),
         ):
-            act = QAction(label, self)
+            act = QAction(tr(label_key), self)
             act.triggered.connect(slot)
-            menu.addAction(act)
+            self._file_menu.addAction(act)
+            self._file_menu_actions.append((act, label_key))
 
     def _wire_signals(self) -> None:
         self._host.read_progress.connect(
@@ -354,30 +392,32 @@ class MemoryEditorWindow(QMainWindow):
         self._persist_local_memory_mappings()
         self._refresh_memory_local_column_cells()
         self._apply_filter()
-        self.status_label.setText(
-            "Liste aus lokalem Zwischenspeicher — „Neu laden“ liest vom Gerät."
-        )
+        self.status_label.setText(tr("memory.status.cache_loaded"))
         return True
 
     def _start_initial_radio_read_without_dirty_prompt(self) -> None:
         """Erster Start ohne Disk-Cache: Lesen ohne „Änderungen verwerfen?“-Dialog."""
         self._commit_pending_editor()
         if not self._cat.is_connected():
-            self.status_label.setText("Nicht verbunden — Speicher nicht gelesen.")
+            self.status_label.setText(tr("memory.status.not_connected"))
             return
         if self._host.is_busy:
             return
         if self._read_progress is not None:
             self._read_progress.close()
         self._read_progress = QProgressDialog(
-            "Speicherkanäle lesen …", "Abbrechen", 0, 100, self
+            tr("memory.progress.read_label"),
+            tr("memory.progress.read_cancel"),
+            0,
+            100,
+            self,
         )
-        self._read_progress.setWindowTitle("Erstes Einlesen")
+        self._read_progress.setWindowTitle(tr("memory.progress.read_first_title"))
         self._read_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._read_progress.setMinimumDuration(0)
         self._read_progress.canceled.connect(self._host.stop)
         self._read_progress.show()
-        self.status_label.setText("Lese Speicherkanäle vom Gerät …")
+        self.status_label.setText(tr("memory.status.reading"))
         self._host.start_read()
 
     def _persist_editor_disk_cache_and_flag(self) -> None:
@@ -404,21 +444,24 @@ class MemoryEditorWindow(QMainWindow):
     def _start_read_from_radio(self) -> None:
         self._commit_pending_editor()
         if not self._cat.is_connected():
-            QMessageBox.warning(self, "Nicht verbunden", "Keine CAT-Verbindung.")
+            QMessageBox.warning(
+                self,
+                tr("memory.msg.not_connected.title"),
+                tr("memory.msg.not_connected"),
+            )
             return
         if self._host.is_busy:
             QMessageBox.information(
                 self,
-                "Lädt …",
-                "Ein Lese- oder Schreibvorgang läuft bereits.",
+                tr("memory.msg.busy.title"),
+                tr("memory.msg.busy"),
             )
             return
         if self._bank.changed_channels() or self._bank.any_layout_change():
             ans = QMessageBox.question(
                 self,
-                "Neu laden",
-                "Ungespeicherte Änderungen verwerfen und alle Kanäle "
-                "vom Funkgerät neu einlesen?",
+                tr("memory.msg.reload.title"),
+                tr("memory.msg.reload.question"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if ans != QMessageBox.StandardButton.Yes:
@@ -426,14 +469,18 @@ class MemoryEditorWindow(QMainWindow):
         if self._read_progress is not None:
             self._read_progress.close()
         self._read_progress = QProgressDialog(
-            "Speicherkanäle lesen …", "Abbrechen", 0, 100, self
+            tr("memory.progress.read_label"),
+            tr("memory.progress.read_cancel"),
+            0,
+            100,
+            self,
         )
-        self._read_progress.setWindowTitle("Neu laden")
+        self._read_progress.setWindowTitle(tr("memory.progress.read_reload_title"))
         self._read_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._read_progress.setMinimumDuration(0)
         self._read_progress.canceled.connect(self._host.stop)
         self._read_progress.show()
-        self.status_label.setText("Lese Speicherkanäle vom Gerät …")
+        self.status_label.setText(tr("memory.status.reading"))
         self._host.start_read()
 
     def _on_read_progress(self, current: int, total: int) -> None:
@@ -453,8 +500,9 @@ class MemoryEditorWindow(QMainWindow):
             self._persist_local_sql_mapping()
             self._refresh_sql_local_column_cells()
             self.status_label.setText(
-                f"{sum(1 for c in self._bank.channels if c.enabled)} "
-                f"belegte Kanäle geladen."
+                tr("memory.status.channels_loaded").format(
+                    count=sum(1 for c in self._bank.channels if c.enabled)
+                )
             )
             self._apply_filter()
             self._persist_editor_disk_cache_and_flag()
@@ -463,7 +511,11 @@ class MemoryEditorWindow(QMainWindow):
     def _save_to_radio(self) -> None:
         self._commit_pending_editor()
         if not self._cat.is_connected():
-            QMessageBox.warning(self, "Nicht verbunden", "Keine CAT-Verbindung.")
+            QMessageBox.warning(
+                self,
+                tr("memory.msg.not_connected.title"),
+                tr("memory.msg.not_connected"),
+            )
             return
         errors = []
         for ch in self._bank.channels:
@@ -474,8 +526,10 @@ class MemoryEditorWindow(QMainWindow):
         if errors:
             QMessageBox.warning(
                 self,
-                "Validierung",
-                "Bitte korrigieren:\n" + "\n".join(errors[:8]),
+                tr("memory.msg.validation.title"),
+                tr("memory.msg.validation.prefix").format(
+                    errors="\n".join(errors[:8])
+                ),
             )
             return
 
@@ -484,34 +538,40 @@ class MemoryEditorWindow(QMainWindow):
         )
         channels = self._bank.channels_for_radio_write()
         if not channels:
-            QMessageBox.information(self, "Speichern", "Keine Änderungen.")
+            QMessageBox.information(
+                self, tr("memory.msg.no_changes.title"), tr("memory.msg.no_changes")
+            )
             return
         if full_write:
-            msg = (
-                "Die Kanal-Reihenfolge wurde geändert.\n"
-                "Alle 100 Speicherplätze werden neu ins Gerät geschrieben.\n\n"
-                "Vorher wird eine Sicherung angelegt. Fortfahren?"
-            )
+            msg = tr("memory.msg.save.full_write")
         else:
-            msg = (
-                f"{len(channels)} geänderte Kanäle an das Gerät senden?\n"
-                f"Vorher wird eine Sicherung angelegt."
-            )
+            msg = tr("memory.msg.save.partial").format(count=len(channels))
 
-        if QMessageBox.question(self, "Speichern", msg) != QMessageBox.StandardButton.Yes:
+        if (
+            QMessageBox.question(self, tr("memory.progress.write_title"), msg)
+            != QMessageBox.StandardButton.Yes
+        ):
             return
 
         backup_dir = app_data_dir() / "memory_backups"
         try:
             save_backup_json(self._bank, backup_path(backup_dir))
         except OSError as exc:
-            QMessageBox.warning(self, "Sicherung", f"Sicherung fehlgeschlagen: {exc}")
+            QMessageBox.warning(
+                self,
+                tr("memory.msg.backup_failed.title"),
+                tr("memory.msg.backup_failed").format(error=exc),
+            )
             return
 
         self._write_progress = QProgressDialog(
-            "Schreibe Speicherkanäle …", "Abbrechen", 0, len(channels), self
+            tr("memory.progress.write_label"),
+            tr("memory.progress.read_cancel"),
+            0,
+            len(channels),
+            self,
         )
-        self._write_progress.setWindowTitle("Speichern")
+        self._write_progress.setWindowTitle(tr("memory.progress.write_title"))
         self._write_progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._write_progress.setMinimumDuration(0)
         self._write_progress.setValue(0)
@@ -523,7 +583,7 @@ class MemoryEditorWindow(QMainWindow):
             normalize_channel_for_write(ch)
         # Immer Kanal 001..100 in Reihenfolge ans Gerät
         channels = sorted(channels, key=lambda c: c.number)
-        self.status_label.setText("Schreibe … (VFO-Modus wird gesetzt)")
+        self.status_label.setText(tr("memory.status.writing"))
         self._host.start_write(channels)
 
     def _on_write_progress(self, current: int, total: int, detail: str) -> None:
@@ -541,8 +601,12 @@ class MemoryEditorWindow(QMainWindow):
             ch.moved = False
         self._bank.layout_changed = False
         self._model.set_bank(self._bank)
-        QMessageBox.information(self, "Speichern", "Schreiben abgeschlossen.")
-        self.status_label.setText("Gespeichert.")
+        QMessageBox.information(
+            self,
+            tr("memory.msg.write_done.title"),
+            tr("memory.msg.write_done"),
+        )
+        self.status_label.setText(tr("memory.status.saved"))
         self._persist_editor_disk_cache_and_flag()
         self._notify_main_memory_dropdown()
 
@@ -553,10 +617,10 @@ class MemoryEditorWindow(QMainWindow):
         if self._write_progress:
             self._write_progress.close()
             self._write_progress = None
-        QMessageBox.critical(self, "Fehler", message)
+        QMessageBox.critical(self, tr("memory.msg.error.title"), message)
 
     def _on_connection_lost(self) -> None:
-        self._on_op_failed("CAT-Verbindung verloren.")
+        self._on_op_failed(tr("memory.msg.connection_lost"))
 
     def _on_rows_moved(
         self,
@@ -572,7 +636,7 @@ class MemoryEditorWindow(QMainWindow):
         new_row = row if start > row else row - 1
         self._select_row(new_row)
         self.status_label.setText(
-            f"Kanal in Zeile {new_row + 1} verschoben (Nr. neu vergeben)."
+            tr("memory.status.row_moved").format(row=new_row + 1)
         )
         self._persist_sql_after_bank_structure_change()
 
@@ -596,7 +660,7 @@ class MemoryEditorWindow(QMainWindow):
         if self._model.reorder_row(row, dest_row):
             self._select_row(dest_row)
             self.status_label.setText(
-                f"Kanal in Zeile {dest_row + 1} verschoben (Nr. neu vergeben)."
+                tr("memory.status.row_moved").format(row=dest_row + 1)
             )
 
     def _insert_row(self) -> None:
@@ -628,8 +692,8 @@ class MemoryEditorWindow(QMainWindow):
         if ch.rx_frequency_hz <= 0:
             QMessageBox.information(
                 self,
-                "Kanal → VFO",
-                "Dieser Eintrag hat keine gültige Frequenz (> 0 MHz).",
+                tr("memory.msg.no_frequency.title"),
+                tr("memory.msg.no_frequency"),
             )
             return
         ft = FT991CAT(self._cat)
@@ -641,10 +705,13 @@ class MemoryEditorWindow(QMainWindow):
             from mapping.rx_mapping import format_mode_set
             ft._cat.send_command(format_mode_set(ch.mode), read_response=False)  # noqa: SLF001
             self.status_label.setText(
-                f"VFO: {format_frequency_hz(ch.rx_frequency_hz)} {ch.mode.value}"
+                tr("memory.status.vfo_set").format(
+                    freq=format_frequency_hz(ch.rx_frequency_hz),
+                    mode=ch.mode.value,
+                )
             )
         except CatError as exc:
-            QMessageBox.warning(self, "VFO", str(exc))
+            QMessageBox.warning(self, tr("memory.msg.vfo.title"), str(exc))
 
     def _vfo_to_channel(self) -> None:
         row = self._selected_rows()[0]
@@ -663,7 +730,7 @@ class MemoryEditorWindow(QMainWindow):
             ch.mark_changed()
             self._model.set_bank(self._bank)
         except CatError as exc:
-            QMessageBox.warning(self, "VFO", str(exc))
+            QMessageBox.warning(self, tr("memory.msg.vfo.title"), str(exc))
 
     def _set_channel_on_radio(self) -> None:
         """Aktiven Speicherkanal am Funkgerät wählen (Memory-Modus, ``MC``)."""
@@ -675,29 +742,29 @@ class MemoryEditorWindow(QMainWindow):
         try:
             ft.select_memory_channel(ch.number)
             self.status_label.setText(
-                f"Funkgerät auf Speicherkanal {ch.number:03d} geschaltet."
+                tr("memory.status.radio_channel").format(number=f"{ch.number:03d}")
             )
             if self._apply_local_memory_overrides is not None:
                 self._apply_local_memory_overrides(int(ch.number))
         except CatError as exc:
-            QMessageBox.warning(self, "Speicherkanal", str(exc))
+            QMessageBox.warning(self, tr("memory.msg.channel.title"), str(exc))
 
     def _context_menu(self, pos) -> None:  # noqa: ANN001
         menu = QMenu(self)
-        for label, slot in (
-            ("Duplizieren", self._duplicate_row),
-            ("Leeren", self._clear_row),
-            ("Kanal → VFO", self._channel_to_vfo),
-            ("VFO → Kanal", self._vfo_to_channel),
-            ("Kanal setzen", self._set_channel_on_radio),
+        for label_key, slot in (
+            ("memory.context.duplicate", self._duplicate_row),
+            ("memory.context.clear", self._clear_row),
+            ("memory.context.channel_to_vfo", self._channel_to_vfo),
+            ("memory.context.vfo_to_channel", self._vfo_to_channel),
+            ("memory.context.set_channel", self._set_channel_on_radio),
         ):
-            act = menu.addAction(label)
+            act = menu.addAction(tr(label_key))
             act.triggered.connect(slot)
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _apply_filter(self) -> None:
         text = self.search_edit.text().strip().lower()
-        band = self.band_filter.currentText()
+        band = self.band_filter.currentData()
         for row, ch in enumerate(self._bank.channels):
             hide = False
             if text:
@@ -708,11 +775,11 @@ class MemoryEditorWindow(QMainWindow):
                 ).lower()
                 if text not in blob:
                     hide = True
-            if band == "leer" and not ch.is_empty:
+            if band == "empty" and not ch.is_empty:
                 hide = True
-            elif band == "belegt" and ch.is_empty:
+            elif band == "used" and ch.is_empty:
                 hide = True
-            elif band not in ("Alle", "leer", "belegt"):
+            elif band not in ("all", "empty", "used"):
                 if ch.detect_band_label() != band:
                     hide = True
             self.table.setRowHidden(row, hide)
@@ -724,8 +791,8 @@ class MemoryEditorWindow(QMainWindow):
 
     def _show_export_menu(self) -> None:
         menu = QMenu(self)
-        menu.addAction("Als JSON (.json) …", self._export_json)
-        menu.addAction("Als CSV (.csv, Semikolon für Excel) …", self._export_csv)
+        menu.addAction(tr("memory.menu.export_json_action"), self._export_json)
+        menu.addAction(tr("memory.menu.export_csv_action"), self._export_csv)
         btn = self.sender()
         if isinstance(btn, QWidget):
             menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
@@ -734,8 +801,8 @@ class MemoryEditorWindow(QMainWindow):
 
     def _show_import_menu(self) -> None:
         menu = QMenu(self)
-        menu.addAction("Aus JSON (.json) …", self._import_json)
-        menu.addAction("Aus CSV (.csv, Semikolon) …", self._import_csv)
+        menu.addAction(tr("memory.menu.import_json_action"), self._import_json)
+        menu.addAction(tr("memory.menu.import_csv_action"), self._import_csv)
         btn = self.sender()
         if isinstance(btn, QWidget):
             menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
@@ -744,17 +811,16 @@ class MemoryEditorWindow(QMainWindow):
 
     def _ask_import_mode(self) -> Optional[Literal["replace", "append"]]:
         box = QMessageBox(self)
-        box.setWindowTitle("Importieren")
-        box.setText("Wie soll die Datei eingespielt werden?")
-        box.setInformativeText(
-            "Alles ersetzen: die komplette Liste (100 Kanäle) wird durch "
-            "den Inhalt der Datei ersetzt.\n\n"
-            "Anhängen: nur belegte Kanäle aus der Datei werden in freie "
-            "Slots der aktuellen Liste eingefügt."
+        box.setWindowTitle(tr("memory.dialog.import.title"))
+        box.setText(tr("memory.dialog.import.question"))
+        box.setInformativeText(tr("memory.dialog.import.info"))
+        replace_btn = box.addButton(
+            tr("memory.dialog.import.replace"), QMessageBox.ButtonRole.DestructiveRole
         )
-        replace_btn = box.addButton("Alles ersetzen", QMessageBox.ButtonRole.DestructiveRole)
-        append_btn = box.addButton("Anhängen", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
+        append_btn = box.addButton(
+            tr("memory.dialog.import.append"), QMessageBox.ButtonRole.AcceptRole
+        )
+        box.addButton(tr("common.cancel"), QMessageBox.ButtonRole.RejectRole)
         box.exec()
         clicked = box.clickedButton()
         if clicked == replace_btn:
@@ -767,19 +833,18 @@ class MemoryEditorWindow(QMainWindow):
         self, import_count: int, free_slots: int
     ) -> Optional[Literal["fill", "cancel"]]:
         box = QMessageBox(self)
-        box.setWindowTitle("Importieren — nicht genug Platz")
+        box.setWindowTitle(tr("memory.dialog.import.overflow.title"))
         box.setText(
-            f"In der Datei sind {import_count} belegte Kanäle, "
-            f"frei sind nur {free_slots} Speicherplätze."
+            tr("memory.dialog.import.overflow.text").format(
+                import_count=import_count,
+                free_slots=free_slots,
+            )
         )
-        box.setInformativeText(
-            "„Freie belegen“ fügt so viele Kanäle wie möglich in freie "
-            "Slots ein; der Rest der Datei wird nicht übernommen."
-        )
+        box.setInformativeText(tr("memory.dialog.import.overflow.info"))
         fill_btn = box.addButton(
-            "Freie belegen (bis voll)", QMessageBox.ButtonRole.AcceptRole
+            tr("memory.dialog.import.fill_free"), QMessageBox.ButtonRole.AcceptRole
         )
-        box.addButton("Abbrechen", QMessageBox.ButtonRole.RejectRole)
+        box.addButton(tr("common.cancel"), QMessageBox.ButtonRole.RejectRole)
         box.exec()
         if box.clickedButton() == fill_btn:
             return "fill"
@@ -790,9 +855,8 @@ class MemoryEditorWindow(QMainWindow):
             return True
         ans = QMessageBox.question(
             self,
-            "Liste ersetzen",
-            "Die aktuelle Liste hat ungespeicherte Änderungen.\n"
-            "Trotzdem alles ersetzen?",
+            tr("memory.dialog.replace_dirty.title"),
+            tr("memory.dialog.replace_dirty.question"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         return ans == QMessageBox.StandardButton.Yes
@@ -810,7 +874,9 @@ class MemoryEditorWindow(QMainWindow):
             imported = loader(path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(
-                self, "Importieren", f"Datei konnte nicht gelesen werden:\n{exc}"
+                self,
+                tr("memory.msg.import_read_failed.title"),
+                tr("memory.msg.import_read_failed").format(error=exc),
             )
             return
 
@@ -819,7 +885,7 @@ class MemoryEditorWindow(QMainWindow):
                 return
             self._bank = imported
             self._bank.layout_changed = True
-            detail = f"Liste ersetzt ({fmt_label})"
+            detail = tr("memory.import.detail.replaced").format(format=fmt_label)
         else:
             import_count = MemoryChannelBank.count_nonempty_imported(
                 imported.channels
@@ -828,17 +894,16 @@ class MemoryEditorWindow(QMainWindow):
             if import_count == 0:
                 QMessageBox.information(
                     self,
-                    "Importieren",
-                    "Die Datei enthält keine belegten Kanäle.",
+                    tr("memory.msg.import_empty.title"),
+                    tr("memory.msg.import_empty"),
                 )
                 return
             if import_count > free_slots:
                 if free_slots == 0:
                     QMessageBox.warning(
                         self,
-                        "Importieren",
-                        f"Die Datei enthält {import_count} belegte Kanäle, "
-                        "es ist aber kein freier Speicherplatz mehr vorhanden.",
+                        tr("memory.msg.import_no_space.title"),
+                        tr("memory.msg.import_no_space").format(count=import_count),
                     )
                     return
                 if self._ask_append_overflow(import_count, free_slots) != "fill":
@@ -846,32 +911,38 @@ class MemoryEditorWindow(QMainWindow):
             appended, skipped = self._bank.append_imported(imported.channels)
             if appended == 0:
                 return
-            detail = f"{appended} Kanal/Kanäle angehängt ({fmt_label})"
+            detail = tr("memory.import.detail.appended").format(
+                count=appended, format=fmt_label
+            )
             if skipped:
-                detail += f", {skipped} nicht übernommen (Speicher voll)"
+                detail += tr("memory.import.detail.skipped").format(skipped=skipped)
 
         self._model.set_bank(self._bank)
         self._persist_sql_after_bank_structure_change()
         self._apply_filter()
-        self.status_label.setText(f"Importiert: {path.name} — {detail}")
+        self.status_label.setText(
+            tr("memory.status.imported").format(filename=path.name, detail=detail)
+        )
 
     def _export_json(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Liste als JSON speichern",
+            tr("memory.file.export_json.title"),
             self._export_dir(),
-            "JSON (*.json)",
+            tr("memory.file.export_json.filter"),
         )
         if path:
             export_json(self._bank, Path(path))
-            self.status_label.setText(f"Exportiert (JSON): {path}")
+            self.status_label.setText(
+                tr("memory.status.export_json").format(path=path)
+            )
 
     def _import_json(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Liste aus JSON laden",
+            tr("memory.file.import_json.title"),
             self._export_dir(),
-            "JSON (*.json)",
+            tr("memory.file.import_json.filter"),
         )
         if path:
             self._apply_import(Path(path), import_json, "JSON")
@@ -879,31 +950,40 @@ class MemoryEditorWindow(QMainWindow):
     def _export_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Liste als CSV speichern",
+            tr("memory.file.export_csv.title"),
             self._export_dir(),
-            "CSV für Excel (*.csv)",
+            tr("memory.file.export_csv.filter"),
         )
         if path:
             export_csv(self._bank, Path(path))
-            self.status_label.setText(f"Exportiert (CSV): {path}")
+            self.status_label.setText(
+                tr("memory.status.export_csv").format(path=path)
+            )
 
     def _import_csv(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "Liste aus CSV laden",
+            tr("memory.file.import_csv.title"),
             self._export_dir(),
-            "CSV für Excel (*.csv)",
+            tr("memory.file.import_csv.filter"),
         )
         if path:
             self._apply_import(Path(path), import_csv, "CSV")
 
     def _manual_backup(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
-            self, "Sicherung speichern", str(app_data_dir() / "memory_backups"), "JSON (*.json)"
+            self,
+            tr("memory.file.backup.title"),
+            str(app_data_dir() / "memory_backups"),
+            tr("memory.file.backup.filter"),
         )
         if path:
             save_backup_json(self._bank, Path(path))
-            QMessageBox.information(self, "Sicherung", f"Gespeichert:\n{path}")
+            QMessageBox.information(
+                self,
+                tr("memory.msg.backup_saved.title"),
+                tr("memory.msg.backup_saved").format(path=path),
+            )
 
     def _notify_closed(self) -> None:
         if self._closed_notified:
@@ -921,8 +1001,8 @@ class MemoryEditorWindow(QMainWindow):
         if self._bank.changed_channels() or self._bank.any_layout_change():
             ans = QMessageBox.question(
                 self,
-                "Schließen",
-                "Ungespeicherte Änderungen verwerfen?",
+                tr("memory.dialog.close.title"),
+                tr("memory.dialog.close.question"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if ans != QMessageBox.StandardButton.Yes:

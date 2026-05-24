@@ -29,16 +29,22 @@ from cat import (
     CatError,
     CatTimeoutError,
     FT991_RADIO_IDS,
-    FT991A_RADIO_ID,
     FT991CAT,
     PortInfo,
     RadioIdentity,
     SerialCAT,
 )
+from i18n import tr
 
 
 # Häufige Baudraten beim FT-991A — Werks-Default ist 38400.
 COMMON_BAUDRATES = [4800, 9600, 19200, 38400]
+
+
+def _expected_radio_ids_str() -> str:
+    return tr("joiner.or").join(
+        tr("settings.test.expected_id_or", id=f"ID{rid}") for rid in FT991_RADIO_IDS
+    )
 
 
 class ConnectionWidget(QFrame):
@@ -67,6 +73,13 @@ class ConnectionWidget(QFrame):
         self._initial_baudrate = initial_baudrate
         self._initial_timeout_ms = initial_timeout_ms
 
+        self._title_label: QLabel | None = None
+        self._lbl_port: QLabel | None = None
+        self._lbl_baudrate: QLabel | None = None
+        self._lbl_timeout: QLabel | None = None
+
+        self._status_text = tr("connection.status.not_connected")
+
         self._build_ui()
         self.refresh_ports(preferred_device=initial_port)
         self._update_buttons_enabled()
@@ -80,16 +93,16 @@ class ConnectionWidget(QFrame):
         outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(6)
 
-        title = QLabel("<b>CAT-Verbindung</b>")
-        outer.addWidget(title)
+        self._title_label = QLabel(tr("connection.title"))
+        outer.addWidget(self._title_label)
 
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(6)
         outer.addLayout(grid)
 
-        # Zeile 0: Port + Baudrate
-        grid.addWidget(QLabel("Port:"), 0, 0)
+        self._lbl_port = QLabel(tr("connection.port"))
+        grid.addWidget(self._lbl_port, 0, 0)
         self.port_combo = QComboBox()
         self.port_combo.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToContents
@@ -100,7 +113,8 @@ class ConnectionWidget(QFrame):
         )
         grid.addWidget(self.port_combo, 0, 1)
 
-        grid.addWidget(QLabel("Baudrate:"), 0, 2)
+        self._lbl_baudrate = QLabel(tr("connection.baudrate"))
+        grid.addWidget(self._lbl_baudrate, 0, 2)
         self.baud_combo = QComboBox()
         for b in COMMON_BAUDRATES:
             self.baud_combo.addItem(str(b), userData=b)
@@ -109,45 +123,66 @@ class ConnectionWidget(QFrame):
             self.baud_combo.setCurrentIndex(index)
         grid.addWidget(self.baud_combo, 0, 3)
 
-        grid.addWidget(QLabel("Timeout:"), 0, 4)
+        self._lbl_timeout = QLabel(tr("connection.timeout"))
+        grid.addWidget(self._lbl_timeout, 0, 4)
         self.timeout_spin = QSpinBox()
         self.timeout_spin.setRange(100, 5000)
         self.timeout_spin.setSingleStep(50)
-        self.timeout_spin.setSuffix(" ms")
+        self.timeout_spin.setSuffix(tr("common.ms_suffix"))
         self.timeout_spin.setValue(self._initial_timeout_ms)
         grid.addWidget(self.timeout_spin, 0, 5)
 
         grid.setColumnStretch(1, 1)
 
-        # Zeile 1: Buttons
         button_row = QHBoxLayout()
         outer.addLayout(button_row)
 
-        self.refresh_button = QPushButton("Aktualisieren")
+        self.refresh_button = QPushButton(tr("connection.refresh"))
         self.refresh_button.clicked.connect(lambda: self.refresh_ports())
         button_row.addWidget(self.refresh_button)
 
-        self.connect_button = QPushButton("Verbinden")
+        self.connect_button = QPushButton(tr("connection.connect"))
         self.connect_button.clicked.connect(self._on_connect_clicked)
         button_row.addWidget(self.connect_button)
 
-        self.disconnect_button = QPushButton("Trennen")
+        self.disconnect_button = QPushButton(tr("connection.disconnect"))
         self.disconnect_button.clicked.connect(self._on_disconnect_clicked)
         button_row.addWidget(self.disconnect_button)
 
-        self.test_button = QPushButton("Verbindung testen")
+        self.test_button = QPushButton(tr("connection.test"))
         self.test_button.clicked.connect(self._on_test_clicked)
         button_row.addWidget(self.test_button)
 
         button_row.addStretch(1)
 
-        # Zeile 2: Status
-        self.status_label = QLabel("Status: nicht verbunden")
+        self.status_label = QLabel()
         self.status_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.status_label.setWordWrap(True)
         outer.addWidget(self.status_label)
+        self._apply_status_label()
+
+    def retranslate_ui(self) -> None:
+        if self._title_label is not None:
+            self._title_label.setText(tr("connection.title"))
+        if self._lbl_port is not None:
+            self._lbl_port.setText(tr("connection.port"))
+        if self._lbl_baudrate is not None:
+            self._lbl_baudrate.setText(tr("connection.baudrate"))
+        if self._lbl_timeout is not None:
+            self._lbl_timeout.setText(tr("connection.timeout"))
+        self.timeout_spin.setSuffix(tr("common.ms_suffix"))
+        self.refresh_button.setText(tr("connection.refresh"))
+        self.connect_button.setText(tr("connection.connect"))
+        self.disconnect_button.setText(tr("connection.disconnect"))
+        self.test_button.setText(tr("connection.test"))
+        self._apply_status_label()
+
+    def _apply_status_label(self) -> None:
+        self.status_label.setText(
+            tr("connection.status_prefix", text=self._status_text)
+        )
 
     # ------------------------------------------------------------------
     # Ports
@@ -162,7 +197,7 @@ class ConnectionWidget(QFrame):
         try:
             self.port_combo.clear()
             if not ports:
-                self.port_combo.addItem("(keine Ports gefunden)", userData=None)
+                self.port_combo.addItem(tr("settings.no_ports_found"), userData=None)
             else:
                 for p in ports:
                     self.port_combo.addItem(p.display, userData=p.device)
@@ -185,7 +220,8 @@ class ConnectionWidget(QFrame):
     # ------------------------------------------------------------------
 
     def _set_status(self, text: str) -> None:
-        self.status_label.setText(f"Status: {text}")
+        self._status_text = text
+        self._apply_status_label()
         self.status_message.emit(text)
 
     def _update_buttons_enabled(self) -> None:
@@ -220,38 +256,46 @@ class ConnectionWidget(QFrame):
     def _on_connect_clicked(self) -> None:
         port = self._current_port_device()
         if not port:
-            QMessageBox.warning(self, "Kein Port", "Bitte zuerst einen seriellen Port auswählen.")
+            QMessageBox.warning(
+                self,
+                tr("connection.no_port.title"),
+                tr("connection.no_port.message"),
+            )
             return
         baud = self.selected_baudrate()
         timeout_ms = self.selected_timeout_ms()
         try:
             self._cat.connect(port, baudrate=baud, timeout_ms=timeout_ms)
         except (serial.SerialException, OSError) as exc:
-            self._set_status(f"Verbindung fehlgeschlagen ({exc})")
+            self._set_status(tr("connection.status.failed", error=str(exc)))
             QMessageBox.critical(
                 self,
-                "Verbindung fehlgeschlagen",
-                f"Port {port} konnte nicht geöffnet werden:\n\n{exc}",
+                tr("connect.failed.title"),
+                tr("connect.failed.message", port=port, error=str(exc)),
             )
             self._update_buttons_enabled()
             self.connection_changed.emit(False)
             return
 
-        self._set_status(f"Port {port} bei {baud} Baud geöffnet — Gerät noch nicht geprüft")
+        self._set_status(
+            tr(
+                "connection.status.port_open_unverified",
+                port=port,
+                baud=baud,
+            )
+        )
         self._update_buttons_enabled()
         self.connection_changed.emit(True)
-        # Direkt anschließend kurz testen, damit der Anwender sofort Feedback hat.
         self._run_identity_test(silent=True)
 
     def _on_disconnect_clicked(self) -> None:
         self._cat.disconnect()
-        self._set_status("nicht verbunden")
+        self._set_status(tr("connection.status.not_connected"))
         self._update_buttons_enabled()
         self.connection_changed.emit(False)
 
     def _on_test_clicked(self) -> None:
         if not self._cat.is_connected():
-            # Temporäre Verbindung nur für den Test aufbauen.
             port = self._current_port_device()
             if not port:
                 return
@@ -262,20 +306,17 @@ class ConnectionWidget(QFrame):
                     timeout_ms=self.selected_timeout_ms(),
                 )
             except (serial.SerialException, OSError) as exc:
-                self._set_status(f"Verbindung fehlgeschlagen ({exc})")
+                self._set_status(tr("connection.status.failed", error=str(exc)))
                 QMessageBox.critical(
                     self,
-                    "Verbindung fehlgeschlagen",
-                    f"Port {port} konnte nicht geöffnet werden:\n\n{exc}",
+                    tr("connect.failed.title"),
+                    tr("connect.failed.message", port=port, error=str(exc)),
                 )
                 self._update_buttons_enabled()
                 return
             identity = self._run_identity_test(silent=False)
             self._update_buttons_enabled()
             if identity is None or not identity.is_ft991:
-                # Testverbindung wieder schließen, wenn kein FT-991(A) gefunden.
-                # Wenn doch erkannt, bleibt die Verbindung bestehen — das ist
-                # in der Regel das, was der Anwender möchte.
                 if identity is None or not identity.is_ft991:
                     pass
             self.connection_changed.emit(self._cat.is_connected())
@@ -294,68 +335,77 @@ class ConnectionWidget(QFrame):
         Gibt die :class:`RadioIdentity` zurück oder ``None`` bei Fehler.
         """
         if not self._cat.is_connected():
-            self._set_status("nicht verbunden")
+            self._set_status(tr("connection.status.not_connected"))
             return None
 
         ft = FT991CAT(self._cat)
         try:
             identity = ft.test_connection()
         except CatTimeoutError as exc:
-            self._set_status("Port geöffnet, aber keine Antwort vom Gerät")
+            self._set_status(tr("connection.status.no_device_response"))
             if not silent:
                 QMessageBox.warning(
                     self,
-                    "Keine Antwort",
-                    (
-                        "Es wurde kein vollständiges CAT-Telegramm empfangen.\n\n"
-                        "Mögliche Ursachen:\n"
-                        " • Falscher COM-Port (Enhanced vs. Standard).\n"
-                        " • Falsche Baudrate (Menü 031 prüfen).\n"
-                        " • Gerät ausgeschaltet oder USB-Kabel nicht verbunden.\n\n"
-                        f"Detail: {exc}"
-                    ),
+                    tr("settings.test.no_response.title"),
+                    tr("settings.test.no_response.message", error=str(exc)),
                 )
             return None
         except CatError as exc:
-            self._set_status(f"CAT-Fehler: {exc}")
+            self._set_status(tr("connection.status.cat_error", error=str(exc)))
             if not silent:
-                QMessageBox.critical(self, "CAT-Fehler", str(exc))
+                QMessageBox.critical(
+                    self,
+                    tr("settings.test.cat_error.title"),
+                    tr("settings.test.cat_error.message", error=str(exc)),
+                )
             return None
 
         if identity.is_ft991:
-            self._set_status(f"Verbunden mit FT-991/FT-991A (ID {identity.radio_id})")
+            self._set_status(
+                tr(
+                    "connection.status.connected_ft991",
+                    radio_id=identity.radio_id,
+                )
+            )
             if not silent:
                 QMessageBox.information(
                     self,
-                    "Gerät erkannt",
-                    f"FT-991/FT-991A erkannt.\nAntwort: {identity.raw}",
+                    tr("settings.test.device_found.title"),
+                    tr("settings.test.device_found.message", raw=identity.raw),
                 )
         elif identity.radio_id is not None:
-            expected_str = " oder ".join(f"ID{rid};" for rid in FT991_RADIO_IDS)
+            expected_str = _expected_radio_ids_str()
             self._set_status(
-                f"Antwort {identity.raw.strip()} — kein FT-991(A), erwartet {expected_str}"
+                tr(
+                    "connection.status.wrong_device",
+                    raw=identity.raw.strip(),
+                    expected=expected_str,
+                )
             )
             if not silent:
                 QMessageBox.warning(
                     self,
-                    "Anderes Gerät",
-                    (
-                        f"Das Gerät hat geantwortet, ist aber kein FT-991(A).\n\n"
-                        f"Antwort: {identity.raw}\n"
-                        f"Erwartet: {expected_str}"
+                    tr("settings.test.wrong_device.title"),
+                    tr(
+                        "settings.test.wrong_device.message",
+                        raw=identity.raw,
+                        expected=expected_str,
                     ),
                 )
         else:
             self._set_status(
-                f"Port geöffnet, aber keine gültige FT-991A-Antwort (roh: {identity.raw!r})"
+                tr(
+                    "connection.status.invalid_response",
+                    raw=identity.raw,
+                )
             )
             if not silent:
                 QMessageBox.warning(
                     self,
-                    "Unerwartete Antwort",
-                    (
-                        "Die Antwort entspricht nicht dem Format ID####;.\n\n"
-                        f"Empfangen: {identity.raw!r}"
+                    tr("connection.test.unexpected_response.title"),
+                    tr(
+                        "connection.test.unexpected_response.message",
+                        raw=identity.raw,
                     ),
                 )
 

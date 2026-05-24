@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 
 from PySide6.QtCore import QObject, QUrl, Signal
 
+from i18n import tr
 from .player_controller import _player_backend_ok, ensure_playback_backend
 from .qt_multimedia_lazy import qt_multimedia_types
 from model._app_paths import resource_dir
@@ -98,31 +99,20 @@ class TCallController(QObject):
         if self._wav_path is None or not self._wav_path.is_file():
             self._wav_path = resolve_t_call_wav_path()
         if self._wav_path is None:
-            self.error.emit(
-                "Rufton-Datei fehlt (1750.wav im Ordner audio/)."
-            )
+            self.error.emit(tr("t_call.error.file_missing"))
             return
         if not ensure_playback_backend(self):
-            self.error.emit(
-                "Audio-Wiedergabe nicht verfügbar — PySide6-Addons installieren "
-                "und App neu starten (Windows: QT_MEDIA_BACKEND=windows)."
-            )
+            self.error.emit(tr("t_call.error.playback_unavailable"))
             return
         send_id = self._device_id(ROLE_SEND)
         if not send_id:
-            self.error.emit(
-                "Keine Sende-Ausgabe gewählt — unter Funktionen → "
-                "Soundeinstellung die Funk-USB-Karte (nicht „System-Standard“) wählen."
-            )
+            self.error.emit(tr("t_call.error.no_send_output"))
             return
         if not self._ensure_players():
             return
         if self._audio_hub is not None and self._audio_hub.uses_windows_volume():
             if not self._audio_hub.push_role_to_windows(ROLE_SEND, unmute=True):
-                self.error.emit(
-                    "Windows-Mixer: Sende-Soundkarte nicht erreichbar — "
-                    "Gerät in den Soundeinstellungen prüfen."
-                )
+                self.error.emit(tr("t_call.error.windows_mixer"))
                 return
             self._audio_hub.push_role_to_windows(ROLE_PC, unmute=False)
 
@@ -149,13 +139,11 @@ class TCallController(QObject):
             wav_path = resolve_t_call_wav_path()
             self._wav_path = wav_path
         if wav_path is None:
-            self.error.emit(
-                "Rufton-Datei fehlt (1750.wav im Ordner audio/).",
-            )
+            self.error.emit(tr("t_call.error.file_missing"))
             return False
         mm = qt_multimedia_types()
         if mm is None:
-            self.error.emit("Qt Multimedia nicht verfügbar.")
+            self.error.emit(tr("common.qt_multimedia_unavailable"))
             return False
         QAudioOutput, _QMediaDevices, QMediaPlayer = mm
         self._QMediaPlayer = QMediaPlayer
@@ -294,10 +282,10 @@ class TCallController(QObject):
                     msg = str(getter() or "")
                 except Exception:
                     pass
-            self.error.emit(msg or "1750.wav konnte nicht geladen werden.")
+            self.error.emit(tr("t_call.error.load_failed"))
             self.stop()
 
     def _on_media_error(self, _error, message: str = "") -> None:
         if self._want_active:
-            self.error.emit(message or "Rufton-Wiedergabe fehlgeschlagen.")
+            self.error.emit(message or tr("t_call.error.playback_failed"))
             self.stop()

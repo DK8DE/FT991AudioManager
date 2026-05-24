@@ -64,6 +64,9 @@ from PySide6.QtWidgets import (
 )
 
 from gui.themed_slider import MeterVerticalSlider
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
+
 
 from cat import SerialCAT
 from cat.cat_errors import (
@@ -853,7 +856,7 @@ class _LedDot(QWidget):
 # ----------------------------------------------------------------------
 
 
-class DspSlider(QFrame):
+class DspSlider(RetranslatableMixin, QFrame):
     """Vertikaler DSP-Slider mit On/Off-LED und optionalem Level-Slider."""
 
     toggled = Signal(bool)
@@ -861,7 +864,7 @@ class DspSlider(QFrame):
 
     def __init__(
         self,
-        label: str,
+        title_key: str,
         *,
         supports_level: bool,
         level_min: int = 0,
@@ -870,7 +873,7 @@ class DspSlider(QFrame):
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self._label = label
+        self._title_key = title_key
         self._supports_level = supports_level
         self._level_min = level_min
         self._level_max = level_max
@@ -889,13 +892,13 @@ class DspSlider(QFrame):
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
-        title = QLabel(label)
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tf = title.font()
+        self._title_label = QLabel(tr(title_key))
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tf = self._title_label.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
-        title.setFont(tf)
-        v.addWidget(title)
+        self._title_label.setFont(tf)
+        v.addWidget(self._title_label)
 
         # Klickbare LED (etwas größer als die Mini-LEDs, ~16px).
         self._led_btn = _LedButton()
@@ -935,13 +938,22 @@ class DspSlider(QFrame):
             v.addWidget(self._value_label)
         else:
             self._slider = None
-            self._value_label = QLabel("OFF")
+            self._value_label = QLabel(tr("common.off"))
             self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             vf = self._value_label.font()
             vf.setPointSizeF(vf.pointSizeF() * 0.85)
             self._value_label.setFont(vf)
             v.addStretch(1)
             v.addWidget(self._value_label)
+
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._title_label.setText(tr(self._title_key))
+        if not self._supports_level and self._on is not None:
+            self._value_label.setText(
+                tr("common.on") if self._on else tr("common.off")
+            )
 
     # ------------------------------------------------------------------
     # User-Interaktion
@@ -954,7 +966,7 @@ class DspSlider(QFrame):
         self._on = new_state
         self._led_btn.set_state(new_state)
         if not self._supports_level:
-            self._value_label.setText("ON" if new_state else "OFF")
+            self._value_label.setText(tr("common.on") if new_state else tr("common.off"))
         self.toggled.emit(new_state)
 
     def _on_slider_changed(self, value: int) -> None:
@@ -980,11 +992,11 @@ class DspSlider(QFrame):
         self._led_btn.set_state(on)
         if not self._supports_level:
             if on is True:
-                self._value_label.setText("ON")
+                self._value_label.setText(tr("common.on"))
             elif on is False:
-                self._value_label.setText("OFF")
+                self._value_label.setText(tr("common.off"))
             else:
-                self._value_label.setText("—")
+                self._value_label.setText(tr("common.dash"))
 
     def set_level(self, level: int) -> None:
         if self._slider is None:
@@ -1052,7 +1064,7 @@ class _LedButton(QWidget):
 # ----------------------------------------------------------------------
 
 
-class AgcSlider(QFrame):
+class AgcSlider(RetranslatableMixin, QFrame):
     """Vertikaler Slider mit 4 diskreten AGC-Positionen."""
 
     mode_chosen = Signal(object)   # AgcMode
@@ -1067,13 +1079,13 @@ class AgcSlider(QFrame):
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
-        title = QLabel("AGC")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tf = title.font()
+        self._title_label = QLabel(tr("meter.title.agc"))
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tf = self._title_label.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
-        title.setFont(tf)
-        v.addWidget(title)
+        self._title_label.setFont(tf)
+        v.addWidget(self._title_label)
 
         # Platzhalter in derselben Höhe wie die LED-Reihe der DspSlider —
         # so liegen alle vier Spalten optisch auf einer Linie.
@@ -1110,6 +1122,11 @@ class AgcSlider(QFrame):
         self._value_label.setFont(vf)
         v.addWidget(self._value_label)
 
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._title_label.setText(tr("meter.title.agc"))
+
     # ------------------------------------------------------------------
     # User-Interaktion
     # ------------------------------------------------------------------
@@ -1133,7 +1150,7 @@ class AgcSlider(QFrame):
         try:
             if pos < 0:
                 # OFF oder unbekannt — Slider auf 0 lassen, Label „—".
-                self._value_label.setText(AGC_LABELS.get(mode, "—"))
+                self._value_label.setText(AGC_LABELS.get(mode, tr("common.dash")))
             else:
                 if pos != self._slider.value():
                     self._slider.setValue(pos)
@@ -1147,7 +1164,7 @@ class AgcSlider(QFrame):
 # ----------------------------------------------------------------------
 
 
-class SqlSlider(QFrame):
+class SqlSlider(RetranslatableMixin, QFrame):
     """Vertikaler Slider für SQL (Squelch) 0..100."""
 
     value_chosen = Signal(int)
@@ -1162,13 +1179,13 @@ class SqlSlider(QFrame):
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
-        title = QLabel("SQL")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tf = title.font()
+        self._title_label = QLabel(tr("meter.title.sql"))
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tf = self._title_label.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
-        title.setFont(tf)
-        v.addWidget(title)
+        self._title_label.setFont(tf)
+        v.addWidget(self._title_label)
 
         spacer = QWidget()
         spacer.setFixedHeight(18)
@@ -1200,6 +1217,11 @@ class SqlSlider(QFrame):
         self._value_label.setFont(vf)
         v.addWidget(self._value_label)
 
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._title_label.setText(tr("meter.title.sql"))
+
     def _on_slider_changed(self, value: int) -> None:
         val = max(0, min(100, int(value)))
         self._value_label.setText(str(val))
@@ -1209,7 +1231,7 @@ class SqlSlider(QFrame):
 
     def set_value(self, value: Optional[int]) -> None:
         if value is None:
-            self._value_label.setText("—")
+            self._value_label.setText(tr("common.dash"))
             return
         val = max(0, min(100, int(value)))
         self._applying_remote = True
@@ -1226,7 +1248,7 @@ class SqlSlider(QFrame):
 # ----------------------------------------------------------------------
 
 
-class PowerSlider(QFrame):
+class PowerSlider(RetranslatableMixin, QFrame):
     """Vertikaler Slider für Sendeleistung (``PC;``) in 5-W-Schritten."""
 
     value_chosen = Signal(int)
@@ -1242,13 +1264,13 @@ class PowerSlider(QFrame):
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
-        title = QLabel("POWER")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tf = title.font()
+        self._title_label = QLabel(tr("meter.title.power"))
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tf = self._title_label.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
-        title.setFont(tf)
-        v.addWidget(title)
+        self._title_label.setFont(tf)
+        v.addWidget(self._title_label)
 
         spacer = QWidget()
         spacer.setFixedHeight(18)
@@ -1264,7 +1286,7 @@ class PowerSlider(QFrame):
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
         self._slider.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
-        self._slider.setToolTip("Sendeleistung (PC) — 5-W-Schritte")
+        self._slider.setToolTip(tr("meter.power.tooltip"))
         self._slider.valueChanged.connect(self._on_slider_changed)
 
         slider_row = QHBoxLayout()
@@ -1274,15 +1296,21 @@ class PowerSlider(QFrame):
         slider_row.addStretch(1)
         v.addLayout(slider_row, stretch=1)
 
-        self._value_label = QLabel("50 W")
+        self._value_label = QLabel(tr("meter.power.watts").format(watts=50))
         self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vf = self._value_label.font()
         vf.setPointSizeF(vf.pointSizeF() * 0.85)
         self._value_label.setFont(vf)
         v.addWidget(self._value_label)
 
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._title_label.setText(tr("meter.title.power"))
+        self._slider.setToolTip(tr("meter.power.tooltip"))
+
     def _format_watts(self, watts: int) -> str:
-        return f"{watts} W"
+        return tr("meter.power.watts").format(watts=watts)
 
     def _on_slider_changed(self, value: int) -> None:
         val = self._snap_watts(int(value))
@@ -1318,7 +1346,7 @@ class PowerSlider(QFrame):
 
     def set_value(self, value: Optional[int]) -> None:
         if value is None:
-            self._value_label.setText("—")
+            self._value_label.setText(tr("common.dash"))
             return
         val = self._snap_watts(int(value))
         val = min(val, self._max_w)
@@ -1336,7 +1364,7 @@ class PowerSlider(QFrame):
 # ----------------------------------------------------------------------
 
 
-class MicGainSlider(QFrame):
+class MicGainSlider(RetranslatableMixin, QFrame):
     """Vertikaler Slider für MIC Gain (MG) 0..100 — in der DSP-Reihe."""
 
     value_chosen = Signal(int)
@@ -1351,13 +1379,13 @@ class MicGainSlider(QFrame):
         v.setContentsMargins(2, 2, 2, 2)
         v.setSpacing(3)
 
-        title = QLabel("MIC")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tf = title.font()
+        self._title_label = QLabel(tr("meter.title.mic"))
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tf = self._title_label.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
-        title.setFont(tf)
-        v.addWidget(title)
+        self._title_label.setFont(tf)
+        v.addWidget(self._title_label)
 
         spacer = QWidget()
         spacer.setFixedHeight(18)
@@ -1373,7 +1401,7 @@ class MicGainSlider(QFrame):
         self._slider.setTickInterval(10)
         self._slider.setInvertedAppearance(False)
         self._slider.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
-        self._slider.setToolTip("MIC Gain (MG) 0–100")
+        self._slider.setToolTip(tr("meter.mic.tooltip"))
         self._slider.valueChanged.connect(self._on_slider_changed)
 
         slider_row = QHBoxLayout()
@@ -1388,8 +1416,15 @@ class MicGainSlider(QFrame):
         vf = self._value_label.font()
         vf.setPointSizeF(vf.pointSizeF() * 0.85)
         self._value_label.setFont(vf)
-        self._value_label.setToolTip("Anzeige 0–100 (keine Direkteingabe)")
+        self._value_label.setToolTip(tr("meter.mic.value_tooltip"))
         v.addWidget(self._value_label)
+
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._title_label.setText(tr("meter.title.mic"))
+        self._slider.setToolTip(tr("meter.mic.tooltip"))
+        self._value_label.setToolTip(tr("meter.mic.value_tooltip"))
 
     def _on_slider_changed(self, value: int) -> None:
         val = max(0, min(100, int(value)))
@@ -1400,7 +1435,7 @@ class MicGainSlider(QFrame):
 
     def set_value(self, value: Optional[int]) -> None:
         if value is None:
-            self._value_label.setText("—")
+            self._value_label.setText(tr("common.dash"))
             return
         val = max(0, min(100, int(value)))
         self._applying_remote = True
@@ -1589,7 +1624,7 @@ class ScaledMeterBar(QWidget):
             sp.setHorizontalPolicy(QSizePolicy.Policy.Expanding)
             self.setSizePolicy(sp)
 
-        self._value_label = QLabel("—")
+        self._value_label = QLabel(tr("common.dash"))
         self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         vf = self._value_label.font()
         vf.setPointSizeF(vf.pointSizeF() * value_font_scale)
@@ -1638,7 +1673,7 @@ class ScaledMeterBar(QWidget):
         # Diagnose-Tooltip: Roh-Wert anzeigen. Hilft besonders bei SWR auf
         # VHF/UHF, wenn die KW-Skala nicht passt — der Anwender kann so
         # ablesen, welcher Roh-Wert vom Radio tatsächlich kommt.
-        self.setToolTip(f"Roh: {clamped} / {self._raw_max}\nSkala: {text}")
+        self.setToolTip(tr("meter.bar.tooltip").format(raw=clamped, max=self._raw_max, scale=text))
         self._canvas.update()
 
     def configure_po_band(self, *, vhf_uhf: bool) -> None:
@@ -1682,7 +1717,7 @@ class ScaledMeterBar(QWidget):
             return
         self._unavailable_reason = reason
         self._value = 0
-        self._value_label.setText("—")
+        self._value_label.setText(tr("common.dash"))
         self.setToolTip(reason)
         self._canvas.update()
 
@@ -1700,7 +1735,7 @@ class ScaledMeterBar(QWidget):
         # garantiert greift (sonst würde der Cache-Check ``clamped ==
         # self._value`` ihn überspringen).
         self._value = None
-        self._value_label.setText("—")
+        self._value_label.setText(tr("common.dash"))
         self.setToolTip("")
         self._canvas.update()
 
@@ -1722,7 +1757,7 @@ class ScaledMeterBar(QWidget):
     def reset(self) -> None:
         self._value = None
         self._squelch_raw = None
-        self._value_label.setText("—")
+        self._value_label.setText(tr("common.dash"))
         self._canvas.update()
 
     def _canvas_header_height(self) -> int:
@@ -1956,7 +1991,7 @@ def live_dbfs_peak_to_raw(db: float) -> int:
 
 def _format_live_level_raw(raw: int) -> str:
     if raw <= 0:
-        return "—"
+        return tr("common.dash")
     db = live_level_db_from_raw(raw)
     sign = "+" if db > 0 else ""
     return f"{sign}{db:.0f}"
@@ -2072,7 +2107,8 @@ class MiniLevelBar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._label = QLabel(label)
+        self._title_key = title_key
+        self._label = QLabel(tr(title_key))
         font = self._label.font()
         font.setPointSizeF(font.pointSizeF() * 0.9)
         self._label.setFont(font)
@@ -2087,7 +2123,7 @@ class MiniLevelBar(QWidget):
         self.bar.setStyleSheet("")
         layout.addWidget(self.bar, stretch=1)
 
-        self._value_label = QLabel("—")
+        self._value_label = QLabel(tr("common.dash"))
         self._value_label.setFont(font)
         self._value_label.setMinimumWidth(36)
         self._value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -2099,13 +2135,13 @@ class MiniLevelBar(QWidget):
         self._value = raw
         if raw is None:
             self.bar.setValue(0)
-            self._value_label.setText("—")
+            self._value_label.setText(tr("common.dash"))
         else:
             self.bar.setValue(max(0, min(self._raw_max, int(raw))))
             self._value_label.setText(f"{raw}")
 
 
-class GainLevelSlider(QWidget):
+class GainLevelSlider(RetranslatableMixin, QWidget):
     """Horizontaler Slider 0..raw_max mit Label links und Wert rechts.
 
     Wird vom User gezogen → :attr:`value_set` (live). Programmatisch
@@ -2119,7 +2155,7 @@ class GainLevelSlider(QWidget):
 
     def __init__(
         self,
-        label: str,
+        title_key: str,
         raw_max: int,
         parent: Optional[QWidget] = None,
     ) -> None:
@@ -2131,7 +2167,8 @@ class GainLevelSlider(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._label = QLabel(label)
+        self._title_key = title_key
+        self._label = QLabel(tr(title_key))
         font = self._label.font()
         font.setPointSizeF(font.pointSizeF() * 0.9)
         self._label.setFont(font)
@@ -2145,11 +2182,16 @@ class GainLevelSlider(QWidget):
         self.slider.valueChanged.connect(self._on_slider_value_changed)
         layout.addWidget(self.slider, stretch=1)
 
-        self._value_label = QLabel("—")
+        self._value_label = QLabel(tr("common.dash"))
         self._value_label.setFont(font)
         self._value_label.setMinimumWidth(36)
         self._value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._value_label)
+
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._label.setText(tr(self._title_key))
 
     def _on_slider_value_changed(self, value: int) -> None:
         self._value_label.setText(f"{int(value)}")
@@ -2167,7 +2209,7 @@ class GainLevelSlider(QWidget):
                 self.slider.setValue(0)
             finally:
                 self.slider.blockSignals(False)
-            self._value_label.setText("—")
+            self._value_label.setText(tr("common.dash"))
             return
         v = max(0, min(self._raw_max, int(raw)))
         self.slider.blockSignals(True)
@@ -2223,7 +2265,7 @@ class _SymmetricTxBwBar(QWidget):
         painter.drawRect(int(cx - half), 4, int(2 * half), h - 8)
 
 
-class TxBandwidthPanel(QWidget):
+class TxBandwidthPanel(RetranslatableMixin, QWidget):
     """Überschrift, Hz-Anzeige, symmetrischer Balken, P2-Slider (0…21)."""
 
     p2_changed = Signal(int)
@@ -2244,14 +2286,14 @@ class TxBandwidthPanel(QWidget):
 
         head = QHBoxLayout()
         head.setSpacing(6)
-        title = QLabel("Sendebandbreite (TX)")
-        tf = title.font()
+        self._title_label = QLabel(tr("meter.tx_bandwidth.title"))
+        tf = self._title_label.font()
         tf.setBold(True)
         tf.setPointSizeF(tf.pointSizeF() * 0.85)
-        title.setFont(tf)
-        head.addWidget(title)
+        self._title_label.setFont(tf)
+        head.addWidget(self._title_label)
         head.addStretch(1)
-        self._hz_label = QLabel("—")
+        self._hz_label = QLabel(tr("common.dash"))
         self._hz_label.setStyleSheet("color: #c8c8c8;")
         hf = self._hz_label.font()
         hf.setPointSizeF(hf.pointSizeF() * 0.95)
@@ -2266,16 +2308,17 @@ class TxBandwidthPanel(QWidget):
         self._slider.setRange(SH_P2_MIN, SH_P2_MAX)
         self._slider.setSingleStep(1)
         self._slider.setPageStep(1)
-        self._slider.setToolTip(
-            "SH WIDTH — CAT-Befehl SH0nn; (nn = P2 00…21, zwei Ziffern).\n"
-            "Am Funkgerät wird erst beim Loslassen nach einem Zug geschrieben "
-            "(kein CAT-Spam beim Ziehen).\n"
-            "Die Hz-Anzeige hängt vom Funk-Modus ab (siehe CAT-Handbuch)."
-        )
+        self._slider.setToolTip(tr("meter.tx_bandwidth.tooltip"))
         self._slider.sliderPressed.connect(self._on_slider_pressed)
         self._slider.sliderReleased.connect(self._on_slider_released)
         self._slider.valueChanged.connect(self._on_slider_value)
         v.addWidget(self._slider)
+
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._title_label.setText(tr("meter.tx_bandwidth.title"))
+        self._slider.setToolTip(tr("meter.tx_bandwidth.tooltip"))
 
     def _note_user_p2_change(self, p2: int) -> None:
         self._user_p2_lock = sh_snap_p2_to_supported(int(p2), self._mode)
@@ -2328,10 +2371,10 @@ class TxBandwidthPanel(QWidget):
         p2 = int(self._slider.value())
         hz = sh_display_hz(self._mode, p2)
         if hz is None:
-            self._hz_label.setText(f"P2={p2:02d}")
+            self._hz_label.setText(tr("meter.tx_bandwidth.p2").format(p2=p2))
             self._bar.set_display_hz(VISUAL_HZ_MIN)
         else:
-            self._hz_label.setText(f"{hz} Hz")
+            self._hz_label.setText(tr("meter.tx_bandwidth.hz").format(hz=hz))
             self._bar.set_display_hz(hz)
 
     def set_rx_mode(self, mode: Optional[RxMode]) -> None:
@@ -2366,7 +2409,7 @@ class TxBandwidthPanel(QWidget):
 # ----------------------------------------------------------------------
 
 
-class MeterWidget(QWidget):
+class MeterWidget(RetranslatableMixin, QWidget):
     """Kompakter Meter-Bereich: S-Meter oben, DSP-Status, AF/RF, TX-Bars unten."""
 
     tx_status_changed = Signal(bool)
@@ -2451,6 +2494,7 @@ class MeterWidget(QWidget):
             self.setMaximumWidth(self.SIDEBAR_MAX_WIDTH)
         self._build_ui()
         self._connect_dsp_signals()
+        self._register_retranslate()
 
     # ------------------------------------------------------------------
     # UI
@@ -2469,7 +2513,7 @@ class MeterWidget(QWidget):
         # (integriert — das Hauptfenster setzt sie oben rechts neben VFO).
         if self._integrated_main_layout:
             self.tx_led = TxIndicator(self)
-            self.tx_label = QLabel("RX", self)
+            self.tx_label = QLabel(tr("common.rx"), self)
             tf = self.tx_label.font()
             tf.setBold(True)
             self.tx_label.setFont(tf)
@@ -2485,7 +2529,7 @@ class MeterWidget(QWidget):
             head_layout.addStretch(1)
             self.tx_led = TxIndicator()
             head_layout.addWidget(self.tx_led)
-            self.tx_label = QLabel("RX")
+            self.tx_label = QLabel(tr("common.rx"))
             font = self.tx_label.font()
             font.setBold(True)
             self.tx_label.setFont(font)
@@ -2515,12 +2559,12 @@ class MeterWidget(QWidget):
         smeter_column = QVBoxLayout()
         smeter_column.setContentsMargins(0, 0, 0, 0)
         smeter_column.setSpacing(3)
-        smeter_title = QLabel("S-Meter")
-        smeter_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sf = smeter_title.font()
+        self._smeter_title = QLabel(tr("meter.title.s_meter"))
+        self._smeter_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sf = self._smeter_title.font()
         sf.setBold(True)
-        smeter_title.setFont(sf)
-        smeter_column.addWidget(smeter_title)
+        self._smeter_title.setFont(sf)
+        smeter_column.addWidget(self._smeter_title)
         self.smeter_bar = make_smeter_bar(
             flex_horizontal=self._integrated_main_layout,
         )
@@ -2542,15 +2586,15 @@ class MeterWidget(QWidget):
             smeter_row.addWidget(self.power_slider)
 
         self.nb_slider = DspSlider(
-            "NB",
+            "meter.dsp.nb",
             supports_level=True,
             level_min=0,
             level_max=10,
             tick_interval=1,
         )
-        self.an_slider = DspSlider("DNF", supports_level=False)
+        self.an_slider = DspSlider("meter.dsp.dnf", supports_level=False)
         self.nr_slider = DspSlider(
-            "DNR",
+            "meter.dsp.dnr",
             supports_level=True,
             level_min=1,
             level_max=15,
@@ -2586,10 +2630,10 @@ class MeterWidget(QWidget):
         gain_layout.setContentsMargins(6, 4, 6, 4)
         gain_layout.setSpacing(2)
 
-        self.af_gain_bar = GainLevelSlider("AF", 255)
-        self.rf_gain_bar = GainLevelSlider("RF", 255)
-        self.af_gain_bar.setToolTip("Lautstärke (CAT AG0)")
-        self.rf_gain_bar.setToolTip("RF Gain (CAT RG0)")
+        self.af_gain_bar = GainLevelSlider("meter.gain.af", 255)
+        self.rf_gain_bar = GainLevelSlider("meter.gain.rf", 255)
+        self.af_gain_bar.setToolTip(tr("meter.gain.af.tooltip"))
+        self.rf_gain_bar.setToolTip(tr("meter.gain.rf.tooltip"))
         self.af_gain_bar.value_set.connect(self.af_gain_set_requested.emit)
         self.rf_gain_bar.value_set.connect(self.rf_gain_set_requested.emit)
         if self._integrated_main_layout:
@@ -2620,19 +2664,25 @@ class MeterWidget(QWidget):
         bars_outer.setContentsMargins(6, 6, 6, 4)
         bars_outer.setSpacing(4)
 
-        tx_meters_heading = QLabel("TX-Meter")
-        tx_meters_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        tlf = tx_meters_heading.font()
+        self._tx_meters_heading = QLabel(tr("meter.title.tx_meters"))
+        self._tx_meters_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tlf = self._tx_meters_heading.font()
         tlf.setBold(True)
         tlf.setPointSizeF(tlf.pointSizeF() * 0.85)
-        tx_meters_heading.setFont(tlf)
-        bars_outer.addWidget(tx_meters_heading)
+        self._tx_meters_heading.setFont(tlf)
+        bars_outer.addWidget(self._tx_meters_heading)
 
         bars_layout = QHBoxLayout()
         bars_layout.setContentsMargins(0, 0, 0, 0)
         bars_layout.setSpacing(2)
 
         self._bars: Dict[MeterKind, ScaledMeterBar] = {}
+        self._tx_bar_title_keys = {
+            MeterKind.ALC: 'meter.tx_bar.alc',
+            MeterKind.COMP: 'meter.tx_bar.comp',
+            MeterKind.PO: 'meter.tx_bar.power',
+            MeterKind.SWR: 'meter.tx_bar.swr',
+        }
         for kind, _info in meter_choices():
             bar = make_tx_meter_bar(
                 kind, flex_horizontal=self._integrated_main_layout
@@ -2681,6 +2731,31 @@ class MeterWidget(QWidget):
             outer.addWidget(self._tx_bw_frame)
             outer.addWidget(bars_frame, stretch=1)
 
+
+    def retranslate_ui(self) -> None:
+        self._smeter_title.setText(tr("meter.title.s_meter"))
+        self._tx_meters_heading.setText(tr("meter.title.tx_meters"))
+        self.af_gain_bar.setToolTip(tr("meter.gain.af.tooltip"))
+        self.rf_gain_bar.setToolTip(tr("meter.gain.rf.tooltip"))
+        for kind, bar in self._bars.items():
+            key = self._tx_bar_title_keys.get(kind)
+            if key and bar._label is not None:
+                bar._label.setText(tr(key))
+        self.nb_slider.retranslate_ui()
+        self.an_slider.retranslate_ui()
+        self.nr_slider.retranslate_ui()
+        self.agc_slider.retranslate_ui()
+        self.sql_slider.retranslate_ui()
+        self.power_slider.retranslate_ui()
+        self.mic_gain_slider.retranslate_ui()
+        self.af_gain_bar.retranslate_ui()
+        self.rf_gain_bar.retranslate_ui()
+        self._tx_bw_panel.retranslate_ui()
+        if self._last_tx is not None:
+            self.tx_label.setText(
+                tr("common.tx") if self._last_tx else tr("common.rx")
+            )
+
     def apply_dsp_mode_relevance(
         self, mode_group: str, *, operating_mode: Optional[RxMode] = None
     ) -> None:
@@ -2705,26 +2780,26 @@ class MeterWidget(QWidget):
         if not self._cat.is_connected():
             return
 
-        self._safe_write(lambda: self._ft.write_squelch(0), where="SQL (DATA/RTTY)")
+        self._safe_write(lambda: self._ft.write_squelch(0), where=tr("meter.write.sql"))
         self._safe_write(
             lambda: self._ft.write_noise_blanker(False),
-            where="NB aus (DATA/RTTY)",
+            where=tr("meter.write.nb"),
         )
         self._safe_write(
             lambda: self._ft.write_noise_blanker_level(0),
-            where="NB-Level 0 (DATA/RTTY)",
+            where=tr("meter.write.nb_level"),
         )
         self._safe_write(
             lambda: self._ft.write_noise_reduction(False),
-            where="DNR aus (DATA/RTTY)",
+            where=tr("meter.write.dnr"),
         )
         self._safe_write(
             lambda: self._ft.write_noise_reduction_level(0),
-            where="DNR-Level 0 (DATA/RTTY)",
+            where=tr("meter.write.dnr_level"),
         )
         self._safe_write(
             lambda: self._ft.write_agc(AgcMode.AUTO),
-            where="AGC AUTO (DATA/RTTY)",
+            where=tr("meter.write.agc"),
         )
 
     # ------------------------------------------------------------------
@@ -2817,7 +2892,7 @@ class MeterWidget(QWidget):
 
         self._reset_all()
         self.tx_led.set_state(TxIndicator.STATE_OFF)
-        self.tx_label.setText("—")
+        self.tx_label.setText(tr("common.dash"))
         if self._last_tx:
             self.tx_status_changed.emit(False)
         if self._last_tx_state not in (None, 0):
@@ -2947,7 +3022,7 @@ class MeterWidget(QWidget):
             )
         transmitting = sample.transmitting
         self.tx_led.set_active(transmitting)
-        self.tx_label.setText("TX" if transmitting else "RX")
+        self.tx_label.setText(tr("common.tx") if transmitting else tr("common.rx"))
 
         # Hinweis: Das ``values``-Dict kann unvollstaendig sein, wenn
         # einzelne ``RMn;``-Reads beim Senden gescheitert sind (siehe
@@ -3108,7 +3183,7 @@ class MeterWidget(QWidget):
         val = int(p2)
         self._safe_write(
             lambda: self._ft.write_tx_bandwidth_sh(val),
-            where="SH WIDTH",
+            where=tr("meter.write.sh_width"),
         )
 
     def _log_cat_warn(self, text: str) -> None:
@@ -3122,9 +3197,9 @@ class MeterWidget(QWidget):
     def _on_poller_error(self, message: str) -> None:
         if is_cat_protocol_error_message(message):
             self._log_cat_warn(f"Meter-Poller: {message}")
-            self._show_status_message(f"CAT: {message}", timeout_ms=6000)
+            self._show_status_message(tr("meter.status.cat").format(message=message), timeout_ms=6000)
             return
-        self._show_status_message(f"Meter: {message}", timeout_ms=8000)
+        self._show_status_message(tr("meter.status.meter").format(message=message), timeout_ms=8000)
 
     # ------------------------------------------------------------------
     # SWR nur HF-Segment (Kurzwelle/6 m) — nicht UKW/2 m/70 cm
@@ -3176,45 +3251,45 @@ class MeterWidget(QWidget):
         except CatError as exc:
             if is_cat_protocol_error(exc):
                 self._log_cat_warn(f"{where}: {exc}")
-                self._show_status_message(f"CAT ({where}): {exc}", timeout_ms=6000)
+                self._show_status_message(tr("meter.status.cat_where").format(where=where, error=exc), timeout_ms=6000)
                 return
-            self._show_status_message(f"{where}: {exc}", timeout_ms=8000)
+            self._show_status_message(tr("meter.status.where_error").format(where=where, error=exc), timeout_ms=8000)
         except OSError as exc:
-            self._show_status_message(f"{where}: {exc}", timeout_ms=8000)
+            self._show_status_message(tr("meter.status.where_error").format(where=where, error=exc), timeout_ms=8000)
         except Exception:  # noqa: BLE001
-            self._show_status_message(f"{where}: unerwarteter Fehler", timeout_ms=8000)
+            self._show_status_message(tr("meter.status.unexpected").format(where=where), timeout_ms=8000)
             traceback.print_exc()
 
     def _on_nb_toggled(self, on: bool) -> None:
         self._safe_write(lambda: self._ft.write_noise_blanker(on),
-                         where="NB schreiben")
+                         where=tr("meter.write.nb"))
 
     def _on_nb_level_changed(self, level: int) -> None:
         self._safe_write(lambda: self._ft.write_noise_blanker_level(level),
-                         where="NB-Level schreiben")
+                         where=tr("meter.write.nb_level"))
 
     def _on_dnr_toggled(self, on: bool) -> None:
         self._safe_write(lambda: self._ft.write_noise_reduction(on),
-                         where="DNR schreiben")
+                         where=tr("meter.write.dnr"))
 
     def _on_dnr_level_changed(self, level: int) -> None:
         self._safe_write(lambda: self._ft.write_noise_reduction_level(level),
-                         where="DNR-Level schreiben")
+                         where=tr("meter.write.dnr_level"))
 
     def _on_dnf_toggled(self, on: bool) -> None:
         self._safe_write(lambda: self._ft.write_auto_notch(on),
-                         where="DNF schreiben")
+                         where=tr("meter.write.dnf"))
 
     def _on_agc_chosen(self, mode: object) -> None:
         if not isinstance(mode, AgcMode):
             return
         self._safe_write(lambda: self._ft.write_agc(mode),
-                         where="AGC schreiben")
+                         where=tr("meter.write.agc"))
 
     def _on_sql_chosen(self, value: int) -> None:
         self._safe_write(
             lambda: self._ft.write_squelch(value),
-            where="SQL schreiben",
+            where=tr("meter.write.sql"),
         )
 
     def apply_local_memory_sql(self, value: int) -> None:
@@ -3227,7 +3302,7 @@ class MeterWidget(QWidget):
         self.sql_slider.set_value(v)
         self._safe_write(
             lambda vv=v: self._ft.write_squelch(vv),
-            where="SQL (lokal Kanal)",
+            where=tr("meter.write.sql"),
         )
 
     def apply_local_memory_pc_power(
@@ -3255,7 +3330,7 @@ class MeterWidget(QWidget):
         def _write() -> None:
             self._ft.set_pc_power_watts(cw, max_watts=max_w, tx_lock=False)
 
-        self._safe_write(_write, where="POWER (lokal Kanal)")
+        self._safe_write(_write, where=tr("meter.write.power"))
 
     def _apply_power_slider_scale(self) -> None:
         from mapping.meter_mapping import po_max_watts_for_freq
@@ -3272,12 +3347,12 @@ class MeterWidget(QWidget):
                 int(watts), max_watts=max_w, tx_lock=False
             )
 
-        self._safe_write(_write, where="POWER schreiben")
+        self._safe_write(_write, where=tr("meter.write.power"))
 
     def _on_mic_gain_chosen(self, value: int) -> None:
         self._safe_write(
             lambda: self._ft.set_mic_gain(int(value), tx_lock=False),
-            where="MIC Gain schreiben",
+            where=tr("meter.write.mic"),
         )
 
     # ------------------------------------------------------------------

@@ -13,13 +13,15 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPaintEvent
 from PySide6.QtWidgets import QFrame, QWidget
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 
 # (Füllfarbe, Randfarbe)
 _GREEN: Tuple[QColor, QColor] = (QColor(40, 180, 60), QColor(20, 100, 30))
 _RED: Tuple[QColor, QColor] = (QColor(210, 60, 60), QColor(120, 25, 25))
 
 
-class StatusLed(QFrame):
+class StatusLed(RetranslatableMixin, QFrame):
     """Kleiner farbiger Kreis: grün = aktiv, rot = inaktiv.
 
     ``set_active(True)`` schaltet auf grün, ``set_active(False)`` auf rot.
@@ -36,7 +38,8 @@ class StatusLed(QFrame):
         super().__init__(parent)
         self._active = bool(active)
         self.setFixedSize(diameter, diameter)
-        self.setToolTip("verbunden" if active else "nicht verbunden")
+        self._update_tooltip()
+        self._register_retranslate()
 
     def sizeHint(self) -> QSize:  # noqa: N802
         return self.size()
@@ -47,8 +50,15 @@ class StatusLed(QFrame):
     def set_active(self, active: bool) -> None:
         if bool(active) != self._active:
             self._active = bool(active)
-            self.setToolTip("verbunden" if self._active else "nicht verbunden")
+            self._update_tooltip()
             self.update()
+
+    def retranslate_ui(self) -> None:
+        self._update_tooltip()
+
+    def _update_tooltip(self) -> None:
+        key = "status_led.connected" if self._active else "status_led.disconnected"
+        self.setToolTip(tr(key))
 
     # ------------------------------------------------------------------
 

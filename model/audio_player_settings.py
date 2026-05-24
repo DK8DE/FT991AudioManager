@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Optional, cast
 
+from i18n import tr
+
 PlaybackMode = Literal["single", "playlist"]
 DataMode = Literal["DATA-USB", "DATA-LSB", "DATA-FM"]
 
@@ -65,8 +67,8 @@ def pause_label_de(name: str) -> str:
     if ms is not None:
         s = ms // 1000
         if s == 1:
-            return "Pause 1 Sekunde"
-        return f"Pause {s} Sekunden"
+            return tr("player.pause.one_second")
+        return tr("player.pause_seconds", s=s)
     return name
 
 

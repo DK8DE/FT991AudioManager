@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 )
 
 from gui.live_eq_curve_view import LiveEqCurveView, _NUM_LIVE_BANDS
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 from model.live_settings import DEFAULT_LIVE_EQ_FREQ_HZ, LiveEqBandSettings
 
 _STATUS_ACTIVE_STYLE = "color: #2ea043; font-weight: bold;"
@@ -48,21 +50,21 @@ _DB_STACK_ORDER = tuple(reversed(range(_NUM_LIVE_BANDS)))
 
 def _format_level(b: LiveEqBandSettings) -> str:
     if not b.enabled:
-        return "—"
-    return f"{int(round(float(b.gain_db))):+d} dB"
+        return tr("common.dash")
+    return tr("common.db", value=int(round(float(b.gain_db))))
 
 
 def _format_q(b: LiveEqBandSettings) -> str:
     if not b.enabled:
-        return "—"
+        return tr("common.dash")
     q = float(b.q)
     if abs(q - round(q)) < 1e-5:
-        return f"Q = {int(round(q))}"
+        return tr("common.q", value=int(round(q)))
     text = f"{q:.2f}".rstrip("0").rstrip(".")
     return f"Q = {text}"
 
 
-class LiveEqEditorWidget(QWidget):
+class LiveEqEditorWidget(RetranslatableMixin, QWidget):
     """Equalizer‑Fenster‑Layout für die sieben Live‑DSP‑Bänder."""
 
     changed = Signal()
@@ -100,7 +102,7 @@ class LiveEqEditorWidget(QWidget):
             name_label = QLabel(_BW_CAPTIONS[i])
             name_label.setStyleSheet(_CAPTION_STYLE)
             name_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            value_label = QLabel("Q = 5")
+            value_label = QLabel(tr("common.q", value=5))
             value_label.setStyleSheet(_VALUE_LABEL_STYLE)
             value_label.setMinimumWidth(64)
             value_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
@@ -127,17 +129,31 @@ class LiveEqEditorWidget(QWidget):
 
         plot_row.addWidget(self._build_db_stack())
 
-        hint = QLabel(
-            "Punkt ziehen = Frequenz/Level · hellblauer Rand ziehen = Bandbreite (Q "
-            "in feinen Raster‑Schritten) · "
-            "Rechtsklick = an/aus"
-        )
-        hint.setStyleSheet(_CAPTION_STYLE)
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setWordWrap(True)
-        outer.addWidget(hint)
+        self._hint = QLabel()
+        self._hint.setStyleSheet(_CAPTION_STYLE)
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint.setWordWrap(True)
+        outer.addWidget(self._hint)
 
         self.set_bands(self._default_bands())
+        self._register_retranslate()
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        self._hint.setText(tr("live_eq_editor.hint"))
+        if hasattr(self, "_db_caption"):
+            self._db_caption.setText(tr("common.level"))
+        for band_index in range(_NUM_LIVE_BANDS):
+            name_label = self._db_band_labels[band_index]
+            if name_label is not None:
+                name_label.setText(
+                    tr(
+                        "live_eq_editor.band_label",
+                        num=band_index + 1,
+                        freq=_BW_CAPTIONS[band_index],
+                    )
+                )
+        self._update_value_labels(self.get_bands())
 
     def _default_bands(self) -> List[LiveEqBandSettings]:
         return [
@@ -159,17 +175,19 @@ class LiveEqEditorWidget(QWidget):
         layout.setHorizontalSpacing(4)
         layout.setVerticalSpacing(6)
 
-        caption = QLabel("Level")
+        caption = QLabel()
         caption.setStyleSheet(_CAPTION_STYLE)
         caption.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(caption, 0, 0, 1, 1)
+        self._db_caption = caption
 
         self._db_value_labels: List[Optional[QLabel]] = [None] * _NUM_LIVE_BANDS
+        self._db_band_labels: List[Optional[QLabel]] = [None] * _NUM_LIVE_BANDS
         for row_offset, band_index in enumerate(_DB_STACK_ORDER, start=1):
-            name_label = QLabel(f"#{band_index + 1} ({_BW_CAPTIONS[band_index]})")
+            name_label = QLabel()
             name_label.setStyleSheet(_CAPTION_STYLE)
             name_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            value_label = QLabel("—")
+            value_label = QLabel(tr("common.dash"))
             value_label.setStyleSheet(_VALUE_LABEL_STYLE)
             value_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             value_label.setMinimumWidth(78)
@@ -186,6 +204,7 @@ class LiveEqEditorWidget(QWidget):
             box.setLayout(cell)
             layout.addWidget(box, row_offset, 0)
             self._db_value_labels[band_index] = value_label
+            self._db_band_labels[band_index] = name_label
         return frame
 
     # ------------------------------------------------------------------

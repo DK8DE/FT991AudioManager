@@ -38,6 +38,7 @@ class WrappingCheckBox(QWidget):
 
     def __init__(self, text: str, *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._text = text
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(6)
@@ -59,6 +60,10 @@ class WrappingCheckBox(QWidget):
     def setToolTip(self, tip: str) -> None:
         self._box.setToolTip(tip)
         self._label.setToolTip(tip)
+
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self._label.setText(text)
 
     @property
     def toggled(self):

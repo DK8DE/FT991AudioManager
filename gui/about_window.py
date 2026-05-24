@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from i18n import tr, language_manager
+from i18n.retranslatable import RetranslatableMixin
 from model._app_paths import installed_icon_path, resource_dir
 from version import APP_AUTHOR, APP_COPYRIGHT, APP_DATE, APP_NAME, APP_VERSION
 
@@ -48,14 +50,22 @@ def _logo_pixmap(target_dip: int = 88) -> QPixmap:
     return QPixmap()
 
 
-class AboutWindow(QDialog):
+class AboutWindow(QDialog, RetranslatableMixin):
     """Info-/About-Fenster mit Logo, Metadaten und Lizenz."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"Über {APP_NAME}")
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
         self.setFixedSize(500, 360)
+
+        self._meta_captions: dict[str, QLabel] = {}
+        self._lbl_version_value: QLabel | None = None
+        self._lbl_license_heading: QLabel | None = None
+        self._lbl_copyright: QLabel | None = None
+        self._lbl_apache_intro: QLabel | None = None
+        self._lbl_disclaimer: QLabel | None = None
+        self._lbl_links: QLabel | None = None
+        self._btn_ok: QPushButton | None = None
 
         root = QVBoxLayout(self)
         root.setSpacing(10)
@@ -66,6 +76,9 @@ class AboutWindow(QDialog):
         root.addWidget(self._build_apache_box())
         root.addStretch(1)
         root.addLayout(self._build_button_row())
+
+        self._register_retranslate()
+        self.retranslate_ui()
 
     def _build_header(self) -> QWidget:
         header = QWidget()
@@ -94,10 +107,10 @@ class AboutWindow(QDialog):
         v.addWidget(lbl_app)
         v.addSpacing(2)
 
-        def _row(label: str, value: str) -> None:
+        def _row(key: str, value: str) -> None:
             row = QHBoxLayout()
             row.setSpacing(8)
-            lbl = QLabel(label + ":")
+            lbl = QLabel()
             lbl.setStyleSheet("font-weight: bold;")
             lbl.setFixedWidth(70)
             lbl.setAlignment(
@@ -108,17 +121,21 @@ class AboutWindow(QDialog):
             row.addWidget(lbl)
             row.addWidget(val, 1)
             v.addLayout(row)
+            self._meta_captions[key] = lbl
+            if key == "version":
+                self._lbl_version_value = val
 
-        _row("Autor", APP_AUTHOR)
-        _row("Version", f"v{APP_VERSION}")
-        _row("Datum", APP_DATE)
+        _row("author", APP_AUTHOR)
+        _row("version", f"v{APP_VERSION}")
+        _row("date", APP_DATE)
 
         h.addWidget(meta, 1, Qt.AlignmentFlag.AlignTop)
         return header
 
     def _build_license_header(self) -> QLabel:
-        lbl = QLabel("Lizenz")
+        lbl = QLabel()
         lbl.setStyleSheet("font-weight: bold; margin-top: 4px;")
+        self._lbl_license_heading = lbl
         return lbl
 
     def _build_apache_box(self) -> QFrame:
@@ -129,35 +146,22 @@ class AboutWindow(QDialog):
         lay.setContentsMargins(8, 6, 8, 8)
         lay.setSpacing(6)
 
-        copyright_lbl = QLabel(f"Copyright {APP_COPYRIGHT}")
+        copyright_lbl = QLabel()
         copyright_lbl.setStyleSheet("font-weight: bold; font-size: 11px;")
         lay.addWidget(copyright_lbl)
+        self._lbl_copyright = copyright_lbl
 
-        lay.addWidget(
-            self._rich_label(
-                "Lizenziert unter der <b>Apache License, Version 2.0</b>. "
-                "Die Nutzung dieser Anwendung ist nur in Übereinstimmung mit dieser "
-                "Lizenz gestattet. Eine Kopie der Lizenz liegt der Installation bei "
-                "und ist auch online verfügbar."
-            )
-        )
-        lay.addWidget(
-            self._rich_label(
-                "Die Software wird <i>\"wie besehen\"</i> bereitgestellt, ohne "
-                "ausdrückliche oder stillschweigende Gewährleistung jeglicher Art. "
-                "Einzelheiten regelt der Lizenztext."
-            )
-        )
-        lay.addWidget(
-            self._rich_label(
-                "Lizenztext: "
-                '<a href="https://www.apache.org/licenses/LICENSE-2.0">'
-                "apache.org/licenses/LICENSE-2.0</a><br>"
-                "Projekt: "
-                '<a href="https://github.com/DK8DE/FT991AudioManager">'
-                "github.com/DK8DE/FT991AudioManager</a>"
-            )
-        )
+        intro_lbl = self._rich_label("")
+        lay.addWidget(intro_lbl)
+        self._lbl_apache_intro = intro_lbl
+
+        disclaimer_lbl = self._rich_label("")
+        lay.addWidget(disclaimer_lbl)
+        self._lbl_disclaimer = disclaimer_lbl
+
+        links_lbl = self._rich_label("")
+        lay.addWidget(links_lbl)
+        self._lbl_links = links_lbl
         return box
 
     @staticmethod
@@ -171,10 +175,41 @@ class AboutWindow(QDialog):
         return w
 
     def _build_button_row(self) -> QHBoxLayout:
-        btn_ok = QPushButton("Schließen")
+        btn_ok = QPushButton()
         btn_ok.setFixedWidth(90)
         btn_ok.clicked.connect(self.accept)
+        self._btn_ok = btn_ok
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(btn_ok)
         return row
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("about.title", app_name=APP_NAME))
+        for key, lbl in self._meta_captions.items():
+            lbl.setText(tr(f"about.{key}") + ":")
+        if self._lbl_version_value is not None:
+            self._lbl_version_value.setText(
+                tr("about.version_value", version=APP_VERSION)
+            )
+        if self._lbl_license_heading is not None:
+            self._lbl_license_heading.setText(tr("about.license_heading"))
+        if self._lbl_copyright is not None:
+            self._lbl_copyright.setText(
+                tr("about.copyright", copyright=APP_COPYRIGHT)
+            )
+        if self._lbl_apache_intro is not None:
+            self._lbl_apache_intro.setText(tr("about.license.apache_intro"))
+        if self._lbl_disclaimer is not None:
+            self._lbl_disclaimer.setText(tr("about.license.disclaimer"))
+        if self._lbl_links is not None:
+            self._lbl_links.setText(tr("about.license.links"))
+        if self._btn_ok is not None:
+            self._btn_ok.setText(tr("dialog.close"))
+
+    def closeEvent(self, event) -> None:  # type: ignore[override]
+        try:
+            language_manager().language_changed.disconnect(self._on_language_changed)
+        except (TypeError, RuntimeError):
+            pass
+        super().closeEvent(event)

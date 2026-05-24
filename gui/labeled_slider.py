@@ -23,8 +23,11 @@ from typing import Any, Callable, List, Optional, Sequence
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QWidget
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 
-class LabeledSlider(QWidget):
+
+class LabeledSlider(RetranslatableMixin, QWidget):
     """Slider mit Name links und formatiertem Wert rechts."""
 
     #: Wird gefeuert, wenn der Wert sich ändert. Liefert den **internen**
@@ -35,6 +38,7 @@ class LabeledSlider(QWidget):
         self,
         label_text: str,
         *,
+        label_key: Optional[str] = None,
         choices: Optional[Sequence[Any]] = None,
         minimum: int = 0,
         maximum: int = 100,
@@ -47,6 +51,7 @@ class LabeledSlider(QWidget):
     ) -> None:
         super().__init__(parent)
 
+        self._label_key = label_key
         self._choices: Optional[List[Any]] = (
             list(choices) if choices is not None else None
         )
@@ -61,7 +66,9 @@ class LabeledSlider(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        self._name_label = QLabel(label_text)
+        self._name_label = QLabel(
+            tr(label_key) if label_key else label_text
+        )
         self._name_label.setMinimumWidth(label_min_width)
         layout.addWidget(self._name_label)
 
@@ -81,6 +88,15 @@ class LabeledSlider(QWidget):
 
         self._slider.valueChanged.connect(self._on_internal_change)
         self._refresh_value_label(default)
+        if label_key:
+            self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        if self._label_key:
+            self._name_label.setText(tr(self._label_key))
+
+    def set_label_text(self, text: str) -> None:
+        self._name_label.setText(text)
 
     # ------------------------------------------------------------------
     # Slider / Werte

@@ -27,6 +27,8 @@ from mapping.memory_tones import (
     dcs_labels,
 )
 from mapping.meter_mapping import po_max_watts_for_freq
+from i18n import language_manager, tr
+from i18n.retranslatable import RetranslatableMixin
 from model.memory_editor_channel import (
     EDITOR_MODES,
     MemoryChannelBank,
@@ -43,35 +45,41 @@ from model.memory_editor_channel import (
 _ModelIndex = QModelIndex | QPersistentModelIndex
 
 
-COLUMN_HEADERS = [
-    "Nr",
-    "Name",
-    "RX MHz",
-    "Mode",
-    "Ablage",
-    "Offset MHz",
-    "Ton-Modus",
-    "CTCSS Hz",
-    "DCS",
-    "Notiz",
-    "SQL (Local)",
-    "Power (Local)",
-    "Status",
-]
+def _column_header_keys() -> list[str]:
+    return [
+        "memory_editor.col.number",
+        "memory_editor.col.name",
+        "memory_editor.col.rx_mhz",
+        "memory_editor.col.mode",
+        "memory_editor.col.shift",
+        "memory_editor.col.offset",
+        "memory_editor.col.tone_mode",
+        "memory_editor.col.ctcss",
+        "memory_editor.col.dcs",
+        "memory_editor.col.note",
+        "memory_editor.col.local_sql",
+        "memory_editor.col.local_power",
+        "memory_editor.col.status",
+    ]
+
 
 COL_LOCAL_SQL = 10
 COL_LOCAL_PC_POWER = 11
 COL_STATUS = 12
-MEMORY_SQL_DISPLAY_NONE = "—"
-MEMORY_SQL_COMBO_ITEMS: list[str] = [
-    MEMORY_SQL_DISPLAY_NONE,
-    *[str(v) for v in range(0, 101, 10)],
-]
+MEMORY_SQL_COMBO_ITEMS: list[str] = []
+
+
+def _memory_sql_display_none() -> str:
+    return tr("common.dash")
+
+
+def _memory_sql_combo_items() -> list[str]:
+    return [_memory_sql_display_none(), *[str(v) for v in range(0, 101, 10)]]
 
 
 def memory_sql_combo_text_to_value(text: object) -> Optional[int]:
     s = str(text).strip()
-    if s == MEMORY_SQL_DISPLAY_NONE or s == "":
+    if s == _memory_sql_display_none() or s == "":
         return None
     return normalize_memory_local_sql_value(int(s))
 
@@ -79,13 +87,13 @@ def memory_sql_combo_text_to_value(text: object) -> Optional[int]:
 def memory_sql_value_to_combo(local_sql: Optional[int]) -> str:
     v = normalize_memory_local_sql_value(local_sql)
     if v is None:
-        return MEMORY_SQL_DISPLAY_NONE
+        return _memory_sql_display_none()
     return str(v)
 
 
 def memory_pc_power_combo_text_to_value(text: object, rx_frequency_hz: int) -> Optional[int]:
     s = str(text).strip()
-    if s == MEMORY_SQL_DISPLAY_NONE or s == "":
+    if s == _memory_sql_display_none() or s == "":
         return None
     return normalize_memory_local_pc_power_value(int(s), int(rx_frequency_hz))
 
@@ -96,7 +104,7 @@ def memory_pc_power_value_to_combo(
 ) -> str:
     v = normalize_memory_local_pc_power_value(watts, int(rx_frequency_hz))
     if v is None:
-        return MEMORY_SQL_DISPLAY_NONE
+        return _memory_sql_display_none()
     return str(v)
 
 
@@ -112,6 +120,16 @@ class MemoryEditorTableModel(QAbstractTableModel):
     def __init__(self, bank: MemoryChannelBank, parent=None) -> None:
         super().__init__(parent)
         self._bank = bank
+        language_manager().language_changed.connect(self._on_language_changed)
+
+    def _on_language_changed(self, _lang: str) -> None:
+        if self.columnCount() <= 0:
+            return
+        self.headerDataChanged.emit(
+            Qt.Orientation.Horizontal,
+            0,
+            self.columnCount() - 1,
+        )
 
     @property
     def bank(self) -> MemoryChannelBank:
@@ -131,7 +149,7 @@ class MemoryEditorTableModel(QAbstractTableModel):
     def columnCount(self, parent: _ModelIndex = QModelIndex()) -> int:  # noqa: N802
         if parent.isValid():
             return 0
-        return len(COLUMN_HEADERS)
+        return len(_column_header_keys())
 
     def headerData(  # noqa: N802
         self,
@@ -142,7 +160,7 @@ class MemoryEditorTableModel(QAbstractTableModel):
         if role != Qt.ItemDataRole.DisplayRole:
             return None
         if orientation == Qt.Orientation.Horizontal:
-            return COLUMN_HEADERS[section]
+            return tr(_column_header_keys()[section])
         return str(section + 1)
 
     def _channel(self, row: int) -> MemoryEditorChannel:
@@ -349,7 +367,7 @@ class _EditableComboDelegate(QStyledItemDelegate):
         combo.addItems(self._items)
         le = combo.lineEdit()
         if le is not None:
-            le.setPlaceholderText("z. B. 1.250")
+            le.setPlaceholderText(tr("memory_editor.offset_placeholder"))
         return combo
 
     def setEditorData(self, editor, index) -> None:  # noqa: ANN001
@@ -372,7 +390,7 @@ class _MemoryPcPowerComboDelegate(QStyledItemDelegate):
             ch.rx_frequency_hz if ch.rx_frequency_hz > 0 else None
         )
         items = [
-            MEMORY_SQL_DISPLAY_NONE,
+            _memory_sql_display_none(),
             *[str(w) for w in range(0, max_w + 1, 5)],
         ]
         combo = QComboBox(parent)
@@ -407,7 +425,7 @@ class _ComboDelegate(QStyledItemDelegate):
         model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
 
 
-class MemoryEditorTableView(QTableView):
+class MemoryEditorTableView(RetranslatableMixin, QTableView):
     """Tabelle mit Zeilen-Drag&Drop (eigenes dropEvent — Qt-Standard
     unterstützt QAbstractTableModel nicht zuverlässig)."""
 
@@ -423,11 +441,11 @@ class MemoryEditorTableView(QTableView):
         self.setDropIndicatorShown(True)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setDragDropOverwriteMode(False)
-        self.setToolTip(
-            "Zeile auswählen, gedrückt halten und ziehen, um den Kanal "
-            "in der Liste zu verschieben (Nr. wird neu vergeben).\n"
-            "Entf: markierte Zeilen leeren."
-        )
+        self._register_retranslate()
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        self.setToolTip(tr("memory_editor.tooltip"))
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
         if (
@@ -514,6 +532,6 @@ def attach_delegates(table) -> None:  # noqa: ANN001
     )
     table.setItemDelegateForColumn(
         COL_LOCAL_SQL,
-        _ComboDelegate(MEMORY_SQL_COMBO_ITEMS, table),
+        _ComboDelegate(_memory_sql_combo_items(), table),
     )
     table.setItemDelegateForColumn(COL_LOCAL_PC_POWER, _MemoryPcPowerComboDelegate(table))

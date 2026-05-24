@@ -79,6 +79,9 @@ from .menu_icons import (
     volume_role_send_icon,
 )
 from .volume_control_row import VolumeControlRow
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
+
 from .window_lifecycle import application_exit_close_requested
 
 if TYPE_CHECKING:
@@ -146,7 +149,7 @@ def _write_playlist_end_warnton_wav(path: Path) -> None:
             w.writeframes(struct.pack("<h", max(-32767, min(32767, s))))
 
 
-class AudioPlayerWindow(QMainWindow):
+class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
     """Audio-Player mit Sendeliste und CAT-PTT."""
 
     closed = Signal()
@@ -173,7 +176,7 @@ class AudioPlayerWindow(QMainWindow):
         self._folder = Path(settings.audio_player.folder_path or "")
         self._playlist_names: list[str] = list(settings.audio_player.playlist_order)
 
-        self.setWindowTitle("FT-991/A Audio-Player")
+        self.setWindowTitle(tr("player.window.title"))
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         # Kein Parent — frei beweglich, MainWindow kann darüber liegen (s. LogWindow).
@@ -298,6 +301,48 @@ class AudioPlayerWindow(QMainWindow):
         self._refresh_file_list()
         self._restore_geometry()
         self._update_transport_buttons()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("player.window.title"))
+        self.btn_folder.setText(tr("common.btn_folder"))
+        self.btn_refresh.setText(tr("common.btn_refresh"))
+        self._group_playlist.setTitle(tr("player.group.playlist"))
+        self.btn_play_pc.setText(tr("common.play_pc"))
+        self.btn_play_pc.setToolTip(tr("player.btn.play_pc.tooltip"))
+        self.btn_stop_pc.setText(tr("player.btn.stop_pc"))
+        self.btn_stop_pc.setToolTip(tr("player.btn.stop_pc.tooltip"))
+        self.lbl_pause_sec.setText(tr("player.label.pause_sec"))
+        self.spin_pause_seconds.setToolTip(tr("player.spin.pause_sec.tooltip"))
+        self.btn_add_pause.setText(tr("player.btn.add_pause"))
+        self.btn_add_pause.setToolTip(tr("player.btn.add_pause.tooltip"))
+        self.btn_edit_pause.setText(tr("player.btn.edit_pause"))
+        self.btn_edit_pause.setToolTip(tr("player.btn.edit_pause.tooltip"))
+        self.btn_delete_pause.setText(tr("player.btn.delete_pause"))
+        self.btn_delete_pause.setToolTip(tr("player.btn.delete_pause.tooltip"))
+        self._group_playback.setTitle(tr("player.group.playback"))
+        self.btn_play.setText(tr("player.btn.start"))
+        self.btn_stop.setText(tr("common.stop"))
+        self.progress.setToolTip(tr("player.progress.tooltip"))
+        self.lbl_pause_countdown.setToolTip(tr("player.label.pause_countdown.tooltip"))
+        self._group_output.setTitle(tr("player.group.output"))
+        self.radio_single.setText(tr("player.radio.single"))
+        self.radio_playlist.setText(tr("player.radio.playlist"))
+        self.check_warn_transmission_end.setText(tr("player.check.warn_end"))
+        self.check_warn_transmission_end.setToolTip(tr("player.check.warn_end.tooltip"))
+        self.check_contest.setText(tr("player.check.contest"))
+        self.check_contest.setToolTip(tr("player.check.contest.tooltip"))
+        self._lbl_listen_pause.setText(tr("player.label.listen_pause"))
+        self.spin_contest_listen.setToolTip(tr("player.spin.contest_listen.tooltip"))
+        self.check_tx_monitor_pc.setText(tr("common.tx_monitor"))
+        self.check_tx_monitor_pc.setToolTip(tr("common.tx_monitor_tooltip_player"))
+        self._btn_audio_routing.setText(tr("common.open_sound_settings"))
+        self._btn_audio_routing.setToolTip(tr("common.open_sound_settings_tooltip_player"))
+        self._vol_send._help_tooltip = tr("common.volume_send_tooltip")
+        self._vol_send._apply_tooltips()
+        self._vol_pc._help_tooltip = tr("common.volume_pc_tooltip")
+        self._vol_pc._apply_tooltips()
+        self._update_transport_buttons()
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -306,9 +351,9 @@ class AudioPlayerWindow(QMainWindow):
         root.setSpacing(8)
 
         row = QHBoxLayout()
-        self.btn_folder = QPushButton("Ordner wählen …")
+        self.btn_folder = QPushButton(tr("common.btn_folder"))
         self.btn_folder.clicked.connect(self._on_pick_folder)
-        self.btn_refresh = QPushButton("Aktualisieren")
+        self.btn_refresh = QPushButton(tr("common.btn_refresh"))
         self.btn_refresh.clicked.connect(self._refresh_file_list)
         row.addWidget(self.btn_folder)
         row.addWidget(self.btn_refresh)
@@ -320,8 +365,8 @@ class AudioPlayerWindow(QMainWindow):
         self.lbl_folder.setStyleSheet("color: gray;")
         root.addWidget(self.lbl_folder)
 
-        list_box = QGroupBox("Sendeliste (Reihenfolge per Drag & Drop)")
-        list_l = QVBoxLayout(list_box)
+        self._group_playlist = QGroupBox(tr("player.group.playlist"))
+        list_l = QVBoxLayout(self._group_playlist)
         self.list_files = QListWidget()
         self.list_files.setStyleSheet(FILE_LIST_WIDGET_STYLESHEET)
         self.list_files.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
@@ -333,60 +378,50 @@ class AudioPlayerWindow(QMainWindow):
         model.layoutChanged.connect(self._on_list_reordered)
         list_l.addWidget(self.list_files)
         list_btn_row = QHBoxLayout()
-        self.btn_play_pc = QPushButton("Play PC")
-        self.btn_play_pc.setToolTip(
-            "Markierte Datei lokal auf dem PC-Ausgabegerät abspielen — "
-            "kein CAT, keine Sendung. Modus „Alle nacheinander“: wie CAT-Playlist "
-            "mit nächster Datei und eingetragenen RX-Pausen; „Nach jeder Datei stoppen“: "
-            "nur diese Datei."
-        )
+        self.btn_play_pc = QPushButton(tr("common.play_pc"))
+        self.btn_play_pc.setToolTip(tr("player.btn.play_pc.tooltip"))
         self.btn_play_pc.clicked.connect(self._on_play_pc_clicked)
         set_transport_button_icon(self.btn_play_pc, transport_play_icon())
         list_btn_row.addWidget(self.btn_play_pc)
-        self.btn_pause_pc = QPushButton("Pause PC")
-        self.btn_pause_pc.setToolTip("PC-Vorhör pausieren oder fortsetzen.")
+        self.btn_pause_pc = QPushButton(tr("player.btn.pause_pc"))
+        self.btn_pause_pc.setToolTip(tr("player.btn.pause_pc.tooltip"))
         self.btn_pause_pc.clicked.connect(self._on_pause_pc_clicked)
         set_transport_button_icon(self.btn_pause_pc, transport_pause_icon())
         list_btn_row.addWidget(self.btn_pause_pc)
-        self.btn_stop_pc = QPushButton("Stopp PC")
-        self.btn_stop_pc.setToolTip("PC-Vorhör anhalten (stoppen).")
+        self.btn_stop_pc = QPushButton(tr("player.btn.stop_pc"))
+        self.btn_stop_pc.setToolTip(tr("player.btn.stop_pc.tooltip"))
         self.btn_stop_pc.clicked.connect(self._on_stop_pc_clicked)
         set_transport_button_icon(self.btn_stop_pc, transport_stop_icon())
         list_btn_row.addWidget(self.btn_stop_pc)
-        self.lbl_pause_sec = QLabel("Pause (s):")
+        self.lbl_pause_sec = QLabel(tr("player.label.pause_sec"))
         list_btn_row.addWidget(self.lbl_pause_sec)
         self.spin_pause_seconds = QSpinBox()
         self.spin_pause_seconds.setRange(1, 600)
-        self.spin_pause_seconds.setToolTip(
-            "Dauer einer RX-Pause in der Sendeliste (1–600 Sekunden)."
-        )
+        self.spin_pause_seconds.setToolTip(tr("player.spin.pause_sec.tooltip"))
         list_btn_row.addWidget(self.spin_pause_seconds)
-        self.btn_add_pause = QPushButton("Hinzufügen")
-        self.btn_add_pause.setToolTip(
-            "Fügt eine Pause nach der markierten Zeile ein "
-            "(ohne Markierung: ans Ende der Liste)."
-        )
+        self.btn_add_pause = QPushButton(tr("player.btn.add_pause"))
+        self.btn_add_pause.setToolTip(tr("player.btn.add_pause.tooltip"))
         self.btn_add_pause.clicked.connect(self._on_add_list_pause)
         list_btn_row.addWidget(self.btn_add_pause)
-        self.btn_edit_pause = QPushButton("Ändern")
-        self.btn_edit_pause.setToolTip("Nur bei einer Pausen-Zeile aktiv.")
+        self.btn_edit_pause = QPushButton(tr("player.btn.edit_pause"))
+        self.btn_edit_pause.setToolTip(tr("player.btn.edit_pause.tooltip"))
         self.btn_edit_pause.clicked.connect(self._on_edit_list_pause)
         list_btn_row.addWidget(self.btn_edit_pause)
-        self.btn_delete_pause = QPushButton("Löschen")
-        self.btn_delete_pause.setToolTip("Entfernt die markierte Pausen-Zeile.")
+        self.btn_delete_pause = QPushButton(tr("player.btn.delete_pause"))
+        self.btn_delete_pause.setToolTip(tr("player.btn.delete_pause.tooltip"))
         self.btn_delete_pause.clicked.connect(self._on_delete_list_pause)
         list_btn_row.addWidget(self.btn_delete_pause)
         list_btn_row.addStretch(1)
         list_l.addLayout(list_btn_row)
-        root.addWidget(list_box, stretch=1)
+        root.addWidget(self._group_playlist, stretch=1)
 
-        playback_box = QGroupBox("Wiedergabe")
-        playback_l = QVBoxLayout(playback_box)
+        self._group_playback = QGroupBox(tr("player.group.playback"))
+        playback_l = QVBoxLayout(self._group_playback)
 
         transport = QHBoxLayout()
-        self.btn_play = QPushButton("Start")
-        self.btn_pause = QPushButton("Pause")
-        self.btn_stop = QPushButton("Stopp")
+        self.btn_play = QPushButton(tr("player.btn.start"))
+        self.btn_pause = QPushButton(tr("player.btn.pause"))
+        self.btn_stop = QPushButton(tr("common.stop"))
         self.btn_play.clicked.connect(self._on_play)
         self.btn_pause.clicked.connect(self._on_pause_clicked)
         self.btn_stop.clicked.connect(self._on_stop_clicked)
@@ -403,7 +438,7 @@ class AudioPlayerWindow(QMainWindow):
         self.progress.setRange(0, 1000)
         self.progress.setValue(0)
         self.progress.setPageStep(50)
-        self.progress.setToolTip("Position — ziehen zum Spulen")
+        self.progress.setToolTip(tr("player.progress.tooltip"))
         self.progress.setTracking(True)
         self.progress.sliderPressed.connect(self._on_seek_pressed)
         self.progress.sliderReleased.connect(self._on_seek_released)
@@ -429,9 +464,7 @@ class AudioPlayerWindow(QMainWindow):
         self.lbl_pause_countdown.setMinimumWidth(
             self.lbl_pause_countdown.fontMetrics().horizontalAdvance("0:00") + 16
         )
-        self.lbl_pause_countdown.setToolTip(
-            "Verbleibende RX-Pause (Countdown bis Fortsetzung)."
-        )
+        self.lbl_pause_countdown.setToolTip(tr("player.label.pause_countdown.tooltip"))
         self.lbl_pause_countdown.setVisible(False)
         time_row.addWidget(self.lbl_elapsed)
         time_row.addStretch(1)
@@ -440,10 +473,10 @@ class AudioPlayerWindow(QMainWindow):
         time_row.addWidget(self.lbl_remaining)
         playback_l.addLayout(time_row)
 
-        root.addWidget(playback_box)
+        root.addWidget(self._group_playback)
 
-        mode_box = QGroupBox("Sende-Ausgabe")
-        mode_l = QVBoxLayout(mode_box)
+        self._group_output = QGroupBox(tr("player.group.output"))
+        mode_l = QVBoxLayout(self._group_output)
 
         _LABEL_W = 200
 
@@ -452,20 +485,14 @@ class AudioPlayerWindow(QMainWindow):
             lbl.setMinimumWidth(_LABEL_W)
             return lbl
 
-        self.radio_single = QRadioButton("Nach jeder Datei stoppen")
-        self.radio_playlist = QRadioButton("Alle nacheinander")
+        self.radio_single = QRadioButton(tr("player.radio.single"))
+        self.radio_playlist = QRadioButton(tr("player.radio.playlist"))
         self._mode_group = QButtonGroup(self)
         self._mode_group.addButton(self.radio_single)
         self._mode_group.addButton(self.radio_playlist)
         self.radio_single.toggled.connect(self._sync_mode_to_controller)
-        self.check_warn_transmission_end = QCheckBox(
-            "Warnen beim Ende der Aussendung"
-        )
-        self.check_warn_transmission_end.setToolTip(
-            "In den letzten 10 Sekunden der letzten Datei ertönt ein kurzer \n"
-            "Hinweis auf dem PC-Ausgabegerät. \n"
-            "Nicht über die Sende-Soundkarte / nicht über den CAT-Audiopfad.\n"
-        )
+        self.check_warn_transmission_end = QCheckBox(tr("player.check.warn_end"))
+        self.check_warn_transmission_end.setToolTip(tr("player.check.warn_end.tooltip"))
         self.check_warn_transmission_end.toggled.connect(
             self._on_warn_transmission_end_toggled
         )
@@ -476,38 +503,31 @@ class AudioPlayerWindow(QMainWindow):
         playlist_mode_row.addStretch(1)
         mode_l.addLayout(playlist_mode_row)
 
-        self.check_contest = QCheckBox("Kontest-Loop")
-        self.check_contest.setToolTip(
-            "Markierte Datei dauerhaft wiederholen (Auto-Ruf für Contests).\n"
-            "Nach jeder Wiedergabe folgt die eingestellte Hörpause im \n"
-            "Sprach-Mode (USB/LSB/FM), damit Stationen antworten können. \n"
-            "MIC-PTT bricht den Loop ab — kein automatischer Neustart.\n"
-        )
+        self.check_contest = QCheckBox(tr("player.check.contest"))
+        self.check_contest.setToolTip(tr("player.check.contest.tooltip"))
         self.check_contest.toggled.connect(self._on_contest_toggled)
         contest_row = QHBoxLayout()
         contest_row.addWidget(self.check_contest)
         contest_row.addSpacing(8)
-        lbl_hoerpause = QLabel("Hörpause:")
-        lbl_hoerpause.setAlignment(
+        self._lbl_listen_pause = QLabel(tr("player.label.listen_pause"))
+        self._lbl_listen_pause.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        contest_row.addWidget(lbl_hoerpause)
+        contest_row.addWidget(self._lbl_listen_pause)
         self.spin_contest_listen = QSpinBox()
         self.spin_contest_listen.setRange(0, MAX_CONTEST_LISTEN_MS)
-        self.spin_contest_listen.setSuffix(" ms")
+        self.spin_contest_listen.setSuffix(tr("common.ms_suffix"))
         self.spin_contest_listen.setSingleStep(500)
-        self.spin_contest_listen.setToolTip(
-            "Dauer der Hörpause zwischen den Wiederholungen (Sprach-Mode)."
-        )
+        self.spin_contest_listen.setToolTip(tr("player.spin.contest_listen.tooltip"))
         self.spin_contest_listen.valueChanged.connect(self._sync_contest_to_controller)
         contest_row.addWidget(self.spin_contest_listen)
         contest_row.addStretch(1)
         mode_l.addLayout(contest_row)
 
         vol_row = QHBoxLayout()
-        vol_row.addWidget(_form_label("Sende-Lautstärke:"))
+        vol_row.addWidget(_form_label(tr("player.label.volume_send")))
         self._vol_send = VolumeControlRow(
-            tooltip="Windows-Lautstärke der Sende-Soundkarte (CAT-TX)",
+            tooltip=tr("common.volume_send_tooltip"),
             leading_icon=volume_role_send_icon(),
         )
         self._vol_send.value_changed.connect(self._on_volume_changed)
@@ -516,9 +536,9 @@ class AudioPlayerWindow(QMainWindow):
         mode_l.addLayout(vol_row)
 
         pc_vol_row = QHBoxLayout()
-        pc_vol_row.addWidget(_form_label("PC-Lautstärke:"))
+        pc_vol_row.addWidget(_form_label(tr("player.label.volume_pc")))
         self._vol_pc = VolumeControlRow(
-            tooltip="Windows-Lautstärke der PC-Ausgabe (Play PC)",
+            tooltip=tr("common.volume_pc_tooltip"),
             leading_icon=volume_role_pc_icon(),
         )
         self._vol_pc.value_changed.connect(self._on_pc_volume_changed)
@@ -526,19 +546,14 @@ class AudioPlayerWindow(QMainWindow):
         pc_vol_row.addWidget(self._vol_pc, 1)
         mode_l.addLayout(pc_vol_row)
 
-        self.check_tx_monitor_pc = QCheckBox("Ausgabe Mithören")
-        self.check_tx_monitor_pc.setToolTip(
-            "Während der CAT-Sendung dieselbe Tonspur wie auf der Sende-Soundkarte \n"
-            "zusätzlich auf dem PC-Ausgabegerät ausgeben (gleiche Datei, zweiter Player)."
-        )
+        self.check_tx_monitor_pc = QCheckBox(tr("common.tx_monitor"))
+        self.check_tx_monitor_pc.setToolTip(tr("common.tx_monitor_tooltip_player"))
         self.check_tx_monitor_pc.toggled.connect(self._on_tx_monitor_pc_toggled)
         monitor_row = QHBoxLayout()
         monitor_row.addWidget(self.check_tx_monitor_pc)
         monitor_row.addStretch(1)
-        self._btn_audio_routing = QPushButton("Zur Audio‑Zuordnung…")
-        self._btn_audio_routing.setToolTip(
-            "Soundeinstellungen öffnen — Sende- und PC-Ausgabe dort wählen."
-        )
+        self._btn_audio_routing = QPushButton(tr("common.open_sound_settings"))
+        self._btn_audio_routing.setToolTip(tr("common.open_sound_settings_tooltip_player"))
         if self._open_sound_settings is not None:
             self._btn_audio_routing.clicked.connect(self._open_sound_settings)
         else:
@@ -546,17 +561,14 @@ class AudioPlayerWindow(QMainWindow):
         monitor_row.addWidget(self._btn_audio_routing)
         mode_l.addLayout(monitor_row)
 
-        root.addWidget(mode_box)
+        root.addWidget(self._group_output)
 
-        self.lbl_status = QLabel("Bereit")
+        self.lbl_status = QLabel(tr("common.ready"))
         self.lbl_status.setWordWrap(True)
         root.addWidget(self.lbl_status)
 
         if not multimedia_available():
-            self.lbl_status.setText(
-                "Audio-Wiedergabe nicht verfügbar. \n"
-                "pip install PySide6-Addons — App danach neu starten."
-            )
+            self.lbl_status.setText(tr("player.multimedia.unavailable"))
             self.btn_play.setEnabled(False)
             self.btn_play_pc.setEnabled(False)
             self.btn_pause_pc.setEnabled(False)
@@ -687,7 +699,7 @@ class AudioPlayerWindow(QMainWindow):
             self.lbl_folder.setText(str(self._folder))
         else:
             self._playlist_names = []
-            self.lbl_folder.setText("(kein Ordner gewählt)")
+            self.lbl_folder.setText(tr("player.folder.none"))
         self._rebuild_list_widget()
         self._settings.audio_player.playlist_order = list(self._playlist_names)
         self._push_playlist_to_controller()
@@ -755,8 +767,8 @@ class AudioPlayerWindow(QMainWindow):
         cur_sec = max(1, ms // 1000)
         new_sec, ok = QInputDialog.getInt(
             self,
-            "Pause ändern",
-            "Dauer in Sekunden:",
+            tr("player.dialog.edit_pause.title"),
+            tr("player.dialog.edit_pause.label"),
             cur_sec,
             1,
             600,
@@ -927,13 +939,11 @@ class AudioPlayerWindow(QMainWindow):
         if not self._radio_setup.is_applied or not self._radio_setup.in_data_mode:
             return
         if self._controller.is_busy():
-            self.lbl_status.setText(
-                "Betriebsart-Wechsel während Sendung nicht möglich — bitte stoppen."
-            )
+            self.lbl_status.setText(tr("player.status.mode_change_blocked"))
             return
         if self._radio_setup.data_mode == data_mode:
             return
-        self.lbl_status.setText(f"Funkgerät wird auf {data_mode.value} geschaltet …")
+        self.lbl_status.setText(tr("player.status.switch_data_mode", mode=data_mode.value))
         _invoke_worker_slot_qarg_str(
             self._setup_worker,
             "run_set_data_mode",
@@ -947,9 +957,8 @@ class AudioPlayerWindow(QMainWindow):
         if mm is None:
             QMessageBox.warning(
                 self,
-                "Audio-Player",
-                "Audio-Wiedergabe nicht verfügbar — bitte PySide6-Addons "
-                "installieren und App neu starten.",
+                tr("player.msgbox.title"),
+                tr("player.multimedia.unavailable_dialog"),
             )
             return False
         QAudioOutput, _QMediaDevices, QMediaPlayer = mm
@@ -1260,7 +1269,7 @@ class AudioPlayerWindow(QMainWindow):
                     self._controller.set_index(row)
                     self._pc_preview_row = row
                     self.lbl_status.setText(
-                        f"PC-Vorhör (Playlist): RX-Pause — {pause_label_de(token)}"
+                        tr("player.status.pc_playlist_pause", pause_label=pause_label_de(token))
                     )
                     self._pc_gap_resume_row = row + 1
                     self._pc_gap_deadline_mono = time.monotonic() + ms / 1000.0
@@ -1277,7 +1286,7 @@ class AudioPlayerWindow(QMainWindow):
             if self._play_pc_file_row(row, start_ms=0):
                 return
             row += 1
-        self.lbl_status.setText("PC-Vorhör (Playlist): Ende der Liste")
+        self.lbl_status.setText(tr("player.status.pc_playlist_end"))
         self._pc_preview_row = None
         self._update_transport_buttons()
         self._sync_pause_countdown_timer()
@@ -1288,7 +1297,7 @@ class AudioPlayerWindow(QMainWindow):
         if self.check_contest.isChecked():
             return
         if not self.radio_playlist.isChecked():
-            self.lbl_status.setText("PC-Vorhör: Ende der Datei (Einzelmodus)")
+            self.lbl_status.setText(tr("player.status.pc_single_end"))
             return
         if self._pc_preview_row is None:
             return
@@ -1326,8 +1335,8 @@ class AudioPlayerWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(
                 self,
-                "Audio-Player",
-                f"PC-Wiedergabe konnte nicht fortgesetzt werden:\n{exc}",
+                tr("player.msgbox.title"),
+                tr("player.msg.pc_resume_failed", error=exc),
             )
             return
         self._pc_is_playing = True
@@ -1339,7 +1348,7 @@ class AudioPlayerWindow(QMainWindow):
             name = self._playlist_names[self._pc_preview_row]
             name = pause_label_de(name)
         self.lbl_status.setText(
-            f"PC-Wiedergabe fortgesetzt{': ' + name if name else ''}"
+            tr("player.status.pc_resumed", suffix=tr("player.status.pc_resumed_suffix", name=name) if name else "")
         )
         self._update_transport_buttons()
 
@@ -1360,13 +1369,13 @@ class AudioPlayerWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(
                 self,
-                "Audio-Player",
-                f"PC-Wiedergabe konnte nicht pausiert werden:\n{exc}",
+                tr("player.msgbox.title"),
+                tr("player.msg.pc_pause_failed", error=exc),
             )
             return
         self._pc_is_playing = False
         self._pc_is_paused = True
-        self.lbl_status.setText("PC-Wiedergabe pausiert")
+        self.lbl_status.setText(tr("player.status.pc_paused"))
         self._update_transport_buttons()
 
     def _start_pc_preview_for_row(self, row: int) -> bool:
@@ -1374,8 +1383,8 @@ class AudioPlayerWindow(QMainWindow):
         if self._controller.is_busy():
             QMessageBox.information(
                 self,
-                "Audio-Player",
-                "Sendung läuft — bitte zuerst „Stopp“ (CAT-Wiedergabe).",
+                tr("player.msgbox.title"),
+                tr("player.msg.tx_busy"),
             )
             return False
         self._pc_gap_timer.stop()
@@ -1385,8 +1394,8 @@ class AudioPlayerWindow(QMainWindow):
         if row < 0 or row >= len(self._playlist_names):
             QMessageBox.information(
                 self,
-                "Audio-Player",
-                "Bitte eine Datei in der Liste markieren.",
+                tr("player.msgbox.title"),
+                tr("player.msg.select_file"),
             )
             return False
         if not self._folder.is_dir():
@@ -1395,16 +1404,16 @@ class AudioPlayerWindow(QMainWindow):
         if is_pause_token(token):
             QMessageBox.information(
                 self,
-                "Audio-Player",
-                "Pausen-Einträge können nicht per „Play PC“ vorgehört werden.",
+                tr("player.msgbox.title"),
+                tr("player.msg.pause_not_previewable"),
             )
             return False
         target = self._folder / token
         if not target.is_file():
             QMessageBox.warning(
                 self,
-                "Audio-Player",
-                f"Datei nicht gefunden:\n{target}",
+                tr("player.msgbox.title"),
+                tr("player.msg.file_not_found", path=target),
             )
             self._refresh_file_list()
             return False
@@ -1452,8 +1461,8 @@ class AudioPlayerWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(
                 self,
-                "Audio-Player",
-                f"PC-Wiedergabe konnte nicht gestartet werden:\n{exc}",
+                tr("player.msgbox.title"),
+                tr("player.msg.pc_start_failed", error=exc),
             )
             return False
         finally:
@@ -1462,7 +1471,7 @@ class AudioPlayerWindow(QMainWindow):
         self._pc_is_paused = False
         self._pc_preview_row = row
         self.list_files.setCurrentRow(row)
-        self.lbl_status.setText(f"PC-Wiedergabe: {target.name}")
+        self.lbl_status.setText(tr("player.status.pc_playing", filename=target.name))
         self._update_transport_buttons()
         self._sync_pause_countdown_timer()
         return True
@@ -1491,8 +1500,8 @@ class AudioPlayerWindow(QMainWindow):
         self._update_transport_buttons()
 
     def _on_pc_player_error(self, _error: object, message: str = "") -> None:
-        msg = message or "PC-Wiedergabe fehlgeschlagen."
-        QMessageBox.warning(self, "Audio-Player", msg)
+        msg = message or tr("player.msg.pc_playback_failed")
+        QMessageBox.warning(self, tr("player.msgbox.title"), msg)
         self._pc_is_playing = False
         self._pc_is_paused = False
         self._pc_preview_row = None
@@ -1612,7 +1621,7 @@ class AudioPlayerWindow(QMainWindow):
             self._defer_play_until_engage_data = True
             self._pending_play_index_after_engage = idx
             self.lbl_status.setText(
-                f"Schalte zurück auf {self._radio_setup.data_mode.value} …"
+                tr("player.status.switch_back_data", mode=self._radio_setup.data_mode.value)
             )
             _invoke_worker_slot(self._setup_worker, "run_engage_data")
             return
@@ -1624,7 +1633,7 @@ class AudioPlayerWindow(QMainWindow):
             self._cancel_cat_radio_settle_timer()
             self._defer_contest_pre_roll_until_engage_data = True
             target = self._radio_setup.data_mode.value
-            self.lbl_status.setText(f"Loop-Restart — schalte auf {target} …")
+            self.lbl_status.setText(tr("player.status.loop_restart", target=target))
             _invoke_worker_slot(self._setup_worker, "run_engage_data")
             return
         self._controller.begin_pre_roll_now()
@@ -1697,7 +1706,7 @@ class AudioPlayerWindow(QMainWindow):
         if not self._radio_setup.in_data_mode:
             return
         voice = self._radio_setup.voice_mode.value
-        self.lbl_status.setText(f"Schalte auf {voice} …")
+        self.lbl_status.setText(tr("player.status.switch_voice", voice=voice))
         _invoke_worker_slot(self._setup_worker, "run_engage_plain")
 
     def _handle_contest_state_transition(self, state: PlayerState) -> None:
@@ -1714,7 +1723,7 @@ class AudioPlayerWindow(QMainWindow):
             if self._radio_setup.in_data_mode:
                 voice = self._radio_setup.voice_mode.value
                 self.lbl_status.setText(
-                    f"Kontest-Hörpause — schalte auf {voice} …"
+                    tr("player.status.contest_listen", voice=voice)
                 )
                 _invoke_worker_slot(self._setup_worker, "run_engage_plain")
             return
@@ -1751,7 +1760,7 @@ class AudioPlayerWindow(QMainWindow):
         self.btn_pause_pc.setEnabled(
             multimedia_available() and pc_active and self._pc_has_loaded_source()
         )
-        self.btn_pause_pc.setText("Fortsetzen PC" if pc_paused else "Pause PC")
+        self.btn_pause_pc.setText(tr("player.btn.pause_pc.resume") if pc_paused else tr("player.btn.pause_pc"))
         set_transport_button_icon(
             self.btn_pause_pc,
             transport_play_icon() if pc_paused else transport_pause_icon(),
@@ -1761,7 +1770,7 @@ class AudioPlayerWindow(QMainWindow):
             st in (PlayerState.PLAYING, PlayerState.PAUSED_RX) and not pc_busy
         )
         self.btn_pause.setText(
-            "Fortsetzen" if st == PlayerState.PAUSED_RX else "Pause"
+            tr("player.btn.pause.resume") if st == PlayerState.PAUSED_RX else tr("player.btn.pause")
         )
         set_transport_button_icon(
             self.btn_pause,
@@ -1884,7 +1893,7 @@ class AudioPlayerWindow(QMainWindow):
             self.list_files.setCurrentRow(int(row))
 
     def _on_error(self, message: str) -> None:
-        QMessageBox.warning(self, "Audio-Player", message)
+        QMessageBox.warning(self, tr("player.msgbox.title"), message)
         self._update_transport_buttons()
 
     def _on_status(self, message: str) -> None:
@@ -1917,15 +1926,13 @@ class AudioPlayerWindow(QMainWindow):
         if message:
             self.lbl_status.setText(message)
         if not ok and message and self._audio_radio_session is None:
-            QMessageBox.warning(self, "Audio-Player", message)
+            QMessageBox.warning(self, tr("player.msgbox.title"), message)
 
     def _request_radio_apply(self) -> None:
         self._radio_apply_pending = True
         self.sync_data_mode_from_main()
         target = self._radio_setup.data_mode.value
-        self.lbl_status.setText(
-            f"Funkgerät wird auf {target} / 048+077+109→USB, 070→REAR, 072→USB geschaltet …"
-        )
+        self.lbl_status.setText(tr("player.status.radio_apply", target=target))
         _invoke_worker_slot(self._setup_worker, "run_apply")
 
     def _request_radio_restore(self) -> None:
@@ -1944,7 +1951,7 @@ class AudioPlayerWindow(QMainWindow):
         elif self._radio_setup.is_applied:
             ok, msg = self._radio_setup.restore()
             if msg and not ok:
-                QMessageBox.warning(self, "Audio-Player", msg)
+                QMessageBox.warning(self, tr("player.msgbox.title"), msg)
 
     def _try_complete_radio_restore_after_close(self) -> None:
         if not self._pending_radio_restore_on_close:
@@ -1965,7 +1972,7 @@ class AudioPlayerWindow(QMainWindow):
             self._audio_radio_session.on_window_hidden(self)
         if self._radio_transmit_activity_busy():
             self._pending_radio_restore_on_close = True
-            self.lbl_status.setText("Sendung wird beendet — Mode wird zurückgestellt …")
+            self.lbl_status.setText(tr("player.status.close_stop_tx"))
             self._controller.stop()
             return
         self._request_radio_restore_on_close()
@@ -1989,7 +1996,7 @@ class AudioPlayerWindow(QMainWindow):
         if message:
             self.lbl_status.setText(message)
         if not ok and message and self._audio_radio_session is None:
-            QMessageBox.warning(self, "Audio-Player", message)
+            QMessageBox.warning(self, tr("player.msgbox.title"), message)
         if not ok:
             self._defer_play_until_radio_ready = False
             self._pending_play_index = None
@@ -2003,26 +2010,26 @@ class AudioPlayerWindow(QMainWindow):
 
     def _on_radio_restore_finished(self, ok: bool, message: str) -> None:
         if message and not ok and self._audio_radio_session is None:
-            QMessageBox.warning(self, "Audio-Player", message)
+            QMessageBox.warning(self, tr("player.msgbox.title"), message)
 
     def _on_radio_data_mode_finished(self, ok: bool, message: str) -> None:
         if message:
             self.lbl_status.setText(message)
         if not ok and message:
-            QMessageBox.warning(self, "Audio-Player", message)
+            QMessageBox.warning(self, tr("player.msgbox.title"), message)
 
     def _on_radio_engage_plain_finished(self, ok: bool, message: str) -> None:
         if message:
             self.lbl_status.setText(message)
         if not ok and message:
-            QMessageBox.warning(self, "Audio-Player", message)
+            QMessageBox.warning(self, tr("player.msgbox.title"), message)
         self._try_complete_radio_restore_after_close()
 
     def _on_radio_engage_data_finished(self, ok: bool, message: str) -> None:
         if message:
             self.lbl_status.setText(message)
         if not ok and message:
-            QMessageBox.warning(self, "Audio-Player", message)
+            QMessageBox.warning(self, tr("player.msgbox.title"), message)
         if not ok:
             self._cancel_pending_cat_play_defer()
             return
@@ -2057,7 +2064,7 @@ class AudioPlayerWindow(QMainWindow):
             if self._radio_setup.in_data_mode:
                 voice = self._radio_setup.voice_mode.value
                 self.lbl_status.setText(
-                    f"MIC PTT erkannt — schalte auf {voice} …"
+                    tr("player.status.mic_ptt", voice=voice)
                 )
                 _invoke_worker_slot(
                     self._setup_worker,

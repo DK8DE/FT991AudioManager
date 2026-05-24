@@ -30,6 +30,9 @@ from live.live_devices import (
 )
 from model.global_audio_settings import ROLE_INPUT, ROLE_PC, ROLE_SEND
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
+
 from .app_icon import app_icon
 from .audio_hub_binding import connect_level_meters
 from .menu_icons import (
@@ -44,7 +47,7 @@ if TYPE_CHECKING:
     from model import AppSettings
 
 
-class SoundSettingsWindow(QMainWindow):
+class SoundSettingsWindow(RetranslatableMixin, QMainWindow):
     """Zentrale Auswahl von Aufnahme-, Sende- und PC-Soundkarte inkl. Windows-Lautstärke."""
 
     closed = Signal()
@@ -61,12 +64,13 @@ class SoundSettingsWindow(QMainWindow):
         self._settings = settings
         self._hub = audio_hub
 
-        self.setWindowTitle("Soundeinstellungen")
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         # Kein Parent — frei beweglich, MainWindow kann darüber liegen (s. LogWindow).
         self.setWindowFlags(Qt.WindowType.Window)
         self.resize(520, 420)
+
+        self._form_labels: dict[str, QLabel] = {}
 
         self._hub.device_changed.connect(self._on_hub_device_changed)
         self._hub.volume_changed.connect(self._on_hub_volume_changed)
@@ -85,38 +89,65 @@ class SoundSettingsWindow(QMainWindow):
         self._load_from_hub()
         self._load_live_devices_from_settings()
         self._restore_geometry()
+        self.retranslate_ui()
+        self._register_retranslate()
+
+    def _sync_status_hint(self) -> str:
+        if windows_endpoint_volume_available():
+            return tr("sound.hint.sync_active")
+        return tr("sound.hint.sync_inactive", python=sys.executable)
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("sound.window.title"))
+        self._hint.setText(
+            tr("sound.hint", sync_status=self._sync_status_hint())
+        )
+        self._devices_box.setTitle(tr("sound.group.devices"))
+        self._live_box.setTitle(tr("sound.group.live"))
+        self._live_hint.setText(tr("sound.live.hint"))
+        self._form_labels["input_device"].setText(tr("sound.label.input_device"))
+        self._form_labels["input_volume"].setText(tr("common.volume_input"))
+        self._form_labels["send_output"].setText(tr("sound.label.send_output"))
+        self._form_labels["send_volume"].setText(tr("sound.label.send_volume"))
+        self._form_labels["pc_output"].setText(tr("sound.label.pc_output"))
+        self._form_labels["pc_volume"].setText(tr("sound.label.pc_volume"))
+        self._form_labels["live_mic"].setText(tr("sound.label.live_mic"))
+        self._form_labels["live_monitor"].setText(tr("sound.label.live_monitor"))
+        self._form_labels["live_funk_in"].setText(tr("sound.label.live_funk_in"))
+        self._form_labels["live_funk_out"].setText(tr("sound.label.live_funk_out"))
+        self._combo_send.setToolTip(tr("sound.combo.send.tooltip"))
+        self._combo_pc.setToolTip(tr("sound.combo.pc.tooltip"))
+        self._combo_live_funk.setToolTip(tr("sound.combo.funk_in.tooltip"))
+        self._combo_live_funk_listen.setToolTip(tr("sound.combo.funk_out.tooltip"))
+        self._check_tx_monitor.setText(tr("common.tx_monitor"))
+        self._check_tx_monitor.setToolTip(tr("common.tx_monitor_tooltip_sound"))
+        self._vol_input._help_tooltip = tr("common.volume_input_tooltip")
+        self._vol_input._apply_tooltips()
+        self._vol_send._help_tooltip = tr("sound.send_volume.tooltip")
+        self._vol_send._apply_tooltips()
+        self._vol_pc._help_tooltip = tr("sound.pc_volume.tooltip")
+        self._vol_pc._apply_tooltips()
 
     def _build_ui(self) -> None:
         central = QWidget()
         root = QVBoxLayout(central)
 
-        hint = QLabel(
-            "Diese Einstellungen gelten für Audio‑Player und Audio‑Recorder; "
-            "Live‑Geräte unten gehören nur zum Live‑Fenster (PortAudio)."
-            "<br>Lautstärke oben steuert den Windows‑Mixer "
-            + (
-                "(Windows-Sync aktiv)."
-                if windows_endpoint_volume_available()
-                else (
-                    "(Windows-Sync inaktiv — im Terminal: "
-                    f"{sys.executable} -m pip install pycaw comtypes)"
-                )
-            )
-        )
-        hint.setWordWrap(True)
-        root.addWidget(hint)
+        self._hint = QLabel()
+        self._hint.setWordWrap(True)
+        root.addWidget(self._hint)
 
-        box = QGroupBox("Geräte & Lautstärke")
-        lay = QVBoxLayout(box)
+        self._devices_box = QGroupBox()
+        lay = QVBoxLayout(self._devices_box)
         label_w = 170
 
-        def form_label(text: str) -> QLabel:
+        def form_label(key: str, text: str) -> QLabel:
             lbl = QLabel(text)
             lbl.setMinimumWidth(label_w)
+            self._form_labels[key] = lbl
             return lbl
 
         in_row = QHBoxLayout()
-        in_row.addWidget(form_label("Aufnahme-Gerät:"))
+        in_row.addWidget(form_label("input_device", ""))
         self._combo_input = QComboBox()
         self._fill_input_devices()
         self._combo_input.currentIndexChanged.connect(self._on_input_device)
@@ -124,7 +155,7 @@ class SoundSettingsWindow(QMainWindow):
         lay.addLayout(in_row)
 
         self._vol_input = VolumeControlRow(
-            tooltip="Windows-Lautstärke des Aufnahme-Geräts",
+            tooltip="",
             leading_icon=volume_role_record_icon(),
         )
         self._vol_input.value_changed.connect(
@@ -134,21 +165,20 @@ class SoundSettingsWindow(QMainWindow):
             lambda m: self._hub.set_muted(ROLE_INPUT, m)
         )
         vol_in = QHBoxLayout()
-        vol_in.addWidget(form_label("Aufnahme-Lautstärke:"))
+        vol_in.addWidget(form_label("input_volume", ""))
         vol_in.addWidget(self._vol_input, 1)
         lay.addLayout(vol_in)
 
         send_row = QHBoxLayout()
-        send_row.addWidget(form_label("Sende-Ausgabe:"))
+        send_row.addWidget(form_label("send_output", ""))
         self._combo_send = QComboBox()
-        self._combo_send.setToolTip("CAT-Sendung / Replay (zum Funkgerät)")
         self._fill_output_devices(self._combo_send)
         self._combo_send.currentIndexChanged.connect(self._on_send_device)
         send_row.addWidget(self._combo_send, 1)
         lay.addLayout(send_row)
 
         self._vol_send = VolumeControlRow(
-            tooltip="Windows-Lautstärke der Sende-Soundkarte",
+            tooltip="",
             leading_icon=volume_role_send_icon(),
         )
         self._vol_send.value_changed.connect(
@@ -158,21 +188,20 @@ class SoundSettingsWindow(QMainWindow):
             lambda m: self._hub.set_muted(ROLE_SEND, m)
         )
         vol_send = QHBoxLayout()
-        vol_send.addWidget(form_label("Sende-Lautstärke:"))
+        vol_send.addWidget(form_label("send_volume", ""))
         vol_send.addWidget(self._vol_send, 1)
         lay.addLayout(vol_send)
 
         pc_row = QHBoxLayout()
-        pc_row.addWidget(form_label("PC-Ausgabe:"))
+        pc_row.addWidget(form_label("pc_output", ""))
         self._combo_pc = QComboBox()
-        self._combo_pc.setToolTip("Lokale Vorhöre / Mithören am PC")
         self._fill_output_devices(self._combo_pc)
         self._combo_pc.currentIndexChanged.connect(self._on_pc_device)
         pc_row.addWidget(self._combo_pc, 1)
         lay.addLayout(pc_row)
 
         self._vol_pc = VolumeControlRow(
-            tooltip="Windows-Lautstärke der PC-Ausgabe",
+            tooltip="",
             leading_icon=volume_role_pc_icon(),
         )
         self._vol_pc.value_changed.connect(
@@ -180,66 +209,53 @@ class SoundSettingsWindow(QMainWindow):
         )
         self._vol_pc.mute_toggled.connect(lambda m: self._hub.set_muted(ROLE_PC, m))
         vol_pc = QHBoxLayout()
-        vol_pc.addWidget(form_label("PC-Lautstärke:"))
+        vol_pc.addWidget(form_label("pc_volume", ""))
         vol_pc.addWidget(self._vol_pc, 1)
         lay.addLayout(vol_pc)
 
-        self._check_tx_monitor = QCheckBox("Ausgabe Mithören")
-        self._check_tx_monitor.setToolTip(
-            "Während CAT-Sendung/Replay dieselbe Tonspur zusätzlich auf dem "
-            "PC-Ausgabegerät wiedergeben."
-        )
+        self._check_tx_monitor = QCheckBox()
         self._check_tx_monitor.toggled.connect(self._on_tx_monitor)
         lay.addWidget(self._check_tx_monitor)
 
-        root.addWidget(box)
+        root.addWidget(self._devices_box)
 
-        live = QGroupBox("Zuordnungen für Live")
-        liv_lay = QVBoxLayout(live)
-        tip = QLabel(
-            "PortAudio‑Geräte für das Live‑Fenster. Änderungen gelten sofort "
-            "für Mithören und Live‑Sendung."
-        )
-        tip.setWordWrap(True)
-        liv_lay.addWidget(tip)
+        self._live_box = QGroupBox()
+        liv_lay = QVBoxLayout(self._live_box)
+        self._live_hint = QLabel()
+        self._live_hint.setWordWrap(True)
+        liv_lay.addWidget(self._live_hint)
 
         rin = QHBoxLayout()
-        rin.addWidget(form_label("PC‑Mikrofon für Live:"))
+        rin.addWidget(form_label("live_mic", ""))
         self._combo_live_in = QComboBox()
         self._combo_live_in.currentIndexChanged.connect(self._on_live_in_dev)
         rin.addWidget(self._combo_live_in, 1)
         liv_lay.addLayout(rin)
 
         rout = QHBoxLayout()
-        rout.addWidget(form_label("Monitor:"))
+        rout.addWidget(form_label("live_monitor", ""))
         self._combo_live_out = QComboBox()
         self._combo_live_out.currentIndexChanged.connect(self._on_live_out_dev)
         rout.addWidget(self._combo_live_out, 1)
         liv_lay.addLayout(rout)
 
         rfunk = QHBoxLayout()
-        rfunk.addWidget(form_label("Funk‑Eingabe:"))
+        rfunk.addWidget(form_label("live_funk_in", ""))
         self._combo_live_funk = QComboBox()
-        self._combo_live_funk.setToolTip(
-            "PC‑Wiedergabe zum Funkgerät (Sendepfad — Eingang am Transceiver)."
-        )
         self._combo_live_funk.currentIndexChanged.connect(self._on_live_funk_dev)
         rfunk.addWidget(self._combo_live_funk, 1)
         liv_lay.addLayout(rfunk)
 
         r_listen = QHBoxLayout()
-        r_listen.addWidget(form_label("Funk‑Ausgabe:"))
+        r_listen.addWidget(form_label("live_funk_out", ""))
         self._combo_live_funk_listen = QComboBox()
-        self._combo_live_funk_listen.setToolTip(
-            "Funkausgabe (vom Gerät) wird auf den Live‑Monitor gemischt (Mithören)."
-        )
         self._combo_live_funk_listen.currentIndexChanged.connect(
             self._on_live_funk_listen_dev
         )
         r_listen.addWidget(self._combo_live_funk_listen, 1)
         liv_lay.addLayout(r_listen)
 
-        root.addWidget(live)
+        root.addWidget(self._live_box)
 
         root.addStretch(1)
         self.setCentralWidget(central)

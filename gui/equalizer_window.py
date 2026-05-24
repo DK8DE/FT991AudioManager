@@ -7,15 +7,22 @@ from typing import Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
+
 from .app_icon import app_icon
 from .profile_widget import ProfileWidget
 from .window_lifecycle import application_exit_close_requested
 
 
-class EqualizerWindow(QMainWindow):
+class EqualizerWindow(RetranslatableMixin, QMainWindow):
     """Zeigt den Equalizer-Editor (:attr:`ProfileWidget.editor_panel`)."""
 
     closed = Signal()
+
+    #: Mindestgröße — Kopfzeile/Toolbar/Status + sichtbarer Scroll-Inhalt.
+    MIN_WIDTH = 680
+    MIN_HEIGHT = 480
 
     def __init__(
         self,
@@ -25,9 +32,9 @@ class EqualizerWindow(QMainWindow):
     ) -> None:
         super().__init__(parent)
         self._profile_widget = profile_widget
-        self.setWindowTitle("FT-991/A EQ-Profil")
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self.resize(920, 780)
 
         central = QWidget()
@@ -36,6 +43,11 @@ class EqualizerWindow(QMainWindow):
         layout.setSpacing(0)
         layout.addWidget(profile_widget.editor_panel)
         self.setCentralWidget(central)
+        self.retranslate_ui()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("equalizer.window.title"))
 
     def force_close(self) -> None:
         """Beendet das Fenster endgültig (z. B. beim App-Beenden)."""

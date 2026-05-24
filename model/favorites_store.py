@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional
 
+from i18n import tr
+
 from ._app_paths import app_data_dir
 
 FAVORITES_FILE_VERSION = 1
@@ -70,7 +72,7 @@ class RadioFavorite:
     def validate_name(name: str) -> str:
         n = _NAME_SANITIZE.sub("", str(name or "").strip())
         if not n:
-            raise ValueError("Name darf nicht leer sein.")
+            raise ValueError(tr("favorites.error.name_empty"))
         return n
 
 
@@ -128,24 +130,24 @@ class FavoritesStore:
         if replace_index is not None:
             idx = int(replace_index)
             if not 0 <= idx < len(self.favorites):
-                raise IndexError("Ungültiger Favoriten-Index.")
+                raise IndexError(tr("favorites.error.invalid_index"))
             old_name = self.favorites[idx].name
             for i, x in enumerate(self.favorites):
                 if i != idx and x.name == fav.name:
-                    raise ValueError(f"Name „{fav.name}“ ist bereits vergeben.")
+                    raise ValueError(tr("favorites.error.name_taken", name=fav.name))
             self.favorites[idx] = fav
             return
         if any(x.name == fav.name for x in self.favorites):
-            raise ValueError(f"Name „{fav.name}“ ist bereits vergeben.")
+            raise ValueError(tr("favorites.error.name_taken", name=fav.name))
         self.favorites.append(fav)
 
     def remove_at(self, index: int) -> None:
         if not 0 <= int(index) < len(self.favorites):
-            raise IndexError("Ungültiger Favoriten-Index.")
+            raise IndexError(tr("favorites.error.invalid_index"))
         del self.favorites[int(index)]
 
 
 def format_favorite_combo_label(fav: RadioFavorite) -> str:
     """Anzeige: ``Name (145.600 MHz)``."""
     mhz = fav.frequency_hz / 1_000_000.0
-    return f"{fav.name} ({mhz:.3f} MHz)"
+    return tr("favorites.combo_item_label", name=fav.name, freq_mhz=mhz)

@@ -28,6 +28,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 from model.live_settings import (
     DEFAULT_LIVE_EQ_FREQ_HZ,
     LIVE_EQ_GAIN_DB_MAX,
@@ -120,11 +122,20 @@ def _clone_bands(bs: List[LiveEqBandSettings]) -> List[LiveEqBandSettings]:
     return out
 
 
+def _format_display_frequency(hz: float) -> str:
+    """Kompakte Hz/kHz-Anzeige (max. 3 Nachkommastellen bei kHz)."""
+    h = max(1.0, float(hz))
+    if h < 1000:
+        return tr("common.freq_hz", value=int(round(h)))
+    khz = round(h / 1000.0, 3)
+    if abs(khz - round(khz)) < 1e-6:
+        return tr("common.freq_khz", value=int(round(khz)))
+    compact = f"{khz:.3f}".rstrip("0").rstrip(".")
+    return tr("common.freq_khz", value=compact)
+
+
 def _format_edge_frequency_label(hz: float) -> str:
-    h = int(round(max(1.0, float(hz))))
-    if h >= 1000:
-        return f"{h / 1000:.1f} kHz"
-    return f"{h} Hz"
+    return _format_display_frequency(hz)
 
 
 
@@ -523,7 +534,7 @@ class _LiveEqCurveCanvas(QWidget):
             painter.drawEllipse(QPointF(cx, cy), radius, radius)
 
 
-class LiveEqCurveView(QWidget):
+class LiveEqCurveView(RetranslatableMixin, QWidget):
     """Äußeres Widget wie :class:`~gui.eq_curve_view.EqCurveView` (+ Footer‑Zeilen)."""
 
     bands_changed = Signal(object)  # List[LiveEqBandSettings]
@@ -538,7 +549,7 @@ class LiveEqCurveView(QWidget):
         self.canvas.bands_changed.connect(self._on_canvas_bands_changed)
         layout.addWidget(self.canvas, stretch=1)
 
-        self._footer = QLabel("—")
+        self._footer = QLabel()
         self._footer.setAlignment(
             Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
         )
@@ -548,6 +559,12 @@ class LiveEqCurveView(QWidget):
         self._footer.setFont(ff)
         self._footer.setStyleSheet("color:#a8a8a8;")
         layout.addWidget(self._footer)
+        self._register_retranslate()
+        self._footer.setText(tr("common.dash"))
+
+    def retranslate_ui(self) -> None:
+        self._refresh_footer_from_canvas()
+        self.canvas.update()
 
     # ------------------------------------------------------------------
 
@@ -564,7 +581,7 @@ class LiveEqCurveView(QWidget):
     def _refresh_footer_from_canvas(self) -> None:
         bs = self.canvas.bands()
         texts = [_footer_cell(i + 1, b) for i, b in enumerate(bs)]
-        self._footer.setText("   ·   ".join(texts) if texts else "—")
+        self._footer.setText("   ·   ".join(texts) if texts else tr("common.dash"))
 
     def _on_canvas_bands_changed(self, bs: object) -> None:
         if not isinstance(bs, list) or len(bs) != _NUM_LIVE_BANDS:
@@ -575,14 +592,15 @@ class LiveEqCurveView(QWidget):
 
 def _footer_cell(num: int, b: LiveEqBandSettings) -> str:
     if not b.enabled:
-        return f"#{num} aus"
-    f0 = float(b.freq_hz)
-    ft = f"{f0 / 1000:.1f} kHz" if f0 >= 1000 else f"{int(round(f0))} Hz"
+        return tr("live_eq_curve.footer_off", num=num)
+    ft = _format_display_frequency(float(b.freq_hz))
     gd = float(b.gain_db)
     gi = int(round(gd))
     if abs(float(gi) - gd) < 0.001:
-        return f"#{num} {ft} {gi:+d} dB"
-    return f"#{num} {ft} {gd:+.1f} dB"
+        gain = tr("common.db", value=gi)
+    else:
+        gain = tr("common.db_decimal", value=gd)
+    return tr("live_eq_curve.footer", num=num, freq=ft, gain=gain)
 
 
 __all__ = ["LiveEqCurveView", "_NUM_LIVE_BANDS"]

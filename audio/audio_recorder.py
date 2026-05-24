@@ -45,6 +45,7 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, QUrl, Signal
 
+from i18n import tr
 from model.audio_recorder_settings import build_recording_filename
 
 from .qt_multimedia_lazy import qt_multimedia_types, qt_recorder_types
@@ -236,9 +237,9 @@ def list_audio_input_devices() -> list[tuple[str, str]]:
     """(id, Anzeigename) — leere id = System-Standard."""
     mm = qt_multimedia_types()
     if mm is None:
-        return [("", "Qt Multimedia nicht verfügbar")]
+        return [("", tr("common.qt_multimedia_unavailable"))]
     _QAudioOutput, QMediaDevices, _QMediaPlayer = mm
-    out: list[tuple[str, str]] = [("", "System-Standard")]
+    out: list[tuple[str, str]] = [("", tr("common.system_default"))]
     for dev in QMediaDevices.audioInputs():
         try:
             dev_id = dev.id().data().decode("utf-8", errors="replace")
@@ -367,10 +368,7 @@ class AudioRecorder(QObject):
             return True
         rec = qt_recorder_types()
         if rec is None:
-            self.error.emit(
-                "Qt Multimedia-Recorder nicht verfügbar. "
-                "pip install PySide6-Addons, App neu starten."
-            )
+            self.error.emit(tr("recorder.error.recorder_unavailable"))
             return False
         QAudioInput, QMediaCaptureSession, QMediaRecorder, QMediaFormat = rec
         self._QAudioInput = QAudioInput
@@ -398,7 +396,7 @@ class AudioRecorder(QObject):
         (optional mit Soft-Compressor) und löschen die WAV.
         """
         if self.is_busy():
-            self.error.emit("Es läuft bereits eine Aufnahme.")
+            self.error.emit(tr("recorder.error.already_recording"))
             return None
         if not self._init_backend():
             return None
@@ -406,10 +404,10 @@ class AudioRecorder(QObject):
         try:
             folder.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            self.error.emit(f"Aufnahme-Ordner konnte nicht angelegt werden: {exc}")
+            self.error.emit(tr("recorder.error.folder_create", exc=exc))
             return None
         if not os.access(folder, os.W_OK):
-            self.error.emit(f"Aufnahme-Ordner ist nicht beschreibbar: {folder}")
+            self.error.emit(tr("recorder.error.folder_not_writable", folder=folder))
             return None
 
         filename = build_recording_filename(now)
@@ -447,7 +445,7 @@ class AudioRecorder(QObject):
             self._recorder.record()
             return target_mp3
         except Exception as exc:  # noqa: BLE001 — wir wollen jede Backend-Fehlerart loggen
-            self.error.emit(f"Aufnahme konnte nicht gestartet werden: {exc}")
+            self.error.emit(tr("recorder.error.start_failed", exc=exc))
             self._teardown_session()
             self._set_state(RecorderState.ERROR)
             return None
@@ -462,7 +460,7 @@ class AudioRecorder(QObject):
         try:
             self._recorder.stop()
         except Exception as exc:  # noqa: BLE001
-            self.error.emit(f"Aufnahme konnte nicht gestoppt werden: {exc}")
+            self.error.emit(tr("recorder.error.stop_failed", exc=exc))
             self._teardown_session()
             self._set_state(RecorderState.ERROR)
 
@@ -563,16 +561,12 @@ class AudioRecorder(QObject):
                 str(getattr(c, "name", c)) for c in codecs
             ) or "(keine)"
             raise RuntimeError(
-                "Das aktive Qt-Multimedia-Backend kann kein WAV/PCM "
-                "encodieren.\n\n"
-                f"Aktives Backend: {active_backend}\n"
-                f"Backend-FileFormate (Encode): {ff_names}\n"
-                f"Backend-AudioCodecs (Encode): {cdc_names}\n\n"
-                "Loesung: App komplett beenden und neu starten. Der App-"
-                "Default ist 'ffmpeg' (kann WAV). Falls die env-Variable "
-                "QT_MEDIA_BACKEND von ausserhalb auf 'windows' gesetzt ist "
-                "(z. B. aus einer alten Shell), bitte mit "
-                "'Remove-Item Env:QT_MEDIA_BACKEND' loeschen."
+                tr(
+                    "recorder.error.backend_wav",
+                    backend=active_backend,
+                    file_formats=ff_names,
+                    codecs=cdc_names,
+                )
             )
 
     def _teardown_session(self) -> None:
@@ -619,7 +613,7 @@ class AudioRecorder(QObject):
                     normalize=normalize,
                 )
             except Exception as exc:  # noqa: BLE001 — User soll Fehlertext sehen
-                self.error.emit(f"Nachbearbeitung fehlgeschlagen: {exc}")
+                self.error.emit(tr("recorder.error.post_process", exc=exc))
                 # WAV-Reste aufräumen, wenn die MP3 nicht zustande kam.
                 self._safe_unlink(wav_path)
                 self._set_state(RecorderState.IDLE)
@@ -645,8 +639,7 @@ class AudioRecorder(QObject):
         """Lädt die Tempo-WAV, normalisiert optional und schreibt MP3."""
         if not wav_path.is_file():
             raise RuntimeError(
-                f"Aufnahme-Tempdatei fehlt: {wav_path.name}. "
-                "Hat das Aufnahme-Backend evtl. einen Fehler geliefert?"
+                tr("recorder.error.temp_missing", name=wav_path.name)
             )
 
         try:
@@ -662,21 +655,18 @@ class AudioRecorder(QObject):
             # konfiguriert ist. Wir schlagen mit einer Hilfestellung auf,
             # statt eine kaputte Datei in die Liste zu uebernehmen.
             raise RuntimeError(
-                "Aufnahme-Datei ist keine gueltige WAV/PCM-Datei "
-                f"({exc}). Bitte Umgebungsvariable QT_MEDIA_BACKEND=windows "
-                "setzen und Programm neu starten."
+                tr("recorder.error.invalid_wav", exc=exc)
             ) from exc
 
         if sample_width != 2:
             raise RuntimeError(
-                f"Aufnahme hat unerwartete Bittiefe ({sample_width * 8}-bit). "
-                "Erwartet werden 16-bit PCM."
+                tr(
+                    "recorder.error.unexpected_bit_depth",
+                    bits=sample_width * 8,
+                )
             )
         if not pcm:
-            raise RuntimeError(
-                "Aufnahme ist leer (0 Samples). Vermutlich war das "
-                "Eingabegeraet nicht erreichbar oder stummgeschaltet."
-            )
+            raise RuntimeError(tr("recorder.error.empty"))
 
         if normalize:
             pcm = soft_compress_normalize(pcm)
@@ -705,7 +695,7 @@ class AudioRecorder(QObject):
         self.duration_changed.emit(int(ms))
 
     def _on_error(self, _error, message: str = "") -> None:
-        msg = message or "Aufnahme-Fehler"
+        msg = message or tr("recorder.error.generic")
         self.error.emit(msg)
         # Backend stoppt sich beim Error i.d.R. selbst — wir räumen auf.
         self._teardown_session()

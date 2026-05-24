@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 from mapping.rx_mapping import mic_gain_slider_visible_for_mode_group
 from mapping.audio_mapping import (
     MIC_GAIN_DEFAULT,
@@ -39,8 +41,13 @@ from mapping.audio_mapping import (
     PROCESSOR_LEVEL_MAX,
     PROCESSOR_LEVEL_MIN,
     SSB_BPF_DEFAULT_KEY,
-    ssb_bpf_choices,
+    SSB_BPF_TABLE,
 )
+
+
+def _ssb_bpf_label(key: str) -> str:
+    i18n_key = f"audio_basics.ssb_bpf.{key.replace('-', '_')}"
+    return tr(i18n_key)
 
 
 @dataclass
@@ -52,7 +59,7 @@ class AudioBasicsValues:
     ssb_tx_bpf: str = SSB_BPF_DEFAULT_KEY
 
 
-class AudioBasicsWidget(QGroupBox):
+class AudioBasicsWidget(RetranslatableMixin, QGroupBox):
     """GroupBox mit den TX-Audio-Grundwerten."""
 
     changed = Signal()
@@ -60,11 +67,38 @@ class AudioBasicsWidget(QGroupBox):
     mic_gain_synced = Signal(int)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__("Grundwerte", parent)
+        super().__init__(parent)
         self._mutual_updating = False
         self._build_ui()
         self._apply_processor_enabled_state()
         self.apply_mode_relevance("SSB")
+        self._register_retranslate()
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        self.setTitle(tr("audio_basics.title"))
+        self._mic_gain_title.setText(tr("audio_basics.mic_gain"))
+        self.mic_gain_slider.setToolTip(tr("audio_basics.mic_gain_tooltip"))
+        self.mic_gain_label.setToolTip(tr("audio_basics.mic_gain_display_tooltip"))
+        self.mic_eq_check.setText(tr("audio_basics.normal_eq"))
+        self.mic_eq_check.setToolTip(tr("audio_basics.normal_eq_tooltip"))
+        self.processor_check.setText(tr("audio_basics.speech_processor"))
+        self.processor_check.setToolTip(tr("audio_basics.speech_processor_tooltip"))
+        self._processor_level_title.setText(tr("audio_basics.processor_level"))
+        self._bpf_title.setText(tr("audio_basics.ssb_tx_bpf"))
+        current_bpf = str(self.ssb_bpf_combo.currentData() or SSB_BPF_DEFAULT_KEY)
+        self.ssb_bpf_combo.blockSignals(True)
+        try:
+            self.ssb_bpf_combo.clear()
+            for _i, key, _label in SSB_BPF_TABLE:
+                self.ssb_bpf_combo.addItem(_ssb_bpf_label(key), userData=key)
+            idx = self.ssb_bpf_combo.findData(current_bpf)
+            if idx < 0:
+                self.ssb_bpf_combo.addItem(current_bpf, userData=current_bpf)
+                idx = self.ssb_bpf_combo.findData(current_bpf)
+            self.ssb_bpf_combo.setCurrentIndex(max(0, idx))
+        finally:
+            self.ssb_bpf_combo.blockSignals(False)
 
     # ------------------------------------------------------------------
     # UI
@@ -83,7 +117,7 @@ class AudioBasicsWidget(QGroupBox):
         universal.setVerticalSpacing(6)
         outer.addWidget(self._universal_container)
 
-        self._mic_gain_title = QLabel("MIC Gain:")
+        self._mic_gain_title = QLabel()
         universal.addWidget(self._mic_gain_title, 0, 0)
         self.mic_gain_slider = QSlider(Qt.Orientation.Horizontal)
         self.mic_gain_slider.setMinimum(MIC_GAIN_MIN)
@@ -94,26 +128,16 @@ class AudioBasicsWidget(QGroupBox):
         self.mic_gain_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.mic_gain_slider.setTickInterval(10)
         self.mic_gain_slider.setMinimumWidth(220)
-        self.mic_gain_slider.setToolTip(
-            "MIC Gain (CAT MG), Bereich 0–100 (dreistellig am Gerät)."
-        )
         universal.addWidget(self.mic_gain_slider, 0, 1)
         self.mic_gain_label = QLabel(str(MIC_GAIN_DEFAULT))
         self.mic_gain_label.setMinimumWidth(28)
         self.mic_gain_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-        self.mic_gain_label.setToolTip("Anzeige 0–100")
         universal.addWidget(self.mic_gain_label, 0, 2)
         self.mic_gain_slider.valueChanged.connect(self._on_mic_gain_slider_changed)
 
-        self.mic_eq_check = QCheckBox("Normal-EQ verwenden (ohne Speech Processor)")
-        self.mic_eq_check.setToolTip(
-            "Steuert das Menü PR1 — „Parametric MIC EQ ein/aus“. "
-            "Am FT-991 wirkt nur einer der beiden Pfade: Normal-EQ **oder** "
-            "Speech Processor (dann Processor-EQ). Die beiden Haken schließen "
-            "sich gegenseitig aus."
-        )
+        self.mic_eq_check = QCheckBox()
         self.mic_eq_check.setChecked(True)
         self.mic_eq_check.toggled.connect(self._on_mic_eq_toggled)
         universal.addWidget(self.mic_eq_check, 1, 0, 1, 3)
@@ -128,15 +152,12 @@ class AudioBasicsWidget(QGroupBox):
         processor_layout.setVerticalSpacing(6)
         outer.addWidget(self._processor_container)
 
-        self.processor_check = QCheckBox("Speech Processor einschalten")
-        self.processor_check.setToolTip(
-            "Wirkt nur in SSB. Ist er an, wird der Normal-EQ abgeschaltet — "
-            "beides gleichzeitig ist am Gerät nicht sinnvoll."
-        )
+        self.processor_check = QCheckBox()
         self.processor_check.toggled.connect(self._on_processor_toggled)
         processor_layout.addWidget(self.processor_check, 0, 0, 1, 3)
 
-        processor_layout.addWidget(QLabel("Processor Level:"), 1, 0)
+        self._processor_level_title = QLabel()
+        processor_layout.addWidget(self._processor_level_title, 1, 0)
         self.processor_level_slider = QSlider(Qt.Orientation.Horizontal)
         self.processor_level_slider.setRange(PROCESSOR_LEVEL_MIN, PROCESSOR_LEVEL_MAX)
         self.processor_level_slider.setSingleStep(1)
@@ -160,10 +181,11 @@ class AudioBasicsWidget(QGroupBox):
         bpf_layout.setSpacing(8)
         outer.addWidget(self._bpf_container)
 
-        bpf_layout.addWidget(QLabel("SSB TX-Bandbreite:"))
+        self._bpf_title = QLabel()
+        bpf_layout.addWidget(self._bpf_title)
         self.ssb_bpf_combo = QComboBox()
-        for key, label in ssb_bpf_choices():
-            self.ssb_bpf_combo.addItem(label, userData=key)
+        for _i, key, _label in SSB_BPF_TABLE:
+            self.ssb_bpf_combo.addItem(_ssb_bpf_label(key), userData=key)
         index = self.ssb_bpf_combo.findData(SSB_BPF_DEFAULT_KEY)
         if index >= 0:
             self.ssb_bpf_combo.setCurrentIndex(index)

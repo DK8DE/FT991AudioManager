@@ -89,6 +89,9 @@ from .menu_icons import (
     volume_role_send_icon,
 )
 from .volume_control_row import VolumeControlRow
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
+
 from .window_lifecycle import application_exit_close_requested
 
 if TYPE_CHECKING:
@@ -144,7 +147,7 @@ _REPLAY_STYLE_ACTIVE = (
 _REPLAY_STYLE_IDLE = ""
 
 
-class AudioRecorderWindow(QMainWindow):
+class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
     """Aufnahme von MP3-Mitschnitten + Replay über CAT-TX (DATA-Mode)."""
 
     closed = Signal()
@@ -176,7 +179,7 @@ class AudioRecorderWindow(QMainWindow):
             self._folder = default_recordings_folder()
             self._settings.audio_recorder.folder_path = str(self._folder)
 
-        self.setWindowTitle("FT-991/A Audio-Recorder")
+        self.setWindowTitle(tr("recorder.window.title"))
         self.setWindowIcon(app_icon())
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         # Kein Parent — frei beweglich, MainWindow kann darüber liegen (s. LogWindow).
@@ -297,6 +300,47 @@ class AudioRecorderWindow(QMainWindow):
         self._refresh_file_list()
         self._restore_geometry()
         self._update_buttons()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("recorder.window.title"))
+        self.btn_folder.setText(tr("common.btn_folder"))
+        self.btn_open_folder.setText(tr("recorder.btn.open_folder"))
+        self.btn_open_folder.setToolTip(tr("recorder.btn.open_folder.tooltip"))
+        self.btn_refresh.setText(tr("common.btn_refresh"))
+        self._group_recordings.setTitle(tr("recorder.group.recordings"))
+        self.btn_play_pc.setText(tr("common.play_pc"))
+        self.btn_play_pc.setToolTip(tr("recorder.btn.play_pc.tooltip"))
+        self.btn_stop_pc.setText(tr("recorder.btn.stop_pc"))
+        self.btn_stop_pc.setToolTip(tr("recorder.btn.stop_pc.tooltip"))
+        self.btn_delete.setText(tr("recorder.btn.delete"))
+        self.btn_delete.setToolTip(tr("recorder.btn.delete.tooltip"))
+        self._group_recording.setTitle(tr("recorder.group.recording"))
+        self.led.setToolTip(tr("recorder.led.tooltip"))
+        self.btn_record.setText(tr("recorder.btn.record"))
+        self.btn_stop_rec.setText(tr("recorder.btn.stop_rec"))
+        self.lbl_rec_file.setText(tr("recorder.label.no_recording"))
+        self._group_replay.setTitle(tr("recorder.group.replay"))
+        self.btn_replay.setText(tr("recorder.btn.replay"))
+        self.btn_replay.setToolTip(tr("recorder.btn.replay.tooltip"))
+        self.btn_stop_replay.setText(tr("recorder.btn.stop_replay"))
+        self.progress_replay.setToolTip(tr("recorder.progress.tooltip"))
+        self._group_devices.setTitle(tr("recorder.group.devices"))
+        self._lbl_vol_input.setText(tr("common.volume_input"))
+        self._vol_input._help_tooltip = tr("common.volume_input_tooltip")
+        self._vol_input._apply_tooltips()
+        self._lbl_vol_replay.setText(tr("recorder.label.volume_replay"))
+        self._vol_send._help_tooltip = tr("common.volume_replay_tooltip")
+        self._vol_send._apply_tooltips()
+        self._lbl_vol_pc.setText(tr("common.volume_pc"))
+        self._vol_pc._help_tooltip = tr("common.volume_pc_tooltip")
+        self._vol_pc._apply_tooltips()
+        self.check_tx_monitor_pc.setText(tr("common.tx_monitor"))
+        self.check_tx_monitor_pc.setToolTip(tr("common.tx_monitor_tooltip_recorder"))
+        self._lbl_bitrate.setText(tr("recorder.label.mp3_bitrate"))
+        self._btn_audio_routing.setText(tr("common.open_sound_settings"))
+        self._btn_audio_routing.setToolTip(tr("recorder.open_sound_settings.tooltip"))
+        self._update_buttons()
 
     # ------------------------------------------------------------------
     # UI-Aufbau
@@ -310,12 +354,12 @@ class AudioRecorderWindow(QMainWindow):
 
         # ---- Ordner-Zeile ----
         folder_row = QHBoxLayout()
-        self.btn_folder = QPushButton("Ordner wählen …")
+        self.btn_folder = QPushButton(tr("common.btn_folder"))
         self.btn_folder.clicked.connect(self._on_pick_folder)
-        self.btn_open_folder = QPushButton("Im Explorer öffnen")
-        self.btn_open_folder.setToolTip("Aufnahme-Ordner im Datei-Explorer öffnen")
+        self.btn_open_folder = QPushButton(tr("recorder.btn.open_folder"))
+        self.btn_open_folder.setToolTip(tr("recorder.btn.open_folder.tooltip"))
         self.btn_open_folder.clicked.connect(self._on_open_folder)
-        self.btn_refresh = QPushButton("Aktualisieren")
+        self.btn_refresh = QPushButton(tr("common.btn_refresh"))
         self.btn_refresh.clicked.connect(self._refresh_file_list)
         folder_row.addWidget(self.btn_folder)
         folder_row.addWidget(self.btn_open_folder)
@@ -329,8 +373,8 @@ class AudioRecorderWindow(QMainWindow):
         root.addWidget(self.lbl_folder)
 
         # ---- Datei-Liste ----
-        list_box = QGroupBox("Aufnahmen (neueste oben)")
-        list_l = QVBoxLayout(list_box)
+        self._group_recordings = QGroupBox(tr("recorder.group.recordings"))
+        list_l = QVBoxLayout(self._group_recordings)
         self.list_files = QListWidget()
         self.list_files.setStyleSheet(FILE_LIST_WIDGET_STYLESHEET)
         self.list_files.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -343,26 +387,20 @@ class AudioRecorderWindow(QMainWindow):
 
         # Buttons direkt unter der Liste: PC-Vorhör, dann Löschen (kein TX).
         list_btn_row = QHBoxLayout()
-        self.btn_play_pc = QPushButton("Play PC")
-        self.btn_play_pc.setToolTip(
-            "Markierte Datei lokal über das PC-Ausgabegerät abspielen — "
-            "kein CAT, keine PTT, keine Sendung."
-        )
+        self.btn_play_pc = QPushButton(tr("common.play_pc"))
+        self.btn_play_pc.setToolTip(tr("recorder.btn.play_pc.tooltip"))
         self.btn_play_pc.clicked.connect(self._on_play_pc_clicked)
         set_transport_button_icon(self.btn_play_pc, transport_play_icon())
         list_btn_row.addWidget(self.btn_play_pc)
 
-        self.btn_stop_pc = QPushButton("Stop")
-        self.btn_stop_pc.setToolTip("Lokale PC-Wiedergabe stoppen.")
+        self.btn_stop_pc = QPushButton(tr("recorder.btn.stop_pc"))
+        self.btn_stop_pc.setToolTip(tr("recorder.btn.stop_pc.tooltip"))
         self.btn_stop_pc.clicked.connect(self._on_stop_pc_clicked)
         set_transport_button_icon(self.btn_stop_pc, transport_stop_icon())
         list_btn_row.addWidget(self.btn_stop_pc)
 
-        self.btn_delete = QPushButton("Datei löschen")
-        self.btn_delete.setToolTip(
-            "Markierte Datei nach Bestätigung dauerhaft löschen. "
-            "Während Aufnahme oder laufender Wiedergabe gesperrt."
-        )
+        self.btn_delete = QPushButton(tr("recorder.btn.delete"))
+        self.btn_delete.setToolTip(tr("recorder.btn.delete.tooltip"))
         self.btn_delete.clicked.connect(self._on_delete_clicked)
         set_transport_button_icon(self.btn_delete, transport_trash_icon())
         list_btn_row.addWidget(self.btn_delete)
@@ -370,27 +408,27 @@ class AudioRecorderWindow(QMainWindow):
         list_btn_row.addStretch(1)
         list_l.addLayout(list_btn_row)
 
-        root.addWidget(list_box, stretch=1)
+        root.addWidget(self._group_recordings, stretch=1)
 
         # ---- Aufnahme-Box ----
-        rec_box = QGroupBox("Aufnahme")
-        rec_l = QVBoxLayout(rec_box)
+        self._group_recording = QGroupBox(tr("recorder.group.recording"))
+        rec_l = QVBoxLayout(self._group_recording)
 
         rec_row = QHBoxLayout()
         self.led = QLabel()
         self.led.setFixedSize(22, 22)
         self.led.setStyleSheet(_LED_OFF_STYLE)
-        self.led.setToolTip("Aufnahme-LED (rot blinkend = REC)")
+        self.led.setToolTip(tr("recorder.led.tooltip"))
         rec_row.addWidget(self.led)
 
-        self.btn_record = QPushButton("Aufnahme")
+        self.btn_record = QPushButton(tr("recorder.btn.record"))
         self.btn_record.setMinimumWidth(120)
         self.btn_record.clicked.connect(self._on_record_clicked)
         self.btn_record.setIcon(control_bar_record_red_icon())
         self.btn_record.setIconSize(transport_button_icon_size())
         rec_row.addWidget(self.btn_record)
 
-        self.btn_stop_rec = QPushButton("Stopp")
+        self.btn_stop_rec = QPushButton(tr("recorder.btn.stop_rec"))
         self.btn_stop_rec.setMinimumWidth(96)
         self.btn_stop_rec.clicked.connect(self._on_stop_recording)
         set_transport_button_icon(self.btn_stop_rec, transport_stop_icon())
@@ -405,28 +443,25 @@ class AudioRecorderWindow(QMainWindow):
         rec_row.addWidget(self.lbl_rec_duration, stretch=1)
         rec_l.addLayout(rec_row)
 
-        self.lbl_rec_file = QLabel("(keine Aufnahme aktiv)")
+        self.lbl_rec_file = QLabel(tr("recorder.label.no_recording"))
         self.lbl_rec_file.setStyleSheet("color: gray;")
         self.lbl_rec_file.setWordWrap(True)
         rec_l.addWidget(self.lbl_rec_file)
 
-        root.addWidget(rec_box)
+        root.addWidget(self._group_recording)
 
         # ---- Replay-Box (sendet über CAT-TX im DATA-Mode) ----
-        rep_box = QGroupBox("Replay (sendet über CAT-TX im DATA-Mode)")
-        rep_l = QVBoxLayout(rep_box)
+        self._group_replay = QGroupBox(tr("recorder.group.replay"))
+        rep_l = QVBoxLayout(self._group_replay)
 
         rep_transport = QHBoxLayout()
-        self.btn_replay = QPushButton("Replay")
-        self.btn_replay.setToolTip(
-            "Markierte Aufnahme einmal abspielen (Pre-Roll → CAT-TX → "
-            "Datei → zurück auf Sprach-Mode)."
-        )
+        self.btn_replay = QPushButton(tr("recorder.btn.replay"))
+        self.btn_replay.setToolTip(tr("recorder.btn.replay.tooltip"))
         self.btn_replay.clicked.connect(self._on_replay_clicked)
         set_transport_button_icon(self.btn_replay, transport_replay_icon())
         rep_transport.addWidget(self.btn_replay)
 
-        self.btn_stop_replay = QPushButton("Stopp Replay")
+        self.btn_stop_replay = QPushButton(tr("recorder.btn.stop_replay"))
         self.btn_stop_replay.clicked.connect(self._on_stop_replay)
         set_transport_button_icon(self.btn_stop_replay, transport_stop_icon())
         rep_transport.addWidget(self.btn_stop_replay)
@@ -437,7 +472,7 @@ class AudioRecorderWindow(QMainWindow):
         self.progress_replay.setRange(0, 1000)
         self.progress_replay.setValue(0)
         self.progress_replay.setPageStep(50)
-        self.progress_replay.setToolTip("Replay-Position — ziehen zum Spulen")
+        self.progress_replay.setToolTip(tr("recorder.progress.tooltip"))
         self.progress_replay.setTracking(True)
         self.progress_replay.sliderPressed.connect(self._on_replay_seek_pressed)
         self.progress_replay.sliderReleased.connect(self._on_replay_seek_released)
@@ -460,11 +495,11 @@ class AudioRecorderWindow(QMainWindow):
         rep_time_row.addWidget(self.lbl_replay_remaining)
         rep_l.addLayout(rep_time_row)
 
-        root.addWidget(rep_box)
+        root.addWidget(self._group_replay)
 
         # ---- Geräte / Format ----
-        dev_box = QGroupBox("Geräte & Format")
-        dev_l = QVBoxLayout(dev_box)
+        self._group_devices = QGroupBox(tr("recorder.group.devices"))
+        dev_l = QVBoxLayout(self._group_devices)
 
         _LABEL_W = 170
 
@@ -474,9 +509,10 @@ class AudioRecorderWindow(QMainWindow):
             return lbl
 
         in_vol_row = QHBoxLayout()
-        in_vol_row.addWidget(_form_label("Aufnahme-Lautstärke:"))
+        self._lbl_vol_input = _form_label(tr("common.volume_input"))
+        in_vol_row.addWidget(self._lbl_vol_input)
         self._vol_input = VolumeControlRow(
-            tooltip="Windows-Lautstärke des Aufnahme-Geräts",
+            tooltip=tr("common.volume_input_tooltip"),
             leading_icon=volume_role_record_icon(),
         )
         self._vol_input.value_changed.connect(self._on_input_volume_changed)
@@ -485,9 +521,10 @@ class AudioRecorderWindow(QMainWindow):
         dev_l.addLayout(in_vol_row)
 
         out_vol_row = QHBoxLayout()
-        out_vol_row.addWidget(_form_label("Wiedergabe-Lautstärke:"))
+        self._lbl_vol_replay = _form_label(tr("recorder.label.volume_replay"))
+        out_vol_row.addWidget(self._lbl_vol_replay)
         self._vol_send = VolumeControlRow(
-            tooltip="Windows-Lautstärke der Sende-Soundkarte (CAT-Replay)",
+            tooltip=tr("common.volume_replay_tooltip"),
             leading_icon=volume_role_send_icon(),
         )
         self._vol_send.value_changed.connect(self._on_output_volume_changed)
@@ -496,9 +533,10 @@ class AudioRecorderWindow(QMainWindow):
         dev_l.addLayout(out_vol_row)
 
         pc_vol_row = QHBoxLayout()
-        pc_vol_row.addWidget(_form_label("PC-Lautstärke:"))
+        self._lbl_vol_pc = _form_label(tr("common.volume_pc"))
+        pc_vol_row.addWidget(self._lbl_vol_pc)
         self._vol_pc = VolumeControlRow(
-            tooltip="Windows-Lautstärke der PC-Ausgabe (Play PC)",
+            tooltip=tr("common.volume_pc_tooltip"),
             leading_icon=volume_role_pc_icon(),
         )
         self._vol_pc.value_changed.connect(self._on_pc_volume_changed)
@@ -506,27 +544,22 @@ class AudioRecorderWindow(QMainWindow):
         pc_vol_row.addWidget(self._vol_pc, 1)
         dev_l.addLayout(pc_vol_row)
 
-        self.check_tx_monitor_pc = QCheckBox("Ausgabe Mithören")
-        self.check_tx_monitor_pc.setToolTip(
-            "Während des CAT-Replays dieselbe Tonspur wie auf dem Wiedergabe-Gerät "
-            "zusätzlich auf dem PC-Ausgabegerät ausgeben."
-        )
+        self.check_tx_monitor_pc = QCheckBox(tr("common.tx_monitor"))
+        self.check_tx_monitor_pc.setToolTip(tr("common.tx_monitor_tooltip_recorder"))
         self.check_tx_monitor_pc.toggled.connect(self._on_tx_monitor_pc_toggled)
         fmt_row = QHBoxLayout()
         fmt_row.addWidget(self.check_tx_monitor_pc)
         fmt_row.addSpacing(12)
-        fmt_row.addWidget(QLabel("MP3-Bitrate:"))
+        self._lbl_bitrate = QLabel(tr("recorder.label.mp3_bitrate"))
+        fmt_row.addWidget(self._lbl_bitrate)
         self.combo_bitrate = QComboBox()
         for kbps in ALLOWED_BITRATES_KBPS:
-            self.combo_bitrate.addItem(f"{kbps} kbps", kbps)
+            self.combo_bitrate.addItem(tr("recorder.combo.bitrate_item", kbps=kbps), kbps)
         self.combo_bitrate.currentIndexChanged.connect(self._on_bitrate_changed)
         fmt_row.addWidget(self.combo_bitrate)
         fmt_row.addStretch(1)
-        self._btn_audio_routing = QPushButton("Zur Audio‑Zuordnung…")
-        self._btn_audio_routing.setToolTip(
-            "Soundeinstellungen öffnen — Aufnahme-, Wiedergabe- und "
-            "PC-Ausgabegerät dort wählen."
-        )
+        self._btn_audio_routing = QPushButton(tr("common.open_sound_settings"))
+        self._btn_audio_routing.setToolTip(tr("recorder.open_sound_settings.tooltip"))
         if self._open_sound_settings is not None:
             self._btn_audio_routing.clicked.connect(self._open_sound_settings)
         else:
@@ -534,17 +567,14 @@ class AudioRecorderWindow(QMainWindow):
         fmt_row.addWidget(self._btn_audio_routing)
         dev_l.addLayout(fmt_row)
 
-        root.addWidget(dev_box)
+        root.addWidget(self._group_devices)
 
-        self.lbl_status = QLabel("Bereit")
+        self.lbl_status = QLabel(tr("common.ready"))
         self.lbl_status.setWordWrap(True)
         root.addWidget(self.lbl_status)
 
         if not recorder_import_ok():
-            self.lbl_status.setText(
-                "Qt Multimedia-Recorder nicht verfügbar — "
-                "pip install PySide6-Addons, App neu starten."
-            )
+            self.lbl_status.setText(tr("recorder.multimedia.unavailable"))
 
         self.setCentralWidget(central)
 
@@ -660,8 +690,8 @@ class AudioRecorderWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(
                 self,
-                "Audio-Recorder",
-                f"Ordner konnte nicht angelegt werden: {exc}",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.folder_create_failed", error=exc),
             )
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._folder.resolve())))
@@ -672,9 +702,7 @@ class AudioRecorderWindow(QMainWindow):
             self.lbl_folder.setText(str(self._folder))
         else:
             self._files = []
-            self.lbl_folder.setText(
-                f"(Ordner existiert noch nicht — wird bei Aufnahme angelegt: {self._folder})"
-            )
+            self.lbl_folder.setText(tr("recorder.folder.pending", folder=self._folder))
         self._rebuild_list_widget()
         self._push_playlist_to_player()
         self._update_buttons()
@@ -727,7 +755,7 @@ class AudioRecorderWindow(QMainWindow):
         if message:
             self.lbl_status.setText(message)
         if not ok and message and self._audio_radio_session is None:
-            QMessageBox.warning(self, "Audio-Recorder", message)
+            QMessageBox.warning(self, tr("recorder.msgbox.title"), message)
 
     def _on_record_clicked(self) -> None:
         if self._recorder.is_busy():
@@ -735,22 +763,22 @@ class AudioRecorderWindow(QMainWindow):
         if self._player.is_busy():
             QMessageBox.information(
                 self,
-                "Audio-Recorder",
-                "Replay läuft — bitte zuerst stoppen.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.replay_busy"),
             )
             return
         if not recorder_import_ok():
             QMessageBox.warning(
                 self,
-                "Audio-Recorder",
-                "Qt Multimedia-Recorder ist nicht verfügbar.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.recorder_unavailable"),
             )
             return
         if not self._cat.is_connected():
             QMessageBox.warning(
                 self,
-                "Audio-Recorder",
-                "CAT nicht verbunden — bitte zuerst verbinden.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.cat_not_connected"),
             )
             return
 
@@ -778,7 +806,7 @@ class AudioRecorderWindow(QMainWindow):
             self._request_radio_restore()
             return
         self.lbl_rec_file.setText(target.name)
-        self.lbl_status.setText(f"Aufnahme läuft: {target.name}")
+        self.lbl_status.setText(tr("recorder.status.recording", filename=target.name))
 
     def _on_recorder_state(self, state: RecorderState) -> None:
         if state == RecorderState.RECORDING:
@@ -791,9 +819,7 @@ class AudioRecorderWindow(QMainWindow):
             # WAV ist auf der Platte — wir normalisieren und encoden gerade.
             # Bei einer halben Minute Aufnahme typisch < 200 ms, bei
             # mehreren Minuten kann das kurz sichtbar werden.
-            self.lbl_status.setText(
-                "Aufnahme wird normalisiert und nach MP3 encodiert …"
-            )
+            self.lbl_status.setText(tr("recorder.status.encoding"))
         self._update_buttons()
         self._try_complete_radio_restore_after_close()
 
@@ -801,9 +827,9 @@ class AudioRecorderWindow(QMainWindow):
         self.lbl_rec_duration.setText(_format_ms(ms))
 
     def _on_recorder_error(self, msg: str) -> None:
-        QMessageBox.warning(self, "Audio-Recorder", msg)
+        QMessageBox.warning(self, tr("recorder.msgbox.title"), msg)
         self._stop_led_blink()
-        self.lbl_status.setText(f"Aufnahme-Fehler: {msg}")
+        self.lbl_status.setText(tr("recorder.status.rec_error", msg=msg))
         self._update_buttons()
         # Falls die Aufnahme nie startete, aber DATA-Mode schon aktiv ist,
         # auf Sprach-Mode zurück, damit kein TX hängenbleibt.
@@ -816,10 +842,10 @@ class AudioRecorderWindow(QMainWindow):
         except Exception:
             saved = None
         if saved is not None:
-            self.lbl_status.setText(f"Aufnahme gespeichert: {saved.name}")
+            self.lbl_status.setText(tr("recorder.status.saved", filename=saved.name))
             # Datei in Settings vormerken, damit sie nach Refresh markiert wird.
             self._settings.audio_recorder.selected_filename = saved.name
-        self.lbl_rec_file.setText("(keine Aufnahme aktiv)")
+        self.lbl_rec_file.setText(tr("recorder.label.no_recording"))
         self._refresh_file_list()
         # Nach jeder Aufnahme zurück auf Sprach-Mode.
         if self._radio_setup.is_applied:
@@ -856,8 +882,8 @@ class AudioRecorderWindow(QMainWindow):
         if self._recorder.is_busy():
             QMessageBox.information(
                 self,
-                "Audio-Recorder",
-                "Aufnahme läuft — bitte zuerst stoppen.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.recording_busy"),
             )
             return
         if self._player.is_busy():
@@ -866,22 +892,22 @@ class AudioRecorderWindow(QMainWindow):
         if row < 0 or row >= len(self._files):
             QMessageBox.information(
                 self,
-                "Audio-Recorder",
-                "Bitte eine Aufnahme in der Liste markieren.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.select_recording"),
             )
             return
         if not multimedia_available():
             QMessageBox.warning(
                 self,
-                "Audio-Recorder",
-                "Audio-Wiedergabe nicht verfügbar.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.playback_unavailable"),
             )
             return
         if not self._cat.is_connected():
             QMessageBox.warning(
                 self,
-                "Audio-Recorder",
-                "CAT nicht verbunden — bitte zuerst verbinden.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.cat_not_connected"),
             )
             return
         self._mic_ptt_interrupted = False
@@ -1006,7 +1032,7 @@ class AudioRecorderWindow(QMainWindow):
                 break
 
     def _on_player_error(self, message: str) -> None:
-        QMessageBox.warning(self, "Audio-Recorder", message)
+        QMessageBox.warning(self, tr("recorder.msgbox.title"), message)
         self._update_buttons()
 
     def _on_status(self, message: str) -> None:
@@ -1119,9 +1145,8 @@ class AudioRecorderWindow(QMainWindow):
         if mm is None:
             QMessageBox.warning(
                 self,
-                "Audio-Recorder",
-                "Audio-Wiedergabe nicht verfügbar — bitte PySide6-Addons "
-                "installieren und App neu starten.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.playback_unavailable"),
             )
             return False
         QAudioOutput, _QMediaDevices, QMediaPlayer = mm
@@ -1183,31 +1208,31 @@ class AudioRecorderWindow(QMainWindow):
         if self._recorder.is_busy():
             QMessageBox.information(
                 self,
-                "Audio-Recorder",
-                "Aufnahme läuft — bitte zuerst stoppen.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.recording_busy"),
             )
             return
         if self._player.is_busy():
             QMessageBox.information(
                 self,
-                "Audio-Recorder",
-                "Replay läuft — bitte zuerst stoppen.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.replay_busy"),
             )
             return
         row = self.list_files.currentRow()
         if row < 0 or row >= len(self._files):
             QMessageBox.information(
                 self,
-                "Audio-Recorder",
-                "Bitte eine Aufnahme in der Liste markieren.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.select_recording"),
             )
             return
         target = self._folder / self._files[row]
         if not target.is_file():
             QMessageBox.warning(
                 self,
-                "Audio-Recorder",
-                f"Datei nicht gefunden:\n{target}",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.file_not_found", path=target),
             )
             self._refresh_file_list()
             return
@@ -1224,12 +1249,12 @@ class AudioRecorderWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 — Backend kann diverse Fehler werfen
             QMessageBox.warning(
                 self,
-                "Audio-Recorder",
-                f"PC-Wiedergabe konnte nicht gestartet werden:\n{exc}",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.pc_start_failed", error=exc),
             )
             return
         self._pc_is_playing = True
-        self.lbl_status.setText(f"PC-Wiedergabe: {target.name}")
+        self.lbl_status.setText(tr("recorder.status.pc_playing", filename=target.name))
         self._update_buttons()
 
     def _on_stop_pc_clicked(self) -> None:
@@ -1254,8 +1279,8 @@ class AudioRecorderWindow(QMainWindow):
         self._update_buttons()
 
     def _on_pc_player_error(self, _error, message: str = "") -> None:
-        msg = message or "PC-Wiedergabe fehlgeschlagen."
-        QMessageBox.warning(self, "Audio-Recorder", msg)
+        msg = message or tr("recorder.msg.pc_playback_failed")
+        QMessageBox.warning(self, tr("recorder.msgbox.title"), msg)
         self._pc_is_playing = False
         self._update_buttons()
 
@@ -1274,31 +1299,31 @@ class AudioRecorderWindow(QMainWindow):
         if self._recorder.is_busy():
             QMessageBox.information(
                 self,
-                "Audio-Recorder",
-                "Aufnahme läuft — bitte zuerst stoppen.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.recording_busy"),
             )
             return
         active_rec = self._recorder.current_path
         if active_rec is not None and active_rec.resolve() == target.resolve():
             QMessageBox.information(
                 self,
-                "Audio-Recorder",
-                "Diese Datei wird gerade aufgenommen — bitte zuerst stoppen.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.recording_this_file"),
             )
             return
         # CAT-Replay darf nicht laufen.
         if self._player.is_busy():
             QMessageBox.information(
                 self,
-                "Audio-Recorder",
-                "Replay läuft — bitte zuerst stoppen.",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.replay_busy"),
             )
             return
 
         confirm = QMessageBox.question(
             self,
-            "Aufnahme löschen",
-            f"Datei dauerhaft löschen?\n\n{name}",
+            tr("recorder.dialog.delete.title"),
+            tr("recorder.dialog.delete.text", name=name),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1319,14 +1344,14 @@ class AudioRecorderWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(
                 self,
-                "Audio-Recorder",
-                f"Datei konnte nicht gelöscht werden:\n{exc}",
+                tr("recorder.msgbox.title"),
+                tr("recorder.msg.delete_failed", error=exc),
             )
             return
         # Markierung zurücksetzen, falls sie die gelöschte Datei betraf.
         if self._settings.audio_recorder.selected_filename == name:
             self._settings.audio_recorder.selected_filename = ""
-        self.lbl_status.setText(f"Gelöscht: {name}")
+        self.lbl_status.setText(tr("recorder.status.deleted", name=name))
         self._refresh_file_list()
 
     def _release_pc_source(self) -> None:
@@ -1370,13 +1395,11 @@ class AudioRecorderWindow(QMainWindow):
         if not self._radio_setup.is_applied or not self._radio_setup.in_data_mode:
             return
         if self._player.is_busy() or self._recorder.is_busy():
-            self.lbl_status.setText(
-                "Betriebsart-Wechsel während Aufnahme/Sendung nicht möglich."
-            )
+            self.lbl_status.setText(tr("recorder.status.mode_change_blocked"))
             return
         if self._radio_setup.data_mode == data_mode:
             return
-        self.lbl_status.setText(f"Funkgerät wird auf {data_mode.value} geschaltet …")
+        self.lbl_status.setText(tr("recorder.status.switch_data_mode", mode=data_mode.value))
         _invoke_worker_slot(
             self._setup_worker,
             "run_set_data_mode",
@@ -1388,15 +1411,11 @@ class AudioRecorderWindow(QMainWindow):
         self.sync_data_mode_from_main()
         target = self._radio_setup.data_mode
         if not self._radio_setup.is_applied:
-            self.lbl_status.setText(
-                f"Funkgerät wird auf {target.value} / 048+077+109→USB, 070→REAR, 072→USB geschaltet …"
-            )
+            self.lbl_status.setText(tr("recorder.status.radio_apply", target=target.value))
             _invoke_worker_slot(self._setup_worker, "run_apply")
             return
         if not self._radio_setup.in_data_mode:
-            self.lbl_status.setText(
-                f"Schalte zurück auf {self._radio_setup.data_mode.value} …"
-            )
+            self.lbl_status.setText(tr("recorder.status.switch_back_data", mode=self._radio_setup.data_mode.value))
             _invoke_worker_slot(self._setup_worker, "run_engage_data")
             return
         # Bereits im richtigen Zustand → direkt weiter.
@@ -1452,9 +1471,7 @@ class AudioRecorderWindow(QMainWindow):
             self._audio_radio_session.on_window_hidden(self)
         if self._radio_transmit_activity_busy():
             self._pending_radio_restore_on_close = True
-            self.lbl_status.setText(
-                "Aktivität wird beendet — Funkgerät wird zurückgestellt …"
-            )
+            self.lbl_status.setText(tr("recorder.status.close_busy"))
             if self._recorder.is_busy():
                 self._recorder.stop()
             if self._player.is_busy():
@@ -1483,19 +1500,19 @@ class AudioRecorderWindow(QMainWindow):
         if not ok:
             self._pending_after_apply = ""
             if message and self._audio_radio_session is None:
-                QMessageBox.warning(self, "Audio-Recorder", message)
+                QMessageBox.warning(self, tr("recorder.msgbox.title"), message)
             return
         self._continue_after_data_mode_ready()
 
     def _on_radio_restore_finished(self, ok: bool, message: str) -> None:
         if message and not ok and self._audio_radio_session is None:
-            QMessageBox.warning(self, "Audio-Recorder", message)
+            QMessageBox.warning(self, tr("recorder.msgbox.title"), message)
 
     def _on_radio_engage_plain_finished(self, ok: bool, message: str) -> None:
         if message:
             self.lbl_status.setText(message)
         if not ok and message:
-            QMessageBox.warning(self, "Audio-Recorder", message)
+            QMessageBox.warning(self, tr("recorder.msgbox.title"), message)
         self._try_complete_radio_restore_after_close()
 
     def _on_radio_engage_data_finished(self, ok: bool, message: str) -> None:
@@ -1504,7 +1521,7 @@ class AudioRecorderWindow(QMainWindow):
         if not ok:
             self._pending_after_apply = ""
             if message:
-                QMessageBox.warning(self, "Audio-Recorder", message)
+                QMessageBox.warning(self, tr("recorder.msgbox.title"), message)
             return
         self._continue_after_data_mode_ready()
 
@@ -1528,7 +1545,7 @@ class AudioRecorderWindow(QMainWindow):
             if self._radio_setup.in_data_mode:
                 voice = self._radio_setup.voice_mode.value
                 self.lbl_status.setText(
-                    f"MIC PTT erkannt — schalte auf {voice} …"
+                    tr("recorder.status.mic_ptt", voice=voice)
                 )
                 _invoke_worker_slot(self._setup_worker, "run_engage_plain_forced")
             return

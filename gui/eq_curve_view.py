@@ -41,6 +41,8 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 from mapping.eq_mapping import (
     BW_MAX,
     BW_MIN,
@@ -131,8 +133,8 @@ def _format_edge_frequency_label(hz: float) -> str:
     """Kompakte Hz-Anzeige für BW-Kanten (klein unter dem Strich)."""
     h = int(round(max(1.0, float(hz))))
     if h >= 1000:
-        return f"{h / 1000:.1f} kHz"
-    return f"{h} Hz"
+        return tr("common.freq_khz", value=h / 1000)
+    return tr("common.freq_hz", value=h)
 
 
 # ----------------------------------------------------------------------
@@ -537,7 +539,7 @@ class _EqCurveCanvas(QWidget):
 # ----------------------------------------------------------------------
 
 
-class EqCurveView(QWidget):
+class EqCurveView(RetranslatableMixin, QWidget):
     """Interaktiver Plot mit Frequenz-Footer.
 
     Emittiert ``settings_changed`` (mit der neuen :class:`EQSettings`)
@@ -557,13 +559,19 @@ class EqCurveView(QWidget):
         self.canvas.bands_changed.connect(self._on_canvas_changed)
         layout.addWidget(self.canvas, stretch=1)
 
-        self.footer = QLabel("LOW —   ·   MID —   ·   HIGH —")
+        self.footer = QLabel()
         self.footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ff = self.footer.font()
         ff.setPointSizeF(ff.pointSizeF() * 0.88)
         self.footer.setFont(ff)
         self.footer.setStyleSheet("color: #a8a8a8;")
         layout.addWidget(self.footer)
+        self._register_retranslate()
+        self.footer.setText(tr("eq_curve.footer_default"))
+
+    def retranslate_ui(self) -> None:
+        self.footer.setText(_format_footer(self.get_settings()))
+        self.canvas.update()
 
     # ------------------------------------------------------------------
 
@@ -595,18 +603,22 @@ class EqCurveView(QWidget):
 
 
 def _format_footer(settings: EQSettings) -> str:
-    def _band(label: str, band: EQBand) -> str:
+    def _band(label_key: str, band: EQBand) -> str:
+        label = tr(label_key)
         if band.freq == "OFF":
-            return f"{label} —"
+            return tr("eq_curve.footer_band_off", label=label)
         try:
             f = int(band.freq)
         except (TypeError, ValueError):
-            return f"{label} —"
-        f_text = f"{f / 1000:.1f} kHz" if f >= 1000 else f"{f} Hz"
-        return f"{label} {f_text}"
+            return tr("eq_curve.footer_band_off", label=label)
+        if f >= 1000:
+            f_text = tr("common.freq_khz", value=f / 1000)
+        else:
+            f_text = tr("common.freq_hz", value=f)
+        return tr("eq_curve.footer_band", label=label, freq=f_text)
 
     return (
-        f"{_band('LOW', settings.eq1)}   ·   "
-        f"{_band('MID', settings.eq2)}   ·   "
-        f"{_band('HIGH', settings.eq3)}"
+        f"{_band('common.band.low', settings.eq1)}   ·   "
+        f"{_band('common.band.mid', settings.eq2)}   ·   "
+        f"{_band('common.band.high', settings.eq3)}"
     )

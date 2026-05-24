@@ -76,6 +76,9 @@ from rig_bridge import RigBridgeManager
 
 from version import APP_NAME, APP_VERSION
 
+from i18n import tr, set_language, language_manager
+from i18n.retranslatable import RetranslatableMixin
+
 from .about_window import AboutWindow
 from .app_icon import app_icon
 from .menu_icons import (
@@ -128,10 +131,6 @@ _VFO_TRIPLET_FREQ_COLOR_DARK = "#FFFFFF"
 #: Abgleich VFO-A vs. ``MT``-Frequenz: ``MC`` bleibt nach VFO-Drehen oft auf alter Kanalnummer.
 _MEM_FREQ_MATCH_TOLERANCE_HZ = 500
 
-#: Erste Zeile der Favoriten-Combo („keiner gewählt“ / zurück nach VFO-MEM-Wechsel).
-_FAVORITES_COMBO_PLACEHOLDER_LABEL = "Favoriten"
-
-
 def _restore_memory_channel_if_fa_matches_slot(
     ft: FT991CAT, active_mc: Optional[int], fa_hz: int
 ) -> Optional[int]:
@@ -159,11 +158,11 @@ def _restore_memory_channel_if_fa_matches_slot(
 
 def _status_bar_mode_text(mode_value: str) -> str:
     """Abstand vor dem Statusleisten-Trennstrich (|) nach dem Mode-Text."""
-    return f"Mode: {mode_value} "
+    return tr("status.mode", mode_value=mode_value)
 
 
 def _status_bar_tx_text(transmitting: bool) -> str:
-    return "TX: AN " if transmitting else "TX: aus "
+    return tr("status.tx_on" if transmitting else "status.tx_off")
 
 
 def _invoke_cat_worker_slot(receiver: QObject, method_name: str) -> None:
@@ -172,7 +171,7 @@ def _invoke_cat_worker_slot(receiver: QObject, method_name: str) -> None:
     invoke(receiver, method_name, Qt.ConnectionType.QueuedConnection)
 
 
-class MainWindow(QMainWindow):
+class MainWindow(QMainWindow, RetranslatableMixin):
     """Hauptfenster mit VFO-Zeile, großem Meter-Panel und EQ-Profilzeile."""
 
     #: Start- und Mindestgröße des Hauptfensters (logische Pixel).
@@ -181,7 +180,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, settings: AppSettings, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
+        self.setWindowTitle(tr("main_window.title", app_name=APP_NAME, version=APP_VERSION))
         # Doppelt setzen ist Absicht: QApplication.setWindowIcon() reicht
         # auf Windows/macOS, aber manche Linux-Window-Manager (X11) lesen
         # das Icon nur vom konkreten Toplevel.
@@ -261,6 +260,8 @@ class MainWindow(QMainWindow):
         #: Zuletzt per Band/Frequenz automatisch gesetzter Phone-Mode (LSB/USB/FM).
         self._last_applied_band_voice_mode: Optional[RxMode] = None
         self._update_check_thread: Optional[UpdateCheckThread] = None
+        self._status_tx_transmitting: bool = False
+        self._status_mode_display: str = tr("common.dash")
 
         self._build_ui()
         self._t_call = TCallController(self._audio_hub, parent=self)
@@ -274,14 +275,14 @@ class MainWindow(QMainWindow):
         self._build_menu()
 
         # Statusleiste: links Verbindung + Speicherkanal-Laden, rechts Mode/TX.
-        self._connection_footer_label = QLabel("Nicht verbunden")
+        self._connection_footer_label = QLabel(tr("status.not_connected"))
         self._connection_footer_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         sb = QStatusBar()
         sb.addWidget(self._connection_footer_label, 1)
         self._tx_label = QLabel(_status_bar_tx_text(False))
-        self._mode_label = QLabel(_status_bar_mode_text("—"))
+        self._mode_label = QLabel(_status_bar_mode_text(tr("common.dash")))
         sb.addPermanentWidget(self._mode_label)
         sb.addPermanentWidget(self._tx_label)
         self.setStatusBar(sb)
@@ -372,6 +373,9 @@ class MainWindow(QMainWindow):
         if app is not None:
             app.installEventFilter(self)
 
+        self._register_retranslate()
+        self.retranslate_ui()
+
     def _mouse_global_inside_any_vfo_triplet(self, global_pos) -> bool:
         for triplet in (self._vfo_a_triplet, self._vfo_b_triplet):
             if triplet.rect().contains(triplet.mapFromGlobal(global_pos)):
@@ -412,18 +416,15 @@ class MainWindow(QMainWindow):
         if p is not None:
             ctl = getattr(p, "_controller", None)
             if ctl is not None and ctl.is_busy():
-                return (
-                    "Audio‑Player aktiv (Wiedergabe/Vorlauf …) — bitte zuerst stoppen,"
-                    " dann „Start Live“."
-                )
+                return tr("live.blocked.player_busy")
         r = self._audio_recorder_window
         if r is not None:
             rec = getattr(r, "_recorder", None)
             if rec is not None and rec.is_busy():
-                return "Audio‑Recorder: Aufnahme läuft — bitte zuerst beenden."
+                return tr("live.blocked.recorder_recording")
             pl = getattr(r, "_player", None)
             if pl is not None and pl.is_busy():
-                return "Audio‑Recorder: Replay läuft — bitte zuerst stoppen."
+                return tr("live.blocked.recorder_replay")
         return ""
 
     def _on_main_operating_mode_changed(self, _text: str) -> None:
@@ -497,7 +498,7 @@ class MainWindow(QMainWindow):
         vfo_caption_font.setBold(True)
         vfo_caption_font.setPointSizeF(vfo_caption_font.pointSizeF() * 1.15 * 2)
 
-        self._vfo_a_caption = QLabel("VFO-A:")
+        self._vfo_a_caption = QLabel(tr("main.vfo_a_caption"))
         self._vfo_a_caption.setFont(vfo_caption_font)
         self._vfo_a_caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
         _vfo_digits_color = (
@@ -513,7 +514,7 @@ class MainWindow(QMainWindow):
             self._on_user_vfo_a_frequency
         )
 
-        self._vfo_b_caption = QLabel("VFO-B:")
+        self._vfo_b_caption = QLabel(tr("main.vfo_b_caption"))
         self._vfo_b_caption.setFont(vfo_caption_font)
         self._vfo_b_caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
         self._vfo_b_triplet = VfoTripletWidget(
@@ -527,12 +528,8 @@ class MainWindow(QMainWindow):
         self._vfo_a_triplet.set_interactive(False)
         self._vfo_b_triplet.set_interactive(False)
 
-        self._vfo_ab_button = QPushButton("A/B")
+        self._vfo_ab_button = QPushButton(tr("main.vfo_ab_button"))
         self._vfo_ab_button.setEnabled(False)
-        self._vfo_ab_button.setToolTip(
-            "VFO-A und VFO-B tauschen (CAT SV; — SWAP VFO). "
-            "Die Anzeige folgt beim nächsten RX-Update."
-        )
         self._vfo_ab_button.clicked.connect(self._on_vfo_ab_clicked)
 
         self.meter_widget = MeterWidget(
@@ -603,13 +600,13 @@ class MainWindow(QMainWindow):
         band_row = QHBoxLayout(band_panel)
         band_row.setContentsMargins(10, 4, 10, 4)
         band_row.setSpacing(10)
-        self._band_strip_caption = QLabel("Band:")
+        self._band_strip_caption = QLabel(tr("main.band_caption"))
         band_caption_font = self.font()
         band_caption_font.setBold(True)
         self._band_strip_caption.setFont(band_caption_font)
         self._band_strip_caption.setStyleSheet(_VFO_CAPTION_STYLE_IDLE)
         self._band_strip_caption.setFixedWidth(52)
-        self._band_strip_name = QLabel("—")
+        self._band_strip_name = QLabel(tr("common.dash"))
         self._band_strip_name.setFont(band_caption_font)
         self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IDLE)
         self._band_strip_name.setMinimumWidth(48)
@@ -659,42 +656,37 @@ class MainWindow(QMainWindow):
         bottom_row1 = QHBoxLayout()
         bottom_row1.setSpacing(10)
 
-        bottom_row1.addWidget(QLabel("Mode-Gruppe:"))
+        self._lbl_mode_group = QLabel(tr("main.mode_group"))
+        bottom_row1.addWidget(self._lbl_mode_group)
         self.profile_widget.mode_combo.setParent(bottom_bar)
         bottom_row1.addWidget(self.profile_widget.mode_combo)
 
+        self._lbl_eq_profile = QLabel(tr("main.eq_profile"))
         bottom_row1.addSpacing(14)
-        bottom_row1.addWidget(QLabel("EQ-Profil:"))
+        bottom_row1.addWidget(self._lbl_eq_profile)
         self.profile_widget.profile_combo.setParent(bottom_bar)
         bottom_row1.addWidget(self.profile_widget.profile_combo, stretch=1)
         bottom_outer.addLayout(bottom_row1)
 
         bottom_row2 = QHBoxLayout()
         bottom_row2.setSpacing(10)
-        bottom_row2.addWidget(QLabel("Speicherkanal:"))
+        self._lbl_memory_channel = QLabel(tr("main.memory_channel"))
+        bottom_row2.addWidget(self._lbl_memory_channel)
         self.memory_combo = QComboBox(bottom_bar)
         self.memory_combo.setEnabled(False)
         self.memory_combo.setMinimumWidth(260)
         self.memory_combo.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
-        self.memory_combo.setToolTip(
-            "Speicherkanäle des FT-991/991A. Wechsel sendet MCnnn; "
-            "an das Radio (VFO ⇄ MEM)."
-        )
         self._reset_memory_combo()
         self.memory_combo.activated.connect(self._on_memory_combo_activated)
         bottom_row2.addWidget(self.memory_combo, stretch=1)
 
-        bottom_row2.addWidget(QLabel("Band:"))
+        self._lbl_band_combo = QLabel(tr("main.band_combo"))
+        bottom_row2.addWidget(self._lbl_band_combo)
         self.band_combo = QComboBox(bottom_bar)
         self.band_combo.setEnabled(False)
         self.band_combo.setMinimumWidth(280)
-        self.band_combo.setToolTip(
-            "VFO-Modus oder Amateurband (Mittenfrequenz auf VFO-A setzen). "
-            "Bei Bandwahl: Phone-Mode passend (HF unter 10 MHz LSB, ab 10 MHz USB; "
-            "6 m / 2 m / 70 cm FM), Repeater-Minus aus."
-        )
         for label, data in combo_entries_high_to_low():
             self.band_combo.addItem(label, data)
         self.band_combo.activated.connect(self._on_band_combo_activated)
@@ -729,20 +721,20 @@ class MainWindow(QMainWindow):
         menu = self.menuBar()
 
         # === Datei ====================================================
-        file_menu = menu.addMenu("&Datei")
+        self._file_menu = menu.addMenu(tr("menu.file"))
 
-        settings_action = QAction("&Einstellungen…", self)
-        settings_action.setIcon(
+        self._settings_action = QAction(tr("menu.file.settings"), self)
+        self._settings_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_FileDialogDetailedView,
                 theme_name="preferences-system",
             )
         )
-        settings_action.setShortcut("Ctrl+E")
-        settings_action.triggered.connect(self._on_settings_action)
-        file_menu.addAction(settings_action)
+        self._settings_action.setShortcut("Ctrl+E")
+        self._settings_action.triggered.connect(self._on_settings_action)
+        self._file_menu.addAction(self._settings_action)
 
-        self._connect_action = QAction("&Verbinden", self)
+        self._connect_action = QAction(tr("menu.file.connect"), self)
         self._connect_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_DriveNetIcon,
@@ -751,9 +743,9 @@ class MainWindow(QMainWindow):
         )
         self._connect_action.setShortcut("Ctrl+V")
         self._connect_action.triggered.connect(self._on_connect_menu)
-        file_menu.addAction(self._connect_action)
+        self._file_menu.addAction(self._connect_action)
 
-        self._disconnect_action = QAction("&Trennen", self)
+        self._disconnect_action = QAction(tr("menu.file.disconnect"), self)
         self._disconnect_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_BrowserStop,
@@ -762,86 +754,86 @@ class MainWindow(QMainWindow):
         )
         self._disconnect_action.setShortcut("Ctrl+T")
         self._disconnect_action.triggered.connect(self._on_disconnect_menu)
-        file_menu.addAction(self._disconnect_action)
+        self._file_menu.addAction(self._disconnect_action)
 
-        file_menu.addSeparator()
+        self._file_menu.addSeparator()
 
-        quit_action = QAction("&Beenden", self)
-        quit_action.setIcon(
+        self._quit_action = QAction(tr("menu.file.quit"), self)
+        self._quit_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_TitleBarCloseButton,
                 theme_name="application-exit",
             )
         )
-        quit_action.setShortcut("Ctrl+Q")
-        quit_action.triggered.connect(self.close)
-        file_menu.addAction(quit_action)
+        self._quit_action.setShortcut("Ctrl+Q")
+        self._quit_action.triggered.connect(self.close)
+        self._file_menu.addAction(self._quit_action)
 
         # === Funktionen =============================================
-        functions_menu = menu.addMenu("&Funktionen")
+        self._functions_menu = menu.addMenu(tr("menu.functions"))
 
-        memory_action = QAction("&Speicherkanäle…", self)
-        memory_action.setIcon(
+        self._memory_action = QAction(tr("menu.functions.memory_channels"), self)
+        self._memory_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_DirOpenIcon,
                 theme_name="folder-open",
             )
         )
-        memory_action.setShortcut("Ctrl+Shift+K")
-        memory_action.triggered.connect(self._on_memory_editor_action)
-        functions_menu.addAction(memory_action)
+        self._memory_action.setShortcut("Ctrl+Shift+K")
+        self._memory_action.triggered.connect(self._on_memory_editor_action)
+        self._functions_menu.addAction(self._memory_action)
 
-        functions_menu.addSeparator()
+        self._functions_menu.addSeparator()
 
-        equalizer_action = QAction("&Equalizer…", self)
-        equalizer_action.setIcon(
+        self._equalizer_action = QAction(tr("menu.functions.equalizer"), self)
+        self._equalizer_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_MediaVolume,
                 theme_name="audio-volume-high",
             )
         )
-        equalizer_action.setShortcut("Ctrl+Shift+E")
-        equalizer_action.triggered.connect(self._on_equalizer_action)
-        functions_menu.addAction(equalizer_action)
+        self._equalizer_action.setShortcut("Ctrl+Shift+E")
+        self._equalizer_action.triggered.connect(self._on_equalizer_action)
+        self._functions_menu.addAction(self._equalizer_action)
 
-        sound_settings_action = QAction("&Soundeinstellung…", self)
-        sound_settings_action.setIcon(menu_speaker_white_icon())
-        sound_settings_action.setShortcut("Ctrl+Shift+S")
-        sound_settings_action.triggered.connect(self._on_sound_settings_action)
-        functions_menu.addAction(sound_settings_action)
+        self._sound_settings_action = QAction(tr("menu.functions.sound_settings"), self)
+        self._sound_settings_action.setIcon(menu_speaker_white_icon())
+        self._sound_settings_action.setShortcut("Ctrl+Shift+S")
+        self._sound_settings_action.triggered.connect(self._on_sound_settings_action)
+        self._functions_menu.addAction(self._sound_settings_action)
 
-        audio_player_action = QAction("&Audio-Player…", self)
-        audio_player_action.setIcon(
+        self._audio_player_action = QAction(tr("menu.functions.audio_player"), self)
+        self._audio_player_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_MediaPlay,
                 theme_name="media-playback-start",
             )
         )
-        audio_player_action.setShortcut("Ctrl+Shift+A")
-        audio_player_action.triggered.connect(self._on_audio_player_action)
-        functions_menu.addAction(audio_player_action)
+        self._audio_player_action.setShortcut("Ctrl+Shift+A")
+        self._audio_player_action.triggered.connect(self._on_audio_player_action)
+        self._functions_menu.addAction(self._audio_player_action)
 
-        audio_recorder_action = QAction("Audio-&Recorder…", self)
-        audio_recorder_action.setIcon(
+        self._audio_recorder_action = QAction(tr("menu.functions.audio_recorder"), self)
+        self._audio_recorder_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_FileIcon,
                 theme_name="media-record",
             )
         )
-        audio_recorder_action.setShortcut("Ctrl+Shift+R")
-        audio_recorder_action.triggered.connect(self._on_audio_recorder_action)
-        functions_menu.addAction(audio_recorder_action)
+        self._audio_recorder_action.setShortcut("Ctrl+Shift+R")
+        self._audio_recorder_action.triggered.connect(self._on_audio_recorder_action)
+        self._functions_menu.addAction(self._audio_recorder_action)
 
-        live_audio_action = QAction("&Live‑PC Funk…", self)
-        live_audio_action.setIcon(control_bar_live_green_led_icon())
-        live_audio_action.setShortcut("Ctrl+Shift+L")
-        live_audio_action.triggered.connect(self._on_live_action)
-        functions_menu.addAction(live_audio_action)
+        self._live_audio_action = QAction(tr("menu.functions.live_pc"), self)
+        self._live_audio_action.setIcon(control_bar_live_green_led_icon())
+        self._live_audio_action.setShortcut("Ctrl+Shift+L")
+        self._live_audio_action.triggered.connect(self._on_live_action)
+        self._functions_menu.addAction(self._live_audio_action)
 
         # === Ansicht ==================================================
-        view_menu = menu.addMenu("&Ansicht")
+        self._view_menu = menu.addMenu(tr("menu.view"))
 
-        self.log_toggle_action = QAction("CAT-&Log anzeigen", self)
+        self.log_toggle_action = QAction(tr("menu.view.cat_log"), self)
         self.log_toggle_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_FileDialogInfoView,
@@ -852,38 +844,53 @@ class MainWindow(QMainWindow):
         self.log_toggle_action.setChecked(self._settings.ui.show_cat_log)
         self.log_toggle_action.setShortcut("Ctrl+L")
         self.log_toggle_action.toggled.connect(self._on_log_toggle)
-        view_menu.addAction(self.log_toggle_action)
+        self._view_menu.addAction(self.log_toggle_action)
 
-        view_menu.addSeparator()
+        self._view_menu.addSeparator()
 
-        self.dark_mode_action = QAction("&Dark Mode", self)
+        self.dark_mode_action = QAction(tr("menu.view.dark_mode"), self)
         self.dark_mode_action.setCheckable(True)
         self.dark_mode_action.setChecked(self._settings.ui.force_dark_mode)
         self.dark_mode_action.setShortcut("Ctrl+D")
         self.dark_mode_action.toggled.connect(self._on_dark_mode_toggled)
-        view_menu.addAction(self.dark_mode_action)
+        self._view_menu.addAction(self.dark_mode_action)
+
+        self._view_menu.addSeparator()
+
+        self._language_menu = self._view_menu.addMenu(tr("menu.view.language"))
+        self._language_de_action = QAction(tr("menu.view.language_de"), self)
+        self._language_de_action.setCheckable(True)
+        self._language_de_action.triggered.connect(self._on_language_de)
+        self._language_menu.addAction(self._language_de_action)
+
+        self._language_en_action = QAction(tr("menu.view.language_en"), self)
+        self._language_en_action.setCheckable(True)
+        self._language_en_action.triggered.connect(self._on_language_en)
+        self._language_menu.addAction(self._language_en_action)
+
+        self._sync_language_menu_checks()
 
         # === Hilfe ====================================================
-        help_menu = menu.addMenu("&Hilfe")
-        version_action = QAction("&Version", self)
-        version_action.setIcon(
+        self._help_menu = menu.addMenu(tr("menu.help"))
+        self._version_action = QAction(tr("menu.help.version"), self)
+        self._version_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_MessageBoxInformation,
                 theme_name="help-about",
             )
         )
-        version_action.triggered.connect(self._show_about)
-        help_menu.addAction(version_action)
+        self._version_action.triggered.connect(self._show_about)
+        self._help_menu.addAction(self._version_action)
 
-        update_check_action = QAction("Update &prüfen…", self)
-        update_check_action.setIcon(
+        self._update_check_action = QAction(tr("menu.help.check_updates"), self)
+        self._update_check_action.setIcon(
             menu_action_icon(
                 QStyle.StandardPixmap.SP_BrowserReload,
                 theme_name="view-refresh",
             )
         )
-        update_check_action.triggered.connect(self._on_check_for_updates)
-        help_menu.addAction(update_check_action)
+        self._update_check_action.triggered.connect(self._on_check_for_updates)
+        self._help_menu.addAction(self._update_check_action)
 
     # ------------------------------------------------------------------
     # Verbinden / Trennen
@@ -914,12 +921,8 @@ class MainWindow(QMainWindow):
             if interactive:
                 QMessageBox.information(
                     self,
-                    "Kein Port konfiguriert",
-                    (
-                        "Es ist noch kein COM-Port ausgewählt.\n\n"
-                        "Bitte zuerst über „Datei → Einstellungen…“ einen "
-                        "Port auswählen."
-                    ),
+                    tr("connect.no_port.title"),
+                    tr("connect.no_port.message"),
                 )
                 self._on_settings_action()
             return False
@@ -934,8 +937,8 @@ class MainWindow(QMainWindow):
             if interactive:
                 QMessageBox.critical(
                     self,
-                    "Verbindung fehlgeschlagen",
-                    f"Port {port} konnte nicht geöffnet werden:\n\n{exc}",
+                    tr("connect.failed.title"),
+                    tr("connect.failed.message", port=port, error=str(exc)),
                 )
             self._refresh_header_status(connected=False, info="")
             return False
@@ -1008,8 +1011,9 @@ class MainWindow(QMainWindow):
                 self._cat.disconnect()
             except Exception:
                 pass
-        if not self._last_identity_info.startswith("Verbindung verloren"):
-            self._last_identity_info = "Verbindung verloren"
+        lost = tr("status.connection_lost")
+        if not self._last_identity_info.startswith(lost):
+            self._last_identity_info = lost
         self._refresh_header_status(connected=False, info=self._last_identity_info)
         self._on_connection_changed(False)
         # Reconnect-Watcher starten, sofern erwünscht und Port konfiguriert.
@@ -1048,15 +1052,15 @@ class MainWindow(QMainWindow):
             # Verbindungsverlust behandelt wird.
             raise
         except CatTimeoutError:
-            return "keine Antwort vom Gerät"
+            return tr("status.identity.no_response")
         except CatError:
-            return "CAT-Fehler"
+            return tr("status.identity.cat_error")
 
         if identity.is_ft991:
-            return f"FT-991/A (ID {identity.radio_id})"
+            return tr("status.identity.ft991", radio_id=identity.radio_id)
         if identity.radio_id is not None:
-            return f"fremde ID {identity.radio_id}"
-        return "Antwort unklar"
+            return tr("status.identity.foreign_id", radio_id=identity.radio_id)
+        return tr("status.identity.unclear")
 
     def _refresh_header_status(self, *, connected: bool, info: str) -> None:
         """Aktualisiert Verbindungs-/Port-Text in der Statusleiste (links)."""
@@ -1065,10 +1069,10 @@ class MainWindow(QMainWindow):
         port = self._settings.cat.port or "?"
         baud = self._settings.cat.baudrate
         if connected:
-            parts = ["Verbunden"]
+            parts = [tr("status.connected")]
             if info:
                 parts.append(info)
-            parts.append(f"{port} @ {baud} Baud")
+            parts.append(tr("status.connected_part_port", port=port, baud=baud))
             self._connection_footer_label.setText(" — ".join(parts))
             self._connection_footer_label.setStyleSheet("")
         else:
@@ -1076,19 +1080,27 @@ class MainWindow(QMainWindow):
             if info and self._reconnect_timer.isActive():
                 cfg_port = self._settings.cat.port or "?"
                 self._connection_footer_label.setText(
-                    "Nicht verbunden — "
-                    f"{info} — versuche {cfg_port} alle "
-                    f"{self._reconnect_timer.interval() // 1000} s erneut"
+                    tr(
+                        "status.not_connected_reconnecting",
+                        info=info,
+                        port=cfg_port,
+                        interval_s=self._reconnect_timer.interval() // 1000,
+                    )
                 )
             else:
                 cfg_port = self._settings.cat.port
                 if cfg_port:
                     self._connection_footer_label.setText(
-                        "Nicht verbunden — "
-                        f"bereit: {cfg_port} @ {baud} Baud"
+                        tr(
+                            "status.not_connected_ready",
+                            port=cfg_port,
+                            baud=baud,
+                        )
                     )
                 else:
-                    self._connection_footer_label.setText("Kein Port konfiguriert")
+                    self._connection_footer_label.setText(
+                        tr("status.no_port_configured")
+                    )
 
     # ------------------------------------------------------------------
     # Radio-Steuerung (Tune / Bandwahl)
@@ -1192,14 +1204,13 @@ class MainWindow(QMainWindow):
 
     def _on_t_call_pressed(self) -> None:
         if not self._cat.is_connected():
-            self._on_t_call_error("CAT nicht verbunden")
+            self._on_t_call_error(tr("tcall.cat_not_connected"))
             return
         if self._audio_tx_busy():
             QMessageBox.information(
                 self,
-                "T.CALL",
-                "Audio-Player oder -Recorder sendet bereits — "
-                "bitte zuerst stoppen.",
+                tr("tcall.title"),
+                tr("tcall.audio_busy"),
             )
             return
         if self._tcall_cat_pending:
@@ -1220,15 +1231,15 @@ class MainWindow(QMainWindow):
                 self._tcall_restore_data_mode = prev_data
                 ok, msg = setup.set_data_mode(RxMode.DATA_FM)
                 if not ok:
-                    self._on_t_call_error(msg or "DATA-FM nicht gesetzt")
+                    self._on_t_call_error(msg or tr("tcall.data_fm_not_set"))
                     self.meter_widget.ensure_polling()
                     return
                 if msg:
-                    self.statusBar().showMessage(f"T.CALL: {msg}", 4000)
+                    self.statusBar().showMessage(tr("tcall.status", message=msg), 4000)
             QTimer.singleShot(150, self._t_call_arm_tx_and_audio)
             return
 
-        self.statusBar().showMessage("T.CALL: Schalte auf DATA-FM …", 0)
+        self.statusBar().showMessage(tr("tcall.switching_data_fm"), 0)
         self._tcall_cat_pending = True
 
         if setup.is_applied:
@@ -1257,11 +1268,11 @@ class MainWindow(QMainWindow):
             self._tcall_abort_radio_switch()
             return
         if not ok:
-            self._on_t_call_error(message or "DATA-FM konnte nicht gesetzt werden")
+            self._on_t_call_error(message or tr("tcall.data_fm_failed"))
             self.meter_widget.ensure_polling()
             return
         if message:
-            self.statusBar().showMessage(f"T.CALL: {message}", 4000)
+            self.statusBar().showMessage(tr("tcall.status", message=message), 4000)
         QTimer.singleShot(150, self._t_call_arm_tx_and_audio)
 
     def _tcall_abort_radio_switch(self) -> None:
@@ -1321,9 +1332,11 @@ class MainWindow(QMainWindow):
             if self._cat.is_connected():
                 ok, msg = self._audio_radio_session.setup.set_data_mode(mode)
                 if not ok:
-                    self._on_t_call_error(msg or f"{mode.value} nicht wiederhergestellt")
+                    self._on_t_call_error(
+                        msg or tr("tcall.mode_not_restored", mode=mode.value)
+                    )
                 elif msg:
-                    self.statusBar().showMessage(f"T.CALL: {msg}", 4000)
+                    self.statusBar().showMessage(tr("tcall.status", message=msg), 4000)
             self._tcall_release_restore_full = False
             self._tcall_release_engage_plain = False
             return
@@ -1333,7 +1346,7 @@ class MainWindow(QMainWindow):
             return
         worker = self._audio_radio_session.worker
         if self._tcall_release_restore_full:
-            self.statusBar().showMessage("T.CALL: Stelle Funkgerät wieder her …", 3000)
+            self.statusBar().showMessage(tr("tcall.restoring_radio"), 3000)
             _invoke_cat_worker_slot(worker, "run_restore")
         elif self._tcall_release_engage_plain:
             _invoke_cat_worker_slot(worker, "run_engage_plain")
@@ -1341,7 +1354,7 @@ class MainWindow(QMainWindow):
         self._tcall_release_engage_plain = False
 
     def _on_t_call_error(self, message: str) -> None:
-        self.statusBar().showMessage(f"T.CALL: {message}", 5000)
+        self.statusBar().showMessage(tr("tcall.status", message=message), 5000)
 
     def _on_rev_toggled(self, active: bool) -> None:
         if not self._cat.is_connected():
@@ -1361,7 +1374,7 @@ class MainWindow(QMainWindow):
                     pre_channel = None
                 output_hz = ft.read_frequency()
                 if output_hz <= 0:
-                    raise CatError("Keine gültige VFO-A-Frequenz.")
+                    raise CatError(tr("error.no_valid_vfo_a_frequency"))
                 try:
                     shift_dir = ft.read_if_shift_direction()
                 except CatError:
@@ -1448,10 +1461,10 @@ class MainWindow(QMainWindow):
             self._reset_relay_rev_state()
             if choice == VFO_BAND_CHOICE:
                 if not ft.switch_to_vfo_mode():
-                    raise CatError("VFO-Modus konnte nicht gesetzt werden.")
+                    raise CatError(tr("error.vfo_mode_failed"))
             else:
                 if not ft.switch_to_vfo_mode():
-                    raise CatError("VFO-Modus konnte nicht gesetzt werden.")
+                    raise CatError(tr("error.vfo_mode_failed"))
                 hz = int(choice)
                 ft.write_frequency(hz)
                 self._notify_meter_app_frequency_write(hz)
@@ -1546,7 +1559,8 @@ class MainWindow(QMainWindow):
             self._t_call.stop()
             self._reset_relay_rev_state()
             self._last_applied_band_voice_mode = None
-            self._mode_label.setText(_status_bar_mode_text("—"))
+            self._status_mode_display = tr("common.dash")
+            self._mode_label.setText(_status_bar_mode_text(self._status_mode_display))
             self._vfo_a_display_hz = 0
             self._vfo_b_display_hz = 0
             self._update_vfo_caption_band_color(self._vfo_a_caption, 0)
@@ -1576,6 +1590,7 @@ class MainWindow(QMainWindow):
             sb.showMessage(message, max(2000, int(timeout_ms)))
 
     def _on_tx_status_changed(self, transmitting: bool) -> None:
+        self._status_tx_transmitting = bool(transmitting)
         self._tx_label.setText(_status_bar_tx_text(transmitting))
         self._rig_bridge.update_from_radio(ptt=transmitting)
         if transmitting:
@@ -1591,10 +1606,10 @@ class MainWindow(QMainWindow):
         band = amateur_band_for_hz(hz)
         if band is not None:
             caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
-            caption.setToolTip(f"Amateurfunkband {band}")
+            caption.setToolTip(tr("main.vfo.tooltip.in_band", band=band))
         else:
             caption.setStyleSheet(_VFO_CAPTION_STYLE_OUT_OF_BAND)
-            caption.setToolTip("Außerhalb der Amateurfunkbänder")
+            caption.setToolTip(tr("main.vfo.tooltip.out_of_band"))
 
     def _refresh_band_strip(self) -> None:
         connected = self._cat.is_connected()
@@ -1604,10 +1619,10 @@ class MainWindow(QMainWindow):
             self._band_strip_name.setText(band.name)
             self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
         elif connected and hz > 0:
-            self._band_strip_name.setText("—")
+            self._band_strip_name.setText(tr("common.dash"))
             self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_OUT_OF_BAND)
         else:
-            self._band_strip_name.setText("—")
+            self._band_strip_name.setText(tr("common.dash"))
             self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IDLE)
         self._band_strip.set_active(connected)
         self._band_strip.set_band(band)
@@ -1686,6 +1701,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Vom MeterWidget bei VFO/Mode-Updates (RX-Slow-Path und ggf. FA/FB während TX)."""
         if isinstance(mode, RxMode):
+            self._status_mode_display = mode.value
             self._mode_label.setText(_status_bar_mode_text(mode.value))
             self._rig_bridge.update_from_radio(mode=mode.value)
         else:
@@ -1782,7 +1798,9 @@ class MainWindow(QMainWindow):
                 self._try_clear_fm_repeater_shift_simplex()
             self._maybe_apply_band_voice_mode_for_hz(target)
         except CatError as exc:
-            QMessageBox.warning(self, "VFO-A", str(exc))
+            QMessageBox.warning(
+                self, tr("vfo.error.title_a"), tr("vfo.error.message", error=str(exc))
+            )
 
     def _on_user_vfo_a_frequency(self, hz: int) -> None:
         if not self._cat.is_connected():
@@ -1823,7 +1841,9 @@ class MainWindow(QMainWindow):
         try:
             FT991CAT(self._cat).write_frequency_b(hz)
         except CatError as exc:
-            QMessageBox.warning(self, "VFO-B", str(exc))
+            QMessageBox.warning(
+                self, tr("vfo.error.title_b"), tr("vfo.error.message", error=str(exc))
+            )
 
     def _on_vfo_ab_clicked(self) -> None:
         if not self._cat.is_connected():
@@ -1831,7 +1851,9 @@ class MainWindow(QMainWindow):
         try:
             FT991CAT(self._cat).swap_vfo_a_and_b()
         except CatError as exc:
-            QMessageBox.warning(self, "VFO A/B", str(exc))
+            QMessageBox.warning(
+                self, tr("vfo.error.title_ab"), tr("vfo.error.message", error=str(exc))
+            )
 
     def _on_rx_info_for_profile(
         self,
@@ -1859,6 +1881,144 @@ class MainWindow(QMainWindow):
             self._log_window.set_dark_mode(checked)
         self._settings.ui.force_dark_mode = bool(checked)
         self._persist_settings()
+
+    def _sync_language_menu_checks(self) -> None:
+        lang = self._settings.ui.language
+        self._language_de_action.blockSignals(True)
+        self._language_en_action.blockSignals(True)
+        try:
+            self._language_de_action.setChecked(lang == "de")
+            self._language_en_action.setChecked(lang == "en")
+        finally:
+            self._language_de_action.blockSignals(False)
+            self._language_en_action.blockSignals(False)
+
+    def _on_language_de(self) -> None:
+        if self._settings.ui.language == "de":
+            self._sync_language_menu_checks()
+            return
+        set_language("de")
+        self._settings.ui.language = "de"
+        self._persist_settings()
+        self.retranslate_ui()
+        self._propagate_retranslate_to_children()
+
+    def _on_language_en(self) -> None:
+        if self._settings.ui.language == "en":
+            self._sync_language_menu_checks()
+            return
+        set_language("en")
+        self._settings.ui.language = "en"
+        self._persist_settings()
+        self.retranslate_ui()
+        self._propagate_retranslate_to_children()
+
+    def _propagate_retranslate_to_children(self) -> None:
+        for win in (
+            self._log_window,
+            self._equalizer_window,
+            self._audio_player_window,
+            self._audio_recorder_window,
+            self._live_window,
+        ):
+            if win is None:
+                continue
+            retranslate = getattr(win, "retranslate_ui", None)
+            if callable(retranslate):
+                retranslate()
+
+    def _retranslate_memory_combo_labels(self) -> None:
+        if self.memory_combo.count() <= 0:
+            return
+        if self.memory_combo.itemData(0) == self._VFO_ITEM_DATA:
+            if self._memory_loader.is_running:
+                vfo_label = tr("main.memory.vfo_loading_channels")
+            elif (
+                not self.memory_combo.isEnabled()
+                and self._connection_footer_label.text()
+                == tr("status.memory_cache_header")
+            ):
+                vfo_label = tr("main.memory.vfo_loading")
+            else:
+                vfo_label = tr("main.memory.vfo")
+            self.memory_combo.setItemText(0, vfo_label)
+        for i in range(1, self.memory_combo.count()):
+            data = self.memory_combo.itemData(i)
+            if not isinstance(data, int) or int(data) <= 0:
+                continue
+            ch = int(data)
+            mem = self._memory_combo_catalog.get(ch)
+            if mem is not None:
+                self.memory_combo.setItemText(
+                    i, self._format_memory_channel_combo_label(mem)
+                )
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("main_window.title", app_name=APP_NAME, version=APP_VERSION))
+
+        self._file_menu.setTitle(tr("menu.file"))
+        self._settings_action.setText(tr("menu.file.settings"))
+        self._connect_action.setText(tr("menu.file.connect"))
+        self._disconnect_action.setText(tr("menu.file.disconnect"))
+        self._quit_action.setText(tr("menu.file.quit"))
+
+        self._functions_menu.setTitle(tr("menu.functions"))
+        self._memory_action.setText(tr("menu.functions.memory_channels"))
+        self._equalizer_action.setText(tr("menu.functions.equalizer"))
+        self._sound_settings_action.setText(tr("menu.functions.sound_settings"))
+        self._audio_player_action.setText(tr("menu.functions.audio_player"))
+        self._audio_recorder_action.setText(tr("menu.functions.audio_recorder"))
+        self._live_audio_action.setText(tr("menu.functions.live_pc"))
+
+        self._view_menu.setTitle(tr("menu.view"))
+        self.log_toggle_action.setText(tr("menu.view.cat_log"))
+        self.dark_mode_action.setText(tr("menu.view.dark_mode"))
+        self._language_menu.setTitle(tr("menu.view.language"))
+        self._language_de_action.setText(tr("menu.view.language_de"))
+        self._language_en_action.setText(tr("menu.view.language_en"))
+        self._sync_language_menu_checks()
+
+        self._help_menu.setTitle(tr("menu.help"))
+        self._version_action.setText(tr("menu.help.version"))
+        self._update_check_action.setText(tr("menu.help.check_updates"))
+
+        self._vfo_a_caption.setText(tr("main.vfo_a_caption"))
+        self._vfo_b_caption.setText(tr("main.vfo_b_caption"))
+        self._vfo_ab_button.setText(tr("main.vfo_ab_button"))
+        self._vfo_ab_button.setToolTip(tr("main.vfo_ab_tooltip"))
+        self._band_strip_caption.setText(tr("main.band_caption"))
+
+        self._lbl_mode_group.setText(tr("main.mode_group"))
+        self._lbl_eq_profile.setText(tr("main.eq_profile"))
+        self._lbl_memory_channel.setText(tr("main.memory_channel"))
+        self._lbl_band_combo.setText(tr("main.band_combo"))
+        self.memory_combo.setToolTip(tr("main.memory_channel_tooltip"))
+        self.band_combo.setToolTip(tr("main.band_combo_tooltip"))
+
+        self._favorites_panel.retranslate_ui()
+        fav_placeholder_idx = self._favorites_panel.combo.findData(None)
+        if fav_placeholder_idx >= 0:
+            self._favorites_panel.combo.setItemText(
+                fav_placeholder_idx, tr("favorites.placeholder")
+            )
+
+        self._radio_control_bar.retranslate_ui()
+        band_strip_rt = getattr(self._band_strip, "retranslate_ui", None)
+        if callable(band_strip_rt):
+            band_strip_rt()
+
+        self._update_vfo_caption_band_color(self._vfo_a_caption, self._vfo_a_display_hz)
+        self._update_vfo_caption_band_color(self._vfo_b_caption, self._vfo_b_display_hz)
+        self._refresh_band_strip()
+        self._retranslate_memory_combo_labels()
+
+        self._mode_label.setText(_status_bar_mode_text(self._status_mode_display))
+        self._tx_label.setText(_status_bar_tx_text(self._status_tx_transmitting))
+
+        self._refresh_header_status(
+            connected=self._cat.is_connected(),
+            info=self._last_identity_info,
+        )
 
     # ------------------------------------------------------------------
     # Connect-Init: Funkzustand merken / wiederherstellen
@@ -1991,14 +2151,16 @@ class MainWindow(QMainWindow):
                     "(Zustand vor Software-Start) ==="
                 )
                 ft.select_memory_channel(restore_ch)
-                status_msg = f"Funkgerät wieder auf Speicherkanal {restore_ch:03d}"
+                status_msg = tr(
+                    "status.radio_restore_memory", channel=int(restore_ch)
+                )
             else:
                 self._cat_log.log_info(
                     "=== VFO-Zustand wiederherstellen "
                     "(Frequenz und Mode vom Start) ==="
                 )
                 if not ft.switch_to_vfo_mode():
-                    raise CatError("VFO-Modus konnte nicht gesetzt werden.")
+                    raise CatError(tr("error.vfo_mode_failed"))
                 if restore_a is not None and restore_a > 0:
                     ft.write_frequency(restore_a)
                     self._notify_meter_app_frequency_write(restore_a)
@@ -2006,7 +2168,7 @@ class MainWindow(QMainWindow):
                     ft.write_frequency_b(restore_b)
                 if restore_mode is not None:
                     ft.set_rx_mode(restore_mode)
-                status_msg = "Funkgerät: VFO-Zustand vom Start wiederhergestellt"
+                status_msg = tr("status.radio_restore_vfo")
             hz = ft.read_frequency()
             if hz > 0:
                 self._apply_vfo_a_display_hz(hz)
@@ -2020,10 +2182,12 @@ class MainWindow(QMainWindow):
                 pass
             try:
                 mode = ft.read_rx_mode()
+                self._status_mode_display = mode.value
                 self._mode_label.setText(_status_bar_mode_text(mode.value))
                 self.profile_widget.notify_radio_mode(mode)
             except CatError:
                 if restore_mode is not None:
+                    self._status_mode_display = restore_mode.value
                     self._mode_label.setText(
                         _status_bar_mode_text(restore_mode.value)
                     )
@@ -2058,11 +2222,13 @@ class MainWindow(QMainWindow):
     #: aktiviert).
     _VFO_ITEM_DATA = -1
 
-    def _reset_memory_combo(self, *, placeholder: str = "VFO") -> None:
+    def _reset_memory_combo(self, *, placeholder: str | None = None) -> None:
         """Setzt die Combo auf den Initial-Zustand: nur „VFO" als erster
         Eintrag. Signale werden während des Resets blockiert, damit kein
         Memory-Wechsel zum Radio geschickt wird.
         """
+        if placeholder is None:
+            placeholder = tr("main.memory.vfo")
         self._memory_combo_catalog.clear()
         self._memory_slot_frequency_hz.clear()
         self.memory_combo.blockSignals(True)
@@ -2076,20 +2242,23 @@ class MainWindow(QMainWindow):
     def _normalize_memory_combo_vfo_label(self) -> None:
         """Ersten Eintrag nach dem Laden wieder auf „VFO" setzen."""
         if self.memory_combo.count() > 0:
-            self.memory_combo.setItemText(0, "VFO")
+            self.memory_combo.setItemText(0, tr("main.memory.vfo"))
 
     def _format_memory_channel_combo_label(self, mem: MemoryChannel) -> str:
         """Einzeiliger Combobox-Text wie beim Hintergrund-Loader."""
         freq_mhz = mem.frequency_hz / 1_000_000.0
-        tag = mem.tag.strip() or "(ohne Name)"
+        tag = mem.tag.strip() or tr("main.memory.no_name")
         mode_label = (
             mem.mode.value
             if mem.mode is not None and mem.mode.value != "?"
             else "?"
         )
-        return (
-            f"{mem.channel:03d} — {tag} "
-            f"({freq_mhz:.3f} MHz, {mode_label})"
+        return tr(
+            "main.memory.channel_label",
+            channel=mem.channel,
+            tag=tag,
+            freq_mhz=freq_mhz,
+            mode=mode_label,
         )
 
     def _memory_combo_index_for_channel(self, channel: int) -> int:
@@ -2215,7 +2384,7 @@ class MainWindow(QMainWindow):
                 if idx >= 0:
                     self.memory_combo.setCurrentIndex(idx)
             else:
-                label = f"{ch:03d} — (aktuell aktiv)"
+                label = tr("main.memory.channel_active", channel=ch)
                 insert_at = self._memory_combo_insert_index_for_channel(ch)
                 self.memory_combo.insertItem(insert_at, label, ch)
                 idx = self._memory_combo_index_for_channel(ch)
@@ -2301,15 +2470,12 @@ class MainWindow(QMainWindow):
         if sb is not None and self._cat.is_connected():
             if from_cache:
                 sb.showMessage(
-                    (
-                        f"Speicherkanäle: {occupied_count} aus lokalem "
-                        "Zwischenspeicher (ohne Funkgerät-Scan)."
-                    ),
+                    tr("status.memory_from_cache", count=occupied_count),
                     4000,
                 )
             else:
                 sb.showMessage(
-                    f"Speicherkanäle: {occupied_count} belegte Slots geladen",
+                    tr("status.memory_loaded", count=occupied_count),
                     4000,
                 )
         self._connect_init_step_done("memory")
@@ -2339,12 +2505,10 @@ class MainWindow(QMainWindow):
         self.memory_combo.blockSignals(True)
         try:
             self._memory_combo_catalog.clear()
-            self._reset_memory_combo(placeholder="VFO …")
+            self._reset_memory_combo(placeholder=tr("main.memory.vfo_loading"))
             self.memory_combo.setEnabled(False)
             self.band_combo.setEnabled(False)
-            self._connection_footer_label.setText(
-                "Speicherkanäle (Zwischenspeicher)"
-            )
+            self._connection_footer_label.setText(tr("status.memory_cache_header"))
             self._refresh_header_status(
                 connected=True,
                 info=self._last_identity_info,
@@ -2394,7 +2558,7 @@ class MainWindow(QMainWindow):
     def _on_memory_load_progress(self, current: int, total: int) -> None:
         if self._cat.is_connected():
             self._connection_footer_label.setText(
-                f"lade Speicherkanäle… {current}/{total}"
+                tr("status.memory_loading", current=current, total=total)
             )
 
     def _on_memory_load_finished(self, found: int) -> None:
@@ -2415,7 +2579,7 @@ class MainWindow(QMainWindow):
         self.band_combo.setEnabled(self._cat.is_connected())
         if self._cat.is_connected():
             self._connection_footer_label.setText(
-                f"Verbunden — {message}"
+                tr("status.memory_load_failed", message=str(message))
             )
             self.meter_widget.resume_polling()
         self._finalize_memory_load_ui(occupied_count=0, from_cache=False)
@@ -2440,7 +2604,9 @@ class MainWindow(QMainWindow):
         except CatError as exc:
             sb = self.statusBar()
             if sb is not None:
-                sb.showMessage(f"Speicherkanal-Wechsel fehlgeschlagen: {exc}", 5000)
+                sb.showMessage(
+                    tr("status.memory_switch_failed", error=str(exc)), 5000
+                )
 
     # ------------------------------------------------------------------
     # Favoriten (Soll-Vorgaben)
@@ -2457,7 +2623,7 @@ class MainWindow(QMainWindow):
     def _refresh_favorites_combo(self, *, select_placeholder: bool = True) -> None:
         self._favorites_panel.combo.blockSignals(True)
         self._favorites_panel.combo.clear()
-        self._favorites_panel.combo.addItem(_FAVORITES_COMBO_PLACEHOLDER_LABEL, None)
+        self._favorites_panel.combo.addItem(tr("favorites.placeholder"), None)
         for i, fav in enumerate(self._favorites_store.favorites):
             self._favorites_panel.combo.addItem(
                 format_favorite_combo_label(fav), int(i)
@@ -2502,8 +2668,8 @@ class MainWindow(QMainWindow):
         if not self._cat.is_connected():
             QMessageBox.warning(
                 self,
-                "Favoriten",
-                "Bitte zuerst mit dem Funkgerät verbinden.",
+                tr("favorites.title"),
+                tr("favorites.connect_first"),
             )
             return
         sel = self._favorites_selected_store_index()
@@ -2511,15 +2677,13 @@ class MainWindow(QMainWindow):
         new_name: Optional[str] = None
         if sel is not None:
             box = QMessageBox(self)
-            box.setWindowTitle("Favorit speichern")
-            box.setText(
-                "Den gewählten Favoriten überschreiben oder einen neuen anlegen?"
-            )
+            box.setWindowTitle(tr("favorites.save.title"))
+            box.setText(tr("favorites.save.prompt"))
             btn_over = box.addButton(
-                "Überschreiben", QMessageBox.ButtonRole.AcceptRole
+                tr("dialog.overwrite"), QMessageBox.ButtonRole.AcceptRole
             )
             btn_new = box.addButton(
-                "Neu anlegen", QMessageBox.ButtonRole.ActionRole
+                tr("dialog.create_new"), QMessageBox.ButtonRole.ActionRole
             )
             btn_cancel = box.addButton(QMessageBox.StandardButton.Cancel)
             box.exec()
@@ -2531,8 +2695,8 @@ class MainWindow(QMainWindow):
             else:
                 text, ok = QInputDialog.getText(
                     self,
-                    "Neuer Favorit",
-                    "Name:",
+                    tr("favorites.new.title"),
+                    tr("favorites.new.name_label"),
                 )
                 if not ok:
                     return
@@ -2540,8 +2704,8 @@ class MainWindow(QMainWindow):
         else:
             text, ok = QInputDialog.getText(
                 self,
-                "Neuer Favorit",
-                "Name:",
+                tr("favorites.new.title"),
+                tr("favorites.new.name_label"),
             )
             if not ok:
                 return
@@ -2560,28 +2724,28 @@ class MainWindow(QMainWindow):
             if isinstance(exc, CatConnectionLostError):
                 self._on_connection_lost()
                 return
-            QMessageBox.warning(self, "Favoriten", str(exc))
+            QMessageBox.warning(self, tr("favorites.title"), str(exc))
             return
         self._refresh_favorites_combo()
         sb = self.statusBar()
         if sb is not None:
-            sb.showMessage("Favorit gespeichert.", 4000)
+            sb.showMessage(tr("favorites.saved"), 4000)
 
     def _on_favorite_delete_clicked(self) -> None:
         sel = self._favorites_selected_store_index()
         if sel is None:
             QMessageBox.information(
                 self,
-                "Favoriten",
-                "Bitte zuerst einen Favoriten auswählen.",
+                tr("favorites.title"),
+                tr("favorites.select_first"),
             )
             return
         fav = self._favorites_store.favorites[sel]
         if (
             QMessageBox.question(
                 self,
-                "Favorit löschen",
-                f"Favorit „{fav.name}“ wirklich löschen?",
+                tr("favorites.delete.title"),
+                tr("favorites.delete.confirm", name=fav.name),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -2592,7 +2756,7 @@ class MainWindow(QMainWindow):
             self._favorites_store.remove_at(sel)
             self._favorites_store.save()
         except (IndexError, OSError) as exc:
-            QMessageBox.warning(self, "Favoriten", str(exc))
+            QMessageBox.warning(self, tr("favorites.title"), str(exc))
             return
         self._refresh_favorites_combo()
 
@@ -2600,16 +2764,16 @@ class MainWindow(QMainWindow):
         if not self._cat.is_connected():
             QMessageBox.warning(
                 self,
-                "Favoriten",
-                "Bitte zuerst mit dem Funkgerät verbinden.",
+                tr("favorites.title"),
+                tr("favorites.connect_first"),
             )
             return
         sel = self._favorites_selected_store_index()
         if sel is None:
             QMessageBox.information(
                 self,
-                "Favoriten",
-                "Bitte zuerst einen Favoriten auswählen.",
+                tr("favorites.title"),
+                tr("favorites.select_first"),
             )
             return
         fav = self._favorites_store.favorites[sel]
@@ -2621,7 +2785,7 @@ class MainWindow(QMainWindow):
             if isinstance(exc, CatConnectionLostError):
                 self._on_connection_lost()
                 return
-            QMessageBox.warning(self, "Favoriten", str(exc))
+            QMessageBox.warning(self, tr("favorites.title"), str(exc))
             return
         self._refresh_favorites_combo(select_placeholder=False)
         qi = self._favorites_panel.combo.findData(sel)
@@ -2630,14 +2794,14 @@ class MainWindow(QMainWindow):
         self._favorites_panel.combo.blockSignals(False)
         sb = self.statusBar()
         if sb is not None:
-            sb.showMessage(f"Favorit „{fav.name}“ aktualisiert.", 4000)
+            sb.showMessage(tr("favorites.updated", name=fav.name), 4000)
 
     def _on_favorite_combo_activated(self, index: int) -> None:
         if not self._cat.is_connected():
             QMessageBox.warning(
                 self,
-                "Favoriten",
-                "Bitte zuerst mit dem Funkgerät verbinden.",
+                tr("favorites.title"),
+                tr("favorites.connect_first"),
             )
             return
         if index < 0:
@@ -2664,7 +2828,7 @@ class MainWindow(QMainWindow):
         ft = FT991CAT(self._cat)
         try:
             if not ft.switch_to_vfo_mode():
-                raise CatError("VFO-Modus konnte nicht gesetzt werden.")
+                raise CatError(tr("error.vfo_mode_failed"))
             mode = rx_mode_from_selection(fav.mode, default=RxMode.USB)
             ft.set_rx_mode(mode)
             if fav.frequency_hz > 0:
@@ -2679,11 +2843,14 @@ class MainWindow(QMainWindow):
             if isinstance(exc, CatConnectionLostError):
                 self._on_connection_lost()
                 return
-            QMessageBox.warning(self, "Favorit", str(exc))
+            QMessageBox.warning(
+                self, tr("favorites.title_singular"), tr("vfo.error.message", error=str(exc))
+            )
             return
         self._try_clear_fm_repeater_shift_simplex()
         self._apply_vfo_a_display_hz(fav.frequency_hz)
         self._sync_band_combo_to_frequency(fav.frequency_hz)
+        self._status_mode_display = mode.value
         self._mode_label.setText(_status_bar_mode_text(mode.value))
         self.profile_widget.notify_radio_mode(mode)
         eq = fav.eq_profile_name.strip()
@@ -2691,8 +2858,8 @@ class MainWindow(QMainWindow):
             if not self.profile_widget.select_profile_by_name(eq):
                 QMessageBox.information(
                     self,
-                    "Favorit",
-                    f"EQ-Profil „{eq}“ nicht gefunden — nur Funkwerte übernommen.",
+                    tr("favorites.title_singular"),
+                    tr("favorites.eq_not_found", profile=eq),
                 )
         self._select_memory_combo_vfo(reset_favorites_placeholder=False)
         if favorite_store_index is not None:
@@ -2702,7 +2869,7 @@ class MainWindow(QMainWindow):
             self._favorites_panel.combo.blockSignals(False)
         sb = self.statusBar()
         if sb is not None:
-            sb.showMessage(f"Favorit „{fav.name}“ angewendet.", 4000)
+            sb.showMessage(tr("favorites.applied", name=fav.name), 4000)
 
     def _start_memory_load(self) -> None:
         """Stößt den Hintergrund-Loader an. Idempotent — laufende Loads
@@ -2715,7 +2882,7 @@ class MainWindow(QMainWindow):
         if not self._cat.is_connected():
             return
         self._memory_combo_catalog.clear()
-        self._reset_memory_combo(placeholder="VFO (lade Kanäle…)")
+        self._reset_memory_combo(placeholder=tr("main.memory.vfo_loading_channels"))
         self.memory_combo.setEnabled(False)
         self.band_combo.setEnabled(False)
         # MeterPoller stilllegen — der MT-Burst klemmt sonst minutenlang
@@ -2781,14 +2948,13 @@ class MainWindow(QMainWindow):
         try:
             if win is None:
                 loading = QProgressDialog(
-                    "Live-Fenster wird geladen…\n"
-                    "Audio-Geräte und DSP werden initialisiert — bitte einen Moment.",
+                    tr("live.loading.message"),
                     "",
                     0,
                     0,
                     self,
                 )
-                loading.setWindowTitle("Live")
+                loading.setWindowTitle(tr("live.loading.title"))
                 loading.setWindowModality(Qt.WindowModality.WindowModal)
                 loading.setMinimumDuration(0)
                 loading.setCancelButton(None)
@@ -2916,11 +3082,8 @@ class MainWindow(QMainWindow):
         if not self._cat.is_connected():
             QMessageBox.information(
                 self,
-                "Nicht verbunden",
-                (
-                    "Der Speicherkanal-Editor benötigt eine aktive "
-                    "CAT-Verbindung.\n\nBitte zuerst verbinden."
-                ),
+                tr("memory_editor.not_connected.title"),
+                tr("memory_editor.not_connected.message"),
             )
             return
         editor = self._memory_editor
@@ -3056,29 +3219,30 @@ class MainWindow(QMainWindow):
         if not o.ok:
             QMessageBox.warning(
                 self,
-                "Update prüfen",
-                (
-                    f"Die eingebaute Version ist v{o.current}.\n\n"
-                    f"Die Prüfung ist fehlgeschlagen:\n{o.error_message}"
+                tr("update.dialog.check.title"),
+                tr(
+                    "update.dialog.check.failed",
+                    current=o.current,
+                    error=o.error_message,
                 ),
             )
             return
         if o.update_available:
             box = QMessageBox(self)
-            box.setWindowTitle("Update verfügbar")
+            box.setWindowTitle(tr("update.dialog.available.title"))
             box.setIcon(QMessageBox.Icon.Information)
             box.setText(
-                "Es gibt eine neuere Version auf GitHub.\n\n"
-                f"Installiert: v{o.current}\n"
-                f"Aktuelles Release: v{o.latest}"
+                tr(
+                    "update.dialog.available.text",
+                    current=o.current,
+                    latest=o.latest,
+                )
             )
-            box.setInformativeText(
-                "Über die verlinkte Seite findest du Setup-EXE und portable ZIP."
-            )
+            box.setInformativeText(tr("update.dialog.available.info"))
             open_btn = box.addButton(
-                "Zur neuen Version", QMessageBox.ButtonRole.AcceptRole
+                tr("update.dialog.available.open"), QMessageBox.ButtonRole.AcceptRole
             )
-            close_btn = box.addButton("Schließen", QMessageBox.ButtonRole.RejectRole)
+            close_btn = box.addButton(tr("dialog.close"), QMessageBox.ButtonRole.RejectRole)
             box.setDefaultButton(close_btn)
             box.exec()
             if box.clickedButton() == open_btn:
@@ -3086,11 +3250,11 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(
                 self,
-                "Update prüfen",
-                (
-                    "Version ist aktuell.\n\n"
-                    f"Installiert: v{o.current}\n"
-                    f"Neuestes GitHub-Release: v{o.latest}"
+                tr("update.dialog.check.title"),
+                tr(
+                    "update.dialog.current.text",
+                    current=o.current,
+                    latest=o.latest,
                 ),
             )
 
@@ -3228,5 +3392,5 @@ class MainWindow(QMainWindow):
         # Port (noch) nicht da -> Watcher übernimmt im Hintergrund.
         if not self._reconnect_timer.isActive():
             self._reconnect_timer.start()
-        self._last_identity_info = "warte auf Port…"
+        self._last_identity_info = tr("status.waiting_for_port")
         self._refresh_header_status(connected=False, info=self._last_identity_info)

@@ -60,6 +60,8 @@ from cat import (
 from model import AppSettings
 from model.app_settings import POLL_MAX_MS, POLL_MIN_MS, TxPollSettings
 from rig_bridge.manager import RigBridgeManager
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 
 from .po_calibration_widget import PoCalibrationWidget
 from .rig_bridge_settings_widget import RigBridgeSettingsWidget
@@ -71,6 +73,16 @@ COMMON_BAUDRATES = [4800, 9600, 19200, 38400]
 
 _TAB_CAT = 0
 _TAB_RIG_BRIDGE = 1
+
+_TX_POLL_I18N: dict[str, str] = {
+    "comp": "settings.tx_poll.comp",
+    "alc": "settings.tx_poll.alc",
+    "po": "settings.tx_poll.po",
+    "swr": "settings.tx_poll.swr",
+    "frequency_a": "settings.tx_poll.frequency_a",
+    "frequency_b": "settings.tx_poll.frequency_b",
+    "pc_power": "settings.tx_poll.pc_power",
+}
 
 
 class _SettingsScrollArea(QScrollArea):
@@ -95,7 +107,7 @@ def _scroll_page(inner: QWidget) -> QScrollArea:
     return sc
 
 
-class ConnectionSettingsDialog(QDialog):
+class ConnectionSettingsDialog(RetranslatableMixin, QDialog):
     """Modaler Einstellungsdialog (CAT + Rig-Bridge + Kalibrierung)."""
 
     settings_changed = Signal()
@@ -111,7 +123,6 @@ class ConnectionSettingsDialog(QDialog):
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Einstellungen")
         self.setModal(True)
         self.setFixedWidth(580)
         self.resize(580, 600)
@@ -120,9 +131,80 @@ class ConnectionSettingsDialog(QDialog):
         self._settings = settings
         self._cat = serial_cat
         self._get_rig_bridge = get_rig_bridge
+        self._form_labels: dict[str, QLabel] = {}
+        self._hint_labels: list[QLabel] = []
 
         self._build_ui()
         self._refresh_ports(preferred_device=settings.cat.port)
+        self.retranslate_ui()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("settings.title"))
+        for row, key in enumerate(
+            ("settings.nav.cat", "settings.nav.rig_bridge", "settings.nav.calibration")
+        ):
+            item = self._settings_nav.item(row)
+            if item is not None:
+                item.setText(tr(key))
+        self._cat_group.setTitle(tr("settings.group.cat"))
+        self._cat_hint.setText(tr("settings.cat.hint"))
+        self._form_labels["port"].setText(tr("settings.port"))
+        self._form_labels["baudrate"].setText(tr("settings.baudrate"))
+        self._form_labels["timeout"].setText(tr("settings.timeout"))
+        self.refresh_button.setText(tr("settings.refresh_ports"))
+        self._set_wrap_checkbox_text(
+            self.auto_connect_check, tr("settings.auto_connect")
+        )
+        self.test_button.setText(tr("settings.test_connection"))
+        self.test_button.setToolTip(tr("settings.test_connection_tooltip"))
+        self._poll_group.setTitle(tr("settings.group.live_meter_polling"))
+        self._poll_hint.setText(tr("settings.polling.hint"))
+        self._form_labels["tx_interval"].setText(tr("settings.polling.tx_interval"))
+        self._form_labels["rx_interval"].setText(tr("settings.polling.rx_interval"))
+        self.poll_tx_spin.setToolTip(tr("settings.polling.tx_interval_tooltip"))
+        self.poll_rx_spin.setToolTip(tr("settings.polling.rx_interval_tooltip"))
+        self._tx_poll_group.setTitle(tr("settings.group.tx_polling"))
+        self._tx_poll_hint.setText(tr("settings.tx_poll.hint"))
+        default_tooltip = tr("settings.tx_poll.default_tooltip")
+        freq_tooltip = tr("settings.tx_poll.freq_tooltip")
+        for key, chk in self._tx_poll_checks.items():
+            label = tr(_TX_POLL_I18N[key])
+            self._set_wrap_checkbox_text(chk, label)
+            if key in ("frequency_a", "frequency_b"):
+                chk.setToolTip(freq_tooltip)
+            else:
+                chk.setToolTip(
+                    tr(
+                        "settings.tx_poll.item_tooltip",
+                        label=label,
+                        default_tooltip=default_tooltip,
+                    )
+                )
+        self._profile_view_group.setTitle(tr("settings.group.eq_profile_view"))
+        self._profile_view_hint.setText(tr("settings.eq_view.hint"))
+        self._set_wrap_checkbox_text(
+            self.hide_extended_ssb_check,
+            tr("settings.eq_view.hide_extended_ssb"),
+        )
+        self.hide_extended_ssb_check.setToolTip(
+            tr("settings.eq_view.hide_extended_ssb_tooltip")
+        )
+        self._smeter_box.setTitle(tr("settings.group.smeter_calibration"))
+        self._po_box.setTitle(tr("settings.group.po_calibration"))
+        if not self._current_port_device() and self.port_combo.count() == 1:
+            self.port_combo.setItemText(0, tr("settings.no_ports_found"))
+
+    @staticmethod
+    def _set_wrap_checkbox_text(chk: WrappingCheckBox, text: str) -> None:
+        chk._label.setText(text)
+
+    @staticmethod
+    def _expected_radio_ids() -> str:
+        return tr("joiner.or").join(
+            tr("settings.test.expected_id_or", id=f"ID{rid}")
+            for rid in FT991_RADIO_IDS
+        )
 
     # ------------------------------------------------------------------
     # UI-Aufbau
@@ -147,9 +229,9 @@ class ConnectionSettingsDialog(QDialog):
             QSizePolicy.Policy.Expanding,
         )
         self._settings_nav.setUniformItemSizes(True)
-        self._settings_nav.addItem("CAT-Verbindung")
-        self._settings_nav.addItem("Rig-Bridge")
-        self._settings_nav.addItem("Kalibrierung")
+        self._settings_nav.addItem("")
+        self._settings_nav.addItem("")
+        self._settings_nav.addItem("")
 
         self._settings_stack = QStackedWidget()
         self._settings_stack.setSizePolicy(
@@ -193,8 +275,8 @@ class ConnectionSettingsDialog(QDialog):
             self._settings.smeter_calibration,
             parent=self,
         )
-        smeter_box = QGroupBox("S-Meter-Kalibrierung")
-        smeter_box_layout = QVBoxLayout(smeter_box)
+        self._smeter_box = QGroupBox()
+        smeter_box_layout = QVBoxLayout(self._smeter_box)
         smeter_box_layout.setContentsMargins(10, 14, 10, 10)
         smeter_box_layout.addWidget(self._smeter_cal_widget)
 
@@ -204,9 +286,9 @@ class ConnectionSettingsDialog(QDialog):
         )
         self._po_cal_widget.busy_changed.connect(self.po_calibration_busy.emit)
 
-        po_box = QGroupBox("PO-Meter-Kalibrierung (Sendeleistung)")
-        po_box.setMaximumWidth(370)
-        po_box_layout = QVBoxLayout(po_box)
+        self._po_box = QGroupBox()
+        self._po_box.setMaximumWidth(370)
+        po_box_layout = QVBoxLayout(self._po_box)
         po_box_layout.setContentsMargins(10, 14, 10, 10)
         po_box_layout.addWidget(self._po_cal_widget, 0, Qt.AlignmentFlag.AlignLeft)
 
@@ -218,8 +300,8 @@ class ConnectionSettingsDialog(QDialog):
         cal_layout = QVBoxLayout(page_cal)
         cal_layout.setContentsMargins(0, 0, 0, 0)
         cal_layout.setSpacing(12)
-        cal_layout.addWidget(smeter_box)
-        cal_layout.addWidget(po_box)
+        cal_layout.addWidget(self._smeter_box)
+        cal_layout.addWidget(self._po_box)
         cal_layout.addStretch(1)
 
         self._settings_stack.addWidget(_scroll_page(page_cat))
@@ -325,18 +407,14 @@ class ConnectionSettingsDialog(QDialog):
         return self._get_rig_bridge()
 
     def _build_cat_group(self) -> QGroupBox:
-        box = QGroupBox("CAT-Verbindung")
-        outer = QVBoxLayout(box)
+        self._cat_group = QGroupBox()
+        outer = QVBoxLayout(self._cat_group)
         outer.setContentsMargins(10, 14, 10, 10)
         outer.setSpacing(8)
 
-        outer.addWidget(
-            hint_label(
-                "Port, Baudrate und Timeout für die Kommunikation mit dem "
-                "FT-991 / FT-991A. Werte werden beim Klick auf OK gespeichert "
-                "und ab dem nächsten Verbinden verwendet."
-            )
-        )
+        self._cat_hint = hint_label("")
+        self._hint_labels.append(self._cat_hint)
+        outer.addWidget(self._cat_hint)
 
         self.port_combo = QComboBox()
         self.port_combo.setSizeAdjustPolicy(
@@ -347,7 +425,7 @@ class ConnectionSettingsDialog(QDialog):
         port_row = QHBoxLayout()
         port_row.setSpacing(8)
         port_row.addWidget(self.port_combo, 1)
-        self.refresh_button = QPushButton("Aktualisieren")
+        self.refresh_button = QPushButton()
         self.refresh_button.clicked.connect(lambda: self._refresh_ports())
         port_row.addWidget(self.refresh_button)
 
@@ -372,49 +450,39 @@ class ConnectionSettingsDialog(QDialog):
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         port_w = QWidget()
         port_w.setLayout(port_row)
-        form.addRow("Port:", port_w)
-        form.addRow("Baudrate:", self.baud_combo)
-        form.addRow("Timeout:", self.timeout_spin)
+        self._form_labels["port"] = QLabel()
+        self._form_labels["baudrate"] = QLabel()
+        self._form_labels["timeout"] = QLabel()
+        form.addRow(self._form_labels["port"], port_w)
+        form.addRow(self._form_labels["baudrate"], self.baud_combo)
+        form.addRow(self._form_labels["timeout"], self.timeout_spin)
         outer.addLayout(form)
 
-        self.auto_connect_check = wrap_checkbox(
-            "Beim Programmstart automatisch verbinden — und nach Verbindungs­"
-            "abbruch (Kabel/Strom) im Hintergrund neu versuchen"
-        )
+        self.auto_connect_check = wrap_checkbox("")
         self.auto_connect_check.setChecked(self._settings.cat.auto_connect)
         outer.addWidget(self.auto_connect_check)
 
-        self.test_button = QPushButton("Verbindung testen")
-        self.test_button.setToolTip(
-            "Öffnet kurz den gewählten Port, sendet ID; und prüft die Antwort"
-        )
+        self.test_button = QPushButton()
         self.test_button.clicked.connect(self._on_test_clicked)
         outer.addWidget(self.test_button, 0, Qt.AlignmentFlag.AlignLeft)
 
-        return box
+        return self._cat_group
 
     def _build_polling_group(self) -> QGroupBox:
-        box = QGroupBox("Live-Meter — Polling")
-        outer = QVBoxLayout(box)
+        self._poll_group = QGroupBox()
+        outer = QVBoxLayout(self._poll_group)
         outer.setContentsMargins(10, 14, 10, 10)
         outer.setSpacing(6)
 
-        outer.addWidget(
-            hint_label(
-                "Polling läuft automatisch, sobald die CAT-Verbindung steht. "
-                "Im RX-Modus wird nur der TX-Status abgefragt; sobald gesendet "
-                "wird, schaltet das Polling auf das kürzere TX-Intervall um."
-            )
-        )
+        self._poll_hint = hint_label("")
+        self._hint_labels.append(self._poll_hint)
+        outer.addWidget(self._poll_hint)
 
         self.poll_tx_spin = QSpinBox()
         self.poll_tx_spin.setRange(POLL_MIN_MS, POLL_MAX_MS)
         self.poll_tx_spin.setSingleStep(50)
         self.poll_tx_spin.setSuffix(" ms")
         self.poll_tx_spin.setValue(self._settings.polling.tx_interval_ms)
-        self.poll_tx_spin.setToolTip(
-            "Wie oft die Meter (ALC/COMP/POWER/SWR) während TX abgefragt werden."
-        )
         self.poll_tx_spin.valueChanged.connect(self._on_tx_spin_changed)
         fix_spin_width(self.poll_tx_spin, 100)
 
@@ -423,68 +491,42 @@ class ConnectionSettingsDialog(QDialog):
         self.poll_rx_spin.setSingleStep(100)
         self.poll_rx_spin.setSuffix(" ms")
         self.poll_rx_spin.setValue(self._settings.polling.rx_interval_ms)
-        self.poll_rx_spin.setToolTip(
-            "Wie oft im Empfangsbetrieb der TX-Status abgefragt wird "
-            "(höhere Werte entlasten die CAT-Schnittstelle)."
-        )
         fix_spin_width(self.poll_rx_spin, 100)
 
         form = QFormLayout()
         form.setHorizontalSpacing(10)
         form.setVerticalSpacing(8)
-        form.addRow("TX-Intervall:", self.poll_tx_spin)
-        form.addRow("RX-Intervall:", self.poll_rx_spin)
+        self._form_labels["tx_interval"] = QLabel()
+        self._form_labels["rx_interval"] = QLabel()
+        form.addRow(self._form_labels["tx_interval"], self.poll_tx_spin)
+        form.addRow(self._form_labels["rx_interval"], self.poll_rx_spin)
         outer.addLayout(form)
         outer.addWidget(self._build_tx_poll_diag_group())
-        return box
+        return self._poll_group
 
     def _build_tx_poll_diag_group(self) -> QGroupBox:
-        box = QGroupBox("TX-Polling")
-        outer = QVBoxLayout(box)
+        self._tx_poll_group = QGroupBox()
+        outer = QVBoxLayout(self._tx_poll_group)
         outer.setContentsMargins(10, 14, 10, 10)
         outer.setSpacing(6)
 
-        outer.addWidget(
-            hint_label(
-                "Haken = CAT-Abfrage während TX aktiv. Siehe Quickinfo an dem Frequenz-Häkchen.\n "
-                "Betrifft nur den TX-Poll; der TX-Status (TX;) wird weiterhin abgefragt."
-            )
-        )
+        self._tx_poll_hint = hint_label("")
+        self._hint_labels.append(self._tx_poll_hint)
+        outer.addWidget(self._tx_poll_hint)
 
         tp = self._settings.polling.tx_poll
         grid = QGridLayout()
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(6)
 
-        _freq_tooltip = (
-            "QRG während Sendung per CAT abfragen (FA bzw. FB).\n"
-            "Das Lesen der Frequenz unter TX kann ein hörbares Knacken im\n "
-            "Sendesignal verursachen — deshalb ist der Standard aus. Nur aktivieren,\n "
-            "wenn die QRG-Anzeige während TX live mitlaufen soll.\n"
-        )
-        _default_tooltip = "Während Sendung per CAT abfragen."
-
         self._tx_poll_checks: dict[str, WrappingCheckBox] = {}
-        items = (
-            ("comp", "COMP (RM3)"),
-            ("alc", "ALC (RM4)"),
-            ("po", "PO / Leistung (RM5)"),
-            ("swr", "SWR (RM6)"),
-            ("frequency_a", "Frequenz VFO-A (FA)"),
-            ("frequency_b", "Frequenz VFO-B (FB)"),
-            ("pc_power", "Sendeleistung PC (PC)"),
-        )
-        for idx, (key, label) in enumerate(items):
-            chk = wrap_checkbox(label)
+        for idx, key in enumerate(_TX_POLL_I18N):
+            chk = wrap_checkbox("")
             chk.setChecked(bool(getattr(tp, key)))
-            if key in ("frequency_a", "frequency_b"):
-                chk.setToolTip(_freq_tooltip)
-            else:
-                chk.setToolTip(f"„{label}“ — {_default_tooltip}")
             self._tx_poll_checks[key] = chk
             grid.addWidget(chk, idx // 2, idx % 2)
         outer.addLayout(grid)
-        return box
+        return self._tx_poll_group
 
     def _read_tx_poll_settings(self) -> TxPollSettings:
         return TxPollSettings(
@@ -492,34 +534,22 @@ class ConnectionSettingsDialog(QDialog):
         )
 
     def _build_profile_view_group(self) -> QGroupBox:
-        box = QGroupBox("EQ-Profil-Anzeige")
-        outer = QVBoxLayout(box)
+        self._profile_view_group = QGroupBox()
+        outer = QVBoxLayout(self._profile_view_group)
         outer.setContentsMargins(10, 14, 10, 10)
         outer.setSpacing(6)
 
-        outer.addWidget(
-            hint_label(
-                "Stellt ein, welche Bereiche im Equalizer-Fenster (EQ-Profil) "
-                "sichtbar sind. "
-                "Hilfreich, um die Oberfläche kompakter zu halten, wenn "
-                "bestimmte Werte selten verändert werden."
-            )
-        )
+        self._profile_view_hint = hint_label("")
+        self._hint_labels.append(self._profile_view_hint)
+        outer.addWidget(self._profile_view_hint)
 
-        self.hide_extended_ssb_check = wrap_checkbox(
-            "„Erweiterte Einstellungen“ bei SSB ausblenden"
-        )
-        self.hide_extended_ssb_check.setToolTip(
-            "Versteckt im Equalizer (EQ-Profil) die Sektion mit SSB Low-/High-Cut, "
-            "Mic-Select und Out-Level — die bleibt dann nur in den anderen "
-            "Modi (AM/FM/DATA/RTTY) sichtbar."
-        )
+        self.hide_extended_ssb_check = wrap_checkbox("")
         self.hide_extended_ssb_check.setChecked(
             self._settings.ui.hide_extended_in_ssb
         )
         outer.addWidget(self.hide_extended_ssb_check)
 
-        return box
+        return self._profile_view_group
 
     # ------------------------------------------------------------------
     # Konsistenz: RX-Intervall darf nicht unter TX-Intervall fallen
@@ -542,7 +572,7 @@ class ConnectionSettingsDialog(QDialog):
         try:
             self.port_combo.clear()
             if not ports:
-                self.port_combo.addItem("(keine Ports gefunden)", userData=None)
+                self.port_combo.addItem(tr("settings.no_ports_found"), userData=None)
             else:
                 for p in ports:
                     self.port_combo.addItem(p.display, userData=p.device)
@@ -564,7 +594,11 @@ class ConnectionSettingsDialog(QDialog):
     def _on_test_clicked(self) -> None:
         port = self._current_port_device()
         if not port:
-            QMessageBox.warning(self, "Kein Port", "Bitte zuerst einen Port auswählen.")
+            QMessageBox.warning(
+                self,
+                tr("settings.test.no_port.title"),
+                tr("settings.test.no_port.message"),
+            )
             return
         baud = self.baud_combo.currentData()
         if not isinstance(baud, int):
@@ -578,11 +612,13 @@ class ConnectionSettingsDialog(QDialog):
                 self._cat.connect(port, baudrate=baud, timeout_ms=timeout)
                 opened_temporarily = True
             except (serial.SerialException, OSError) as exc:
-                self._set_status_error(f"Port konnte nicht geöffnet werden: {exc}")
+                self._set_status_error(
+                    tr("settings.test.port_open_failed.status", error=exc)
+                )
                 QMessageBox.critical(
                     self,
-                    "Verbindung fehlgeschlagen",
-                    f"Port {port} konnte nicht geöffnet werden:\n\n{exc}",
+                    tr("connect.failed.title"),
+                    tr("connect.failed.message", port=port, error=exc),
                 )
                 return
 
@@ -590,56 +626,64 @@ class ConnectionSettingsDialog(QDialog):
         try:
             identity = ft.test_connection()
         except CatTimeoutError as exc:
-            self._set_status_error("Port geöffnet, aber keine Antwort vom Gerät")
+            self._set_status_error(tr("settings.test.no_response.status"))
             QMessageBox.warning(
                 self,
-                "Keine Antwort",
-                (
-                    "Es wurde kein vollständiges CAT-Telegramm empfangen.\n\n"
-                    "Mögliche Ursachen:\n"
-                    " • Falscher COM-Port (Enhanced vs. Standard).\n"
-                    " • Falsche Baudrate (Menü 031 prüfen).\n"
-                    " • Gerät ausgeschaltet oder USB-Kabel nicht verbunden.\n\n"
-                    f"Detail: {exc}"
-                ),
+                tr("settings.test.no_response.title"),
+                tr("settings.test.no_response.message", error=exc),
             )
             if opened_temporarily:
                 self._cat.disconnect()
             return
         except CatError as exc:
-            self._set_status_error(f"CAT-Fehler: {exc}")
-            QMessageBox.critical(self, "CAT-Fehler", str(exc))
+            self._set_status_error(
+                tr("settings.test.cat_error.status", error=exc)
+            )
+            QMessageBox.critical(
+                self,
+                tr("settings.test.cat_error.title"),
+                tr("settings.test.cat_error.message", error=exc),
+            )
             if opened_temporarily:
                 self._cat.disconnect()
             return
 
         if identity.is_ft991:
             self._set_status_ok(
-                f"Verbunden mit FT-991/FT-991A (ID {identity.radio_id})"
+                tr(
+                    "settings.test.connected.status",
+                    radio_id=identity.radio_id,
+                )
             )
             QMessageBox.information(
                 self,
-                "Gerät erkannt",
-                f"FT-991/FT-991A erkannt.\nAntwort: {identity.raw}",
+                tr("settings.test.device_found.title"),
+                tr("settings.test.device_found.message", raw=identity.raw),
             )
         elif identity.radio_id is not None:
-            expected_str = " oder ".join(f"ID{rid};" for rid in FT991_RADIO_IDS)
+            expected_str = self._expected_radio_ids()
             self._set_status_warn(
-                f"Antwort {identity.raw.strip()} — kein FT-991(A), "
-                f"erwartet {expected_str}"
+                tr(
+                    "settings.test.wrong_device.status",
+                    raw=identity.raw.strip(),
+                    expected=expected_str,
+                )
             )
             QMessageBox.warning(
                 self,
-                "Anderes Gerät",
-                (
-                    f"Das Gerät hat geantwortet, ist aber kein FT-991(A).\n\n"
-                    f"Antwort: {identity.raw}\n"
-                    f"Erwartet: {expected_str}"
+                tr("settings.test.wrong_device.title"),
+                tr(
+                    "settings.test.wrong_device.message",
+                    raw=identity.raw,
+                    expected=expected_str,
                 ),
             )
         else:
             self._set_status_warn(
-                f"Port geöffnet, aber keine gültige FT-991A-Antwort (roh: {identity.raw!r})"
+                tr(
+                    "settings.test.invalid_response.status",
+                    raw=repr(identity.raw),
+                )
             )
 
         if opened_temporarily:

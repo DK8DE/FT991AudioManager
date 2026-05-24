@@ -23,6 +23,9 @@ from mapping.amateur_bands import (
     frequency_label_100khz,
 )
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
+
 _TRACK_HEIGHT = 12
 _TRACK_RADIUS = 5
 _LABEL_ROW_H = 16
@@ -41,7 +44,7 @@ _NEEDLE_COLOR = QColor(255, 80, 80)
 _NEEDLE_LINE_COLOR = QColor(255, 70, 70)
 
 
-class AmateurBandStripWidget(QWidget):
+class AmateurBandStripWidget(RetranslatableMixin, QWidget):
     """Horizontaler Streifen mit Ticks, Frequenzlabels und beweglichem Zeiger."""
 
     frequency_changed = Signal(int)
@@ -64,11 +67,16 @@ class AmateurBandStripWidget(QWidget):
             QSizePolicy.Policy.Fixed,
         )
         self.setMouseTracking(True)
-        self.setToolTip("Frequenz im Band per Maus einstellen")
+        self._register_retranslate()
         self._timer = QTimer(self)
         self._timer.setInterval(40)
         self._timer.timeout.connect(self._animate)
         self._timer.start()
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        self._update_tooltip()
+        self.update()
 
     def is_dragging(self) -> bool:
         return self._dragging
@@ -152,16 +160,20 @@ class AmateurBandStripWidget(QWidget):
 
     def _update_tooltip(self) -> None:
         if not self._active:
-            self.setToolTip("Band-Anzeige (nicht verbunden)")
+            self.setToolTip(tr("band_strip.tooltip_disconnected"))
             return
         if self._band is None or self._frequency_hz <= 0:
-            self.setToolTip("Außerhalb der Amateurfunkbänder")
+            self.setToolTip(tr("band_strip.tooltip_outside"))
             return
         mhz = self._frequency_hz / 1_000_000.0
         pct = int(round(self._target_ratio * 100))
         self.setToolTip(
-            f"{mhz:.6f} MHz · {self._band.name} ({pct} % im Band)\n"
-            "Ziehen oder klicken, um die QRG zu setzen"
+            tr(
+                "band_strip.tooltip_active",
+                mhz=mhz,
+                band=self._band.name,
+                pct=pct,
+            )
         )
 
     def _animate(self) -> None:
@@ -403,7 +415,7 @@ class AmateurBandStripWidget(QWidget):
                 p.drawText(
                     track,
                     Qt.AlignmentFlag.AlignCenter,
-                    "Nicht verbunden",
+                    tr("band_strip.paint_not_connected"),
                 )
                 return
 
@@ -413,7 +425,7 @@ class AmateurBandStripWidget(QWidget):
                 p.drawText(
                     track,
                     Qt.AlignmentFlag.AlignCenter,
-                    "Außerhalb der Amateurbänder",
+                    tr("band_strip.paint_outside"),
                 )
                 return
 

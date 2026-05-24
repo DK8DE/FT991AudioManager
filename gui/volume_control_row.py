@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
 )
 
 from audio.windows_endpoint_volume import windows_endpoint_peak_available
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 
 from .menu_icons import menu_action_icon, volume_role_icon_size
 from .meter_widget import (
@@ -26,7 +28,7 @@ from .meter_widget import (
 )
 
 
-class VolumeControlRow(QWidget):
+class VolumeControlRow(RetranslatableMixin, QWidget):
     """Horizontaler Live-Pegel + Lautstärke-Slider, Prozent, Stumm-Button."""
 
     value_changed = Signal(int)
@@ -52,9 +54,6 @@ class VolumeControlRow(QWidget):
         self._peak = 0.0
         self._display = 0.0
         self._help_tooltip = str(tooltip or "").strip()
-        self._mute_help = (
-            "Stumm am Windows-Gerät ein/aus (überschreibt System-Stumm)"
-        )
         self._device_name = ""
         if show_level_meter:
             self._level_bar = make_live_level_bar_horizontal()
@@ -93,7 +92,7 @@ class VolumeControlRow(QWidget):
         self._slider.valueChanged.connect(self._on_slider)
         layout.addWidget(self._slider, 1)
 
-        self._lbl_percent = QLabel("100 %")
+        self._lbl_percent = QLabel(tr("common.percent", value=100))
         self._lbl_percent.setMinimumWidth(40)
         layout.addWidget(self._lbl_percent)
 
@@ -106,6 +105,11 @@ class VolumeControlRow(QWidget):
 
         root.addWidget(row)
         self._apply_tooltips()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._lbl_percent.setText(tr("common.percent", value=self.value()))
+        self._apply_tooltips()
 
     def set_assigned_device(self, device_label: str) -> None:
         """Zugeordnetes Gerät — erscheint im Tooltip von Slider, Pegel und Stumm."""
@@ -113,12 +117,12 @@ class VolumeControlRow(QWidget):
         self._apply_tooltips()
 
     def _apply_tooltips(self) -> None:
-        dev = self._device_name or "— nicht gewählt —"
-        dev_line = f"Gerät: {dev}"
+        dev = self._device_name or tr("common.not_selected")
+        dev_line = tr("common.device", dev=dev)
         parts = [p for p in (self._help_tooltip, dev_line) if p]
         slider_tip = "\n".join(parts)
-        mute_tip = f"{self._mute_help}\n{dev_line}"
-        level_tip = f"Pegelanzeige\n{dev_line}"
+        mute_tip = f"{tr('volume.mute_tooltip')}\n{dev_line}"
+        level_tip = f"{tr('volume.level_tooltip')}\n{dev_line}"
         self._slider.setToolTip(slider_tip)
         self._btn_mute.setToolTip(mute_tip)
         if self._level_bar is not None:
@@ -156,7 +160,7 @@ class VolumeControlRow(QWidget):
             self._slider.blockSignals(True)
         try:
             self._slider.setValue(v)
-            self._lbl_percent.setText(f"{v} %")
+            self._lbl_percent.setText(tr("common.percent", value=v))
         finally:
             if block_signals:
                 self._slider.blockSignals(False)
@@ -175,7 +179,7 @@ class VolumeControlRow(QWidget):
                 self._btn_mute.blockSignals(False)
 
     def _on_slider(self, value: int) -> None:
-        self._lbl_percent.setText(f"{value} %")
+        self._lbl_percent.setText(tr("common.percent", value=value))
         self.value_changed.emit(int(value))
 
     def _on_mute_toggled(self, checked: bool) -> None:

@@ -12,6 +12,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, Signal, Slot
 
 from cat import CatError, FT991CAT, SerialCAT
+from i18n import tr
 from mapping.extended_mapping import (
     AM_PORT_SELECT_MENU,
     DATA_IN_SELECT_MENU,
@@ -149,19 +150,25 @@ class RadioPlaybackSetup:
         bzw. ``engage_data_mode()`` verwendet.
         """
         if mode not in DATA_TO_VOICE:
-            return False, f"Unbekannter Data-Mode: {mode}"
+            return False, tr("radio_playback.error.unknown_data_mode", mode=mode)
         if mode == self._data_mode:
             return True, ""
         self._data_mode = mode
         if not self._snapshot or not self._in_data_mode:
             return True, ""
         if not self._cat.is_connected():
-            return False, "CAT nicht verbunden — Mode-Wechsel nicht möglich."
+            return False, tr("radio_playback.error.cat_disconnected_mode")
         ft = FT991CAT(self._cat)
         try:
             if not ft.set_rx_mode(self._data_mode):
-                return False, f"Betriebsart {self._data_mode.value} konnte nicht gesetzt werden."
-            return True, f"Funkgerät: {self._data_mode.value}"
+                return False, tr(
+                    "radio_playback.error.set_data_mode",
+                    mode=self._data_mode.value,
+                )
+            return True, tr(
+                "radio_playback.info.data_mode_set",
+                mode=self._data_mode.value,
+            )
         except CatError as exc:
             return False, str(exc)
 
@@ -177,11 +184,7 @@ class RadioPlaybackSetup:
             ft.write_menu(DATA_PORT_MENU, rear, tx_lock=True)
             ft.write_menu(FM_PKT_PORT_SELECT_MENU, fm_usb, tx_lock=True)
             ft.write_menu(SSB_PORT_SELECT_MENU, usb, tx_lock=True)
-            return (
-                True,
-                "Menü 048/070/072/077/109 → PC-Audio "
-                "(048/109 USB, 077 USB, 070 REAR, 072 USB)",
-            )
+            return True, tr("radio_playback.info.menus_applied")
         except CatError as exc:
             return False, str(exc)
 
@@ -191,10 +194,7 @@ class RadioPlaybackSetup:
         Beim Schließen der Session :meth:`restore` stellt Menüs und Mode wieder her.
         """
         if not self._cat.is_connected():
-            return (
-                False,
-                "CAT nicht verbunden — Menüs 048/070/072/077/109 werden nicht geändert.",
-            )
+            return False, tr("radio_playback.error.cat_disconnected_menus")
         if self._snapshot is not None:
             if self._in_data_mode:
                 return True, ""
@@ -229,16 +229,13 @@ class RadioPlaybackSetup:
     def apply(self) -> tuple[bool, str]:
         """Schnappschuss + DATA-Mode; EX048/109→USB, EX077→USB, EX070/072→REAR (048·070·072·077·109)."""
         if not self._cat.is_connected():
-            return (
-                False,
-                "CAT nicht verbunden — Modus und Menüs 048/070/072/077/109 werden nicht geändert.",
-            )
+            return False, tr("radio_playback.error.cat_disconnected_apply")
         if self._snapshot is not None:
             if not self._in_data_mode:
                 return self.engage_data_mode()
-            return True, (
-                f"Funkgerät bereits auf {self._data_mode.value}: "
-                "048/109=USB, 077=USB, 070=REAR, 072=USB."
+            return True, tr(
+                "radio_playback.info.already_applied",
+                mode=self._data_mode.value,
             )
 
         ft = FT991CAT(self._cat)
@@ -259,15 +256,18 @@ class RadioPlaybackSetup:
             )
             if not ft.set_rx_mode(self._data_mode):
                 self._snapshot = None
-                return False, f"Betriebsart {self._data_mode.value} konnte nicht gesetzt werden."
+                return False, tr(
+                    "radio_playback.error.set_data_mode",
+                    mode=self._data_mode.value,
+                )
             ok_m, msg_m = self._write_pc_audio_menus()
             if not ok_m:
                 self._snapshot = None
                 return False, msg_m
             self._in_data_mode = True
-            return True, (
-                f"Funkgerät: {self._data_mode.value}, "
-                "048/109 → USB (AM/SSB-Port), 077 → USB (FM-PKT), 070 → REAR, 072 → USB"
+            return True, tr(
+                "radio_playback.info.applied",
+                mode=self._data_mode.value,
             )
         except CatError as exc:
             self._snapshot = None
@@ -288,7 +288,7 @@ class RadioPlaybackSetup:
         if not self._in_data_mode:
             return True, ""
         if not self._cat.is_connected():
-            return False, "CAT nicht verbunden — Sprach-Mode nicht setzbar."
+            return False, tr("radio_playback.error.cat_disconnected_voice")
         voice = self.voice_mode
         ft = FT991CAT(self._cat)
         try:
@@ -299,12 +299,21 @@ class RadioPlaybackSetup:
                 ft.set_rx_mode(voice, tx_lock=False, verify=False)
                 self._in_data_mode = False
                 self._needs_plain_verify = True
-                return True, f"Funkgerät: {voice.value} (MIC PTT, forced)"
+                return True, tr(
+                    "radio_playback.info.voice_forced",
+                    mode=voice.value,
+                )
             if not ft.set_rx_mode(voice):
-                return False, f"Sprach-Mode {voice.value} konnte nicht gesetzt werden."
+                return False, tr(
+                    "radio_playback.error.set_voice",
+                    mode=voice.value,
+                )
             self._in_data_mode = False
             self._needs_plain_verify = False
-            return True, f"Funkgerät: {voice.value}"
+            return True, tr(
+                "radio_playback.info.data_mode_set",
+                mode=voice.value,
+            )
         except CatError as exc:
             return False, str(exc)
 
@@ -320,7 +329,7 @@ class RadioPlaybackSetup:
             self._needs_plain_verify = False
             return True, ""
         if not self._cat.is_connected():
-            return False, "CAT nicht verbunden — Mode-Verify nicht möglich."
+            return False, tr("radio_playback.error.cat_disconnected_verify")
         voice = self.voice_mode
         ft = FT991CAT(self._cat)
         try:
@@ -329,16 +338,19 @@ class RadioPlaybackSetup:
                 self._needs_plain_verify = False
                 return True, ""
             if not ft.set_rx_mode(voice):
-                return False, f"Sprach-Mode {voice.value} konnte nicht verifiziert werden."
+                return False, tr(
+                    "radio_playback.error.verify_voice",
+                    mode=voice.value,
+                )
             self._needs_plain_verify = False
-            return True, f"Funkgerät verifiziert: {voice.value}"
+            return True, tr("radio_playback.info.verified", mode=voice.value)
         except CatError as exc:
             return False, str(exc)
 
     def engage_data_mode(self) -> tuple[bool, str]:
         """Schaltet (zurück) auf den konfigurierten DATA-Mode."""
         if self._snapshot is None:
-            return False, "Audio-Setup nicht aktiv — bitte erst Apply."
+            return False, tr("radio_playback.error.setup_inactive")
         if self._in_data_mode:
             if self._cat.is_connected():
                 try:
@@ -353,19 +365,25 @@ class RadioPlaybackSetup:
                 self._needs_plain_verify = False
                 return True, ""
         if not self._cat.is_connected():
-            return False, "CAT nicht verbunden — DATA-Mode nicht setzbar."
+            return False, tr("radio_playback.error.cat_disconnected_data")
         # ``_data_mode`` kommt vom Hauptfenster (sync_data_mode_from_main) —
         # nicht aus ``snapshot.rx_mode`` (das ist nur der Wiederherstellungs-Mode).
         ft = FT991CAT(self._cat)
         try:
             if not ft.set_rx_mode(self._data_mode):
-                return False, f"DATA-Mode {self._data_mode.value} konnte nicht gesetzt werden."
+                return False, tr(
+                    "radio_playback.error.set_data",
+                    mode=self._data_mode.value,
+                )
             ok_m, msg_m = self._write_pc_audio_menus()
             if not ok_m:
                 return False, msg_m
             self._in_data_mode = True
             self._needs_plain_verify = False
-            return True, f"Funkgerät: {self._data_mode.value} (048/070/072/077/109 für PC-Audio)"
+            return True, tr(
+                "radio_playback.info.engage_data",
+                mode=self._data_mode.value,
+            )
         except CatError as exc:
             return False, str(exc)
 
@@ -375,7 +393,7 @@ class RadioPlaybackSetup:
         if not self._cat.is_connected():
             self._snapshot = None
             self._in_data_mode = False
-            return False, "CAT nicht verbunden — alter Modus konnte nicht wiederhergestellt werden."
+            return False, tr("radio_playback.error.cat_disconnected_restore")
 
         snap = self._snapshot
         self._snapshot = None
@@ -389,13 +407,13 @@ class RadioPlaybackSetup:
             ft.write_menu(FM_PKT_PORT_SELECT_MENU, snap.fm_pkt_port_raw, tx_lock=False)
             ft.write_menu(SSB_PORT_SELECT_MENU, snap.ssb_port_raw, tx_lock=False)
             if not ft.set_rx_mode(snap.rx_mode):
-                return (
-                    False,
-                    f"Alter Modus {snap.rx_mode.value} konnte nicht wiederhergestellt werden.",
+                return False, tr(
+                    "radio_playback.error.restore_mode",
+                    mode=snap.rx_mode.value,
                 )
-            return True, (
-                f"Funkgerät zurück: {snap.rx_mode.value}, "
-                "Menü 048/070/072/077/109 wie zuvor"
+            return True, tr(
+                "radio_playback.info.restored",
+                mode=snap.rx_mode.value,
             )
         except CatError as exc:
             return False, str(exc)

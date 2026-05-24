@@ -127,6 +127,8 @@ class UiSettings:
     #: Pro Speicherkanal: optionale lokale Sendeleistung (0 bis bandabhängigem Maximum,
     #: in App/settings.json gespeichert, in 5-W-Schritten — nicht Teil der Geräte-Kanaldaten).
     memory_channel_local_pc_power: Dict[str, int] = field(default_factory=dict)
+    #: UI-Sprache: ``"de"`` (Standard) oder ``"en"``.
+    language: str = "de"
     #: Nach erstem erfolgreichen MT-Scan wird die Hauptfenster-Dropdown aus
     #: ``memory_combo_cache.json`` befüllt (kein erneuter Scan bei Verbinden).
     memory_dropdown_scan_completed: bool = False
@@ -217,6 +219,7 @@ class AppSettings:
             memory_channel_local_pc_power=_parse_memory_pc_power_map(
                 ui_raw.get("memory_channel_local_pc_power")
             ),
+            language=_parse_language(ui_raw.get("language")),
             memory_dropdown_scan_completed=bool(
                 ui_raw.get("memory_dropdown_scan_completed", False)
             ),
@@ -298,6 +301,11 @@ def _parse_memory_pc_power_map(raw: object) -> Dict[str, int]:
         except (TypeError, ValueError):
             continue
     return result
+
+
+def _parse_language(raw: object) -> str:
+    lang = str(raw or "de").strip().lower()
+    return lang if lang in ("de", "en") else "de"
 
 
 def _clamp_poll(value: object, fallback: int) -> int:

@@ -7,6 +7,8 @@ from typing import Callable, Optional
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
 
 from cat import SerialCAT
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 
 from .po_calibration_widget import PoCalibrationWidget
 
@@ -17,7 +19,7 @@ __all__ = [
 ]
 
 
-class CalibrationDialog(QDialog):
+class CalibrationDialog(RetranslatableMixin, QDialog):
     """Eigenes Fenster (veraltet — Inhalt liegt in den Einstellungen)."""
 
     def __init__(
@@ -29,13 +31,17 @@ class CalibrationDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self._on_closed = on_closed
-        self.setWindowTitle("PO-Meter Kalibrierung (10 m / KW)")
         self.setMinimumSize(600, 560)
         self.resize(680, 720)
         layout = QVBoxLayout(self)
         self._widget = PoCalibrationWidget(serial_cat, parent=self)
         layout.addWidget(self._widget)
         self.calibration_applied = self._widget.calibration_applied
+        self.retranslate_ui()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("calibration_dialog.title"))
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if not self._widget.confirm_abort_if_busy():

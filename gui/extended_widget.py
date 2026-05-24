@@ -19,7 +19,7 @@ Processor / Front-vs-Rear Setup beigetragen und wurde entfernt.
 
 from __future__ import annotations
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -33,6 +33,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 from mapping.extended_mapping import (
     AM_CARRIER_MENU,
     AM_MIC_SEL_MENU,
@@ -64,18 +66,17 @@ from model import ExtendedSettings
 
 def _freq_label(value) -> str:  # type: ignore[no-untyped-def]
     if isinstance(value, str):
-        return "Aus"
-    return f"{int(value)} Hz"
+        return tr("common.off")
+    return tr("common.freq_hz", value=int(value))
 
 
 def _make_slider_row(
-    label_text: str,
+    label: QLabel,
     minimum: int,
     maximum: int,
     default: int,
     tooltip: str,
-) -> tuple[QLabel, QSlider, QLabel]:
-    label = QLabel(label_text)
+) -> tuple[QSlider, QLabel]:
     slider = QSlider(Qt.Orientation.Horizontal)
     slider.setRange(minimum, maximum)
     slider.setValue(default)
@@ -88,7 +89,7 @@ def _make_slider_row(
         Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
     )
     slider.valueChanged.connect(lambda v, lbl=value_label: lbl.setText(str(v)))
-    return label, slider, value_label
+    return slider, value_label
 
 
 # ----------------------------------------------------------------------
@@ -96,16 +97,19 @@ def _make_slider_row(
 # ----------------------------------------------------------------------
 
 
-class ExtendedSettingsWidget(QGroupBox):
+class ExtendedSettingsWidget(RetranslatableMixin, QGroupBox):
     """Editor für die erweiterten Audio-Einstellungen."""
 
     changed = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__("Erweiterte Einstellungen", parent)
+        super().__init__(parent)
         self._current_mode = "SSB"
+        self._slider_tooltips: Dict[QSlider, str] = {}
         self._build_ui()
         self.apply_mode_relevance("SSB")
+        self._register_retranslate()
+        self.retranslate_ui()
 
     # ------------------------------------------------------------------
     # UI
@@ -122,43 +126,35 @@ class ExtendedSettingsWidget(QGroupBox):
         outer.addWidget(self._build_data_group())
 
     def _build_ssb_group(self) -> QGroupBox:
-        self.ssb_box = QGroupBox("SSB-Klangformung (RX-Cut)")
+        self.ssb_box = QGroupBox()
         layout = QGridLayout(self.ssb_box)
         layout.setHorizontalSpacing(8)
         layout.setVerticalSpacing(6)
 
-        # Low Cut Freq
-        layout.addWidget(QLabel("Low Cut Freq:"), 0, 0)
+        self._lcut_freq_lbl = QLabel()
+        layout.addWidget(self._lcut_freq_lbl, 0, 0)
         self.lcut_freq = QComboBox()
         for value in SSB_LCUT_FREQS:
             self.lcut_freq.addItem(_freq_label(value), userData=value)
-        self.lcut_freq.setToolTip(
-            f"EX{SSB_LCUT_FREQ_MENU:03d} — SSB Low-Cut Filter Frequenz (50-Hz-Schritte)"
-        )
         self.lcut_freq.currentIndexChanged.connect(self._emit_changed)
         layout.addWidget(self.lcut_freq, 0, 1)
 
-        # Low Cut Slope
-        layout.addWidget(QLabel("Low Cut Slope:"), 0, 2)
+        self._lcut_slope_lbl = QLabel()
+        layout.addWidget(self._lcut_slope_lbl, 0, 2)
         self.lcut_slope = self._make_slope_combo()
-        self.lcut_slope.setToolTip(f"EX{SSB_LCUT_SLOPE_MENU:03d} — Low-Cut Slope")
         layout.addWidget(self.lcut_slope, 0, 3)
 
-        # High Cut Freq
-        layout.addWidget(QLabel("High Cut Freq:"), 1, 0)
+        self._hcut_freq_lbl = QLabel()
+        layout.addWidget(self._hcut_freq_lbl, 1, 0)
         self.hcut_freq = QComboBox()
         for value in SSB_HCUT_FREQS:
             self.hcut_freq.addItem(_freq_label(value), userData=value)
-        self.hcut_freq.setToolTip(
-            f"EX{SSB_HCUT_FREQ_MENU:03d} — SSB High-Cut Filter Frequenz (50-Hz-Schritte)"
-        )
         self.hcut_freq.currentIndexChanged.connect(self._emit_changed)
         layout.addWidget(self.hcut_freq, 1, 1)
 
-        # High Cut Slope
-        layout.addWidget(QLabel("High Cut Slope:"), 1, 2)
+        self._hcut_slope_lbl = QLabel()
+        layout.addWidget(self._hcut_slope_lbl, 1, 2)
         self.hcut_slope = self._make_slope_combo()
-        self.hcut_slope.setToolTip(f"EX{SSB_HCUT_SLOPE_MENU:03d} — High-Cut Slope")
         layout.addWidget(self.hcut_slope, 1, 3)
 
         layout.setColumnStretch(1, 1)
@@ -173,54 +169,56 @@ class ExtendedSettingsWidget(QGroupBox):
         return combo
 
     def _build_am_group(self) -> QGroupBox:
-        self.am_box = QGroupBox("AM-Einstellungen")
+        self.am_box = QGroupBox()
         layout = QGridLayout(self.am_box)
         layout.setHorizontalSpacing(8)
         layout.setVerticalSpacing(6)
 
-        # AM Carrier Level (EX046 AM OUT LEVEL)
-        lbl, slider, value_label = _make_slider_row(
-            "AM Carrier:", CARRIER_LEVEL_MIN, CARRIER_LEVEL_MAX,
+        self._am_carrier_lbl = QLabel()
+        self.am_carrier_slider, am_value_label = _make_slider_row(
+            self._am_carrier_lbl,
+            CARRIER_LEVEL_MIN,
+            CARRIER_LEVEL_MAX,
             CARRIER_LEVEL_DEFAULT,
-            f"EX{AM_CARRIER_MENU:03d} — AM OUT LEVEL (0..100)",
+            "",
         )
-        self.am_carrier_slider = slider
-        slider.valueChanged.connect(self._emit_changed)
-        layout.addWidget(lbl, 0, 0)
-        layout.addWidget(slider, 0, 1)
-        layout.addWidget(value_label, 0, 2)
+        self._slider_tooltips[self.am_carrier_slider] = ""
+        self.am_carrier_slider.valueChanged.connect(self._emit_changed)
+        layout.addWidget(self._am_carrier_lbl, 0, 0)
+        layout.addWidget(self.am_carrier_slider, 0, 1)
+        layout.addWidget(am_value_label, 0, 2)
 
-        # AM Mic Sel
-        layout.addWidget(QLabel("AM Mikrofon:"), 1, 0)
+        self._am_mic_lbl = QLabel()
+        layout.addWidget(self._am_mic_lbl, 1, 0)
         self.am_mic_combo = self._make_mic_combo()
-        self.am_mic_combo.setToolTip(f"EX{AM_MIC_SEL_MENU:03d} — AM Mikrofon-Quelle")
         layout.addWidget(self.am_mic_combo, 1, 1, 1, 2)
 
         layout.setColumnStretch(1, 1)
         return self.am_box
 
     def _build_fm_group(self) -> QGroupBox:
-        self.fm_box = QGroupBox("FM / C4FM-Einstellungen")
+        self.fm_box = QGroupBox()
         layout = QGridLayout(self.fm_box)
         layout.setHorizontalSpacing(8)
         layout.setVerticalSpacing(6)
 
-        # FM Carrier Level (EX075 FM OUT LEVEL)
-        lbl, slider, value_label = _make_slider_row(
-            "FM Carrier:", CARRIER_LEVEL_MIN, CARRIER_LEVEL_MAX,
+        self._fm_carrier_lbl = QLabel()
+        self.fm_carrier_slider, fm_value_label = _make_slider_row(
+            self._fm_carrier_lbl,
+            CARRIER_LEVEL_MIN,
+            CARRIER_LEVEL_MAX,
             CARRIER_LEVEL_DEFAULT,
-            f"EX{FM_CARRIER_MENU:03d} — FM OUT LEVEL (0..100)",
+            "",
         )
-        self.fm_carrier_slider = slider
-        slider.valueChanged.connect(self._emit_changed)
-        layout.addWidget(lbl, 0, 0)
-        layout.addWidget(slider, 0, 1)
-        layout.addWidget(value_label, 0, 2)
+        self._slider_tooltips[self.fm_carrier_slider] = ""
+        self.fm_carrier_slider.valueChanged.connect(self._emit_changed)
+        layout.addWidget(self._fm_carrier_lbl, 0, 0)
+        layout.addWidget(self.fm_carrier_slider, 0, 1)
+        layout.addWidget(fm_value_label, 0, 2)
 
-        # FM Mic Sel
-        layout.addWidget(QLabel("FM Mikrofon:"), 1, 0)
+        self._fm_mic_lbl = QLabel()
+        layout.addWidget(self._fm_mic_lbl, 1, 0)
         self.fm_mic_combo = self._make_mic_combo()
-        self.fm_mic_combo.setToolTip(f"EX{FM_MIC_SEL_MENU:03d} — FM Mikrofon-Quelle")
         layout.addWidget(self.fm_mic_combo, 1, 1, 1, 2)
 
         layout.setColumnStretch(1, 1)
@@ -228,27 +226,110 @@ class ExtendedSettingsWidget(QGroupBox):
 
     def _make_mic_combo(self) -> QComboBox:
         combo = QComboBox()
-        combo.addItem("Front-MIC", userData=MicSource.MIC.value)
-        combo.addItem("Rear-DATA", userData=MicSource.REAR.value)
+        combo.addItem("", userData=MicSource.MIC.value)
+        combo.addItem("", userData=MicSource.REAR.value)
         combo.currentIndexChanged.connect(self._emit_changed)
         return combo
 
+    def _refresh_mic_combo(self, combo: QComboBox) -> None:
+        current = combo.currentData()
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItem(tr("extended.mic.front"), userData=MicSource.MIC.value)
+            combo.addItem(tr("extended.mic.rear"), userData=MicSource.REAR.value)
+            idx = combo.findData(current)
+            combo.setCurrentIndex(max(0, idx))
+        finally:
+            combo.blockSignals(False)
+
     def _build_data_group(self) -> QGroupBox:
-        self.data_box = QGroupBox("DATA-Modus")
+        self.data_box = QGroupBox()
         layout = QHBoxLayout(self.data_box)
         layout.setSpacing(8)
 
-        lbl, slider, value_label = _make_slider_row(
-            "DATA TX-Level:", DATA_TX_LEVEL_MIN, DATA_TX_LEVEL_MAX,
+        self._data_tx_lbl = QLabel()
+        self.data_tx_slider, data_value_label = _make_slider_row(
+            self._data_tx_lbl,
+            DATA_TX_LEVEL_MIN,
+            DATA_TX_LEVEL_MAX,
             DATA_TX_LEVEL_DEFAULT,
-            f"EX{DATA_TX_LEVEL_MENU:03d} — DATA OUT LEVEL (0..100)",
+            "",
         )
-        self.data_tx_slider = slider
-        slider.valueChanged.connect(self._emit_changed)
-        layout.addWidget(lbl)
-        layout.addWidget(slider, 1)
-        layout.addWidget(value_label)
+        self._slider_tooltips[self.data_tx_slider] = ""
+        self.data_tx_slider.valueChanged.connect(self._emit_changed)
+        layout.addWidget(self._data_tx_lbl)
+        layout.addWidget(self.data_tx_slider, 1)
+        layout.addWidget(data_value_label)
         return self.data_box
+
+    def retranslate_ui(self) -> None:
+        self.setTitle(tr("extended.title"))
+        self.ssb_box.setTitle(tr("extended.ssb_group"))
+        self.am_box.setTitle(tr("extended.am_group"))
+        self.fm_box.setTitle(tr("extended.fm_group"))
+        self.data_box.setTitle(tr("extended.data_group"))
+
+        self._lcut_freq_lbl.setText(tr("extended.lcut_freq"))
+        self._lcut_slope_lbl.setText(tr("extended.lcut_slope"))
+        self._hcut_freq_lbl.setText(tr("extended.hcut_freq"))
+        self._hcut_slope_lbl.setText(tr("extended.hcut_slope"))
+        self._am_carrier_lbl.setText(tr("extended.am_carrier"))
+        self._am_mic_lbl.setText(tr("extended.am_mic"))
+        self._fm_carrier_lbl.setText(tr("extended.fm_carrier"))
+        self._fm_mic_lbl.setText(tr("extended.fm_mic"))
+        self._data_tx_lbl.setText(tr("extended.data_tx_level"))
+
+        self.lcut_freq.setToolTip(
+            tr("extended.tooltip.ssb_lcut_freq", menu=SSB_LCUT_FREQ_MENU)
+        )
+        self.lcut_slope.setToolTip(
+            tr("extended.tooltip.ssb_lcut_slope", menu=SSB_LCUT_SLOPE_MENU)
+        )
+        self.hcut_freq.setToolTip(
+            tr("extended.tooltip.ssb_hcut_freq", menu=SSB_HCUT_FREQ_MENU)
+        )
+        self.hcut_slope.setToolTip(
+            tr("extended.tooltip.ssb_hcut_slope", menu=SSB_HCUT_SLOPE_MENU)
+        )
+        self.am_mic_combo.setToolTip(
+            tr("extended.tooltip.am_mic", menu=AM_MIC_SEL_MENU)
+        )
+        self.fm_mic_combo.setToolTip(
+            tr("extended.tooltip.fm_mic", menu=FM_MIC_SEL_MENU)
+        )
+
+        self._slider_tooltips[self.am_carrier_slider] = tr(
+            "extended.tooltip.am_carrier", menu=AM_CARRIER_MENU
+        )
+        self._slider_tooltips[self.fm_carrier_slider] = tr(
+            "extended.tooltip.fm_carrier", menu=FM_CARRIER_MENU
+        )
+        self._slider_tooltips[self.data_tx_slider] = tr(
+            "extended.tooltip.data_tx_level", menu=DATA_TX_LEVEL_MENU
+        )
+        for slider, tip in self._slider_tooltips.items():
+            slider.setToolTip(tip)
+
+        self._refresh_freq_combo(self.lcut_freq, SSB_LCUT_FREQS)
+        self._refresh_freq_combo(self.hcut_freq, SSB_HCUT_FREQS)
+        self._refresh_mic_combo(self.am_mic_combo)
+        self._refresh_mic_combo(self.fm_mic_combo)
+
+    def _refresh_freq_combo(self, combo: QComboBox, values: tuple) -> None:
+        current = combo.currentData()
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            for value in values:
+                combo.addItem(_freq_label(value), userData=value)
+            idx = combo.findData(current)
+            if idx < 0 and current is not None:
+                combo.addItem(f"{current!r}", userData=current)
+                idx = combo.findData(current)
+            combo.setCurrentIndex(max(0, idx))
+        finally:
+            combo.blockSignals(False)
 
     # ------------------------------------------------------------------
     # Get / Set
@@ -285,14 +366,12 @@ class ExtendedSettingsWidget(QGroupBox):
             self._select_combo_by_data(self.am_mic_combo, ext.am_mic_sel, MicSource.MIC.value)
             self._select_combo_by_data(self.fm_mic_combo, ext.fm_mic_sel, MicSource.MIC.value)
             self.data_tx_slider.setValue(int(ext.data_tx_level))
-            # Slider-Wert-Labels manuell aktualisieren (Signale waren blockiert)
             self._refresh_slider_labels()
         finally:
             for w in widgets:
                 w.blockSignals(False)
 
     def _refresh_slider_labels(self) -> None:
-        # Slider/Label-Paare neu synchronisieren — die Verbindung war blockiert.
         for slider in (
             self.am_carrier_slider,
             self.fm_carrier_slider,
@@ -304,9 +383,6 @@ class ExtendedSettingsWidget(QGroupBox):
     def _select_combo_by_data(combo: QComboBox, data, fallback) -> None:  # type: ignore[no-untyped-def]
         idx = combo.findData(data)
         if idx < 0:
-            # Falls ein exotischer Wert (z. B. aus einer Firmware-Diskrepanz)
-            # nicht in der Tabelle ist, fügen wir ihn als zusätzlichen Eintrag
-            # an, damit der Wert nicht still verloren geht.
             combo.addItem(f"{data!r}", userData=data)
             idx = combo.findData(data)
         if idx < 0:
@@ -318,11 +394,7 @@ class ExtendedSettingsWidget(QGroupBox):
     # ------------------------------------------------------------------
 
     def apply_mode_relevance(self, mode_group: str) -> None:
-        """Versteckt Sub-Gruppen, die für ``mode_group`` nicht relevant sind.
-
-        Die Werte bleiben im UI-Zustand erhalten — wechselt der User später
-        wieder in eine passende Mode-Gruppe, ist alles noch da.
-        """
+        """Versteckt Sub-Gruppen, die für ``mode_group`` nicht relevant sind."""
         mg = mode_group.upper()
         self._current_mode = mg
         self.ssb_box.setVisible(mg in ("SSB", "DATA"))

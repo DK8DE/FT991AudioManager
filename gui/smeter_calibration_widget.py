@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 from mapping.meter_mapping import SMETER_CALIB_VHF_MIN_HZ
 
 from .settings_layout import fix_spin_width, hint_label
@@ -65,7 +67,7 @@ class _SmeterBandPointEditor(QWidget):
     ) -> None:
         super().__init__(parent)
         self._suggested = list(suggested_points)
-        self._rows: List[Tuple[QSpinBox, QComboBox]] = []
+        self._rows: List[Tuple[QSpinBox, QComboBox, QLabel]] = []
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(6)
@@ -77,7 +79,6 @@ class _SmeterBandPointEditor(QWidget):
             raw_spin = QSpinBox()
             raw_spin.setRange(0, 255)
             fix_spin_width(raw_spin, 60)
-            raw_spin.setToolTip("Rohwert aus der CAT-Antwort SM0nnn; (000…255)")
             stage = QComboBox()
             stage.setMaxVisibleItems(20)
             for lab, db in smeter_stage_choices():
@@ -89,10 +90,18 @@ class _SmeterBandPointEditor(QWidget):
             row_l.setSpacing(8)
             row_l.addWidget(raw_spin)
             row_l.addWidget(stage, stretch=1)
-            form.addRow(f"Punkt {idx + 1}:", row_w)
-            self._rows.append((raw_spin, stage))
+            point_lbl = QLabel()
+            form.addRow(point_lbl, row_w)
+            self._rows.append((raw_spin, stage, point_lbl))
         outer.addLayout(form)
+        self._form = form
         self.load_points(points)
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        for idx, (raw_spin, _stage, point_lbl) in enumerate(self._rows):
+            point_lbl.setText(tr("smeter_cal.point", n=idx + 1))
+            raw_spin.setToolTip(tr("smeter_cal.raw_tooltip"))
 
     def load_points(self, pts: List[SmeterCalibrationPoint]) -> None:
         defaults = self._suggested
@@ -106,7 +115,7 @@ class _SmeterBandPointEditor(QWidget):
 
     def collect_points(self) -> List[SmeterCalibrationPoint]:
         out: List[SmeterCalibrationPoint] = []
-        for raw_spin, stage in self._rows:
+        for raw_spin, stage, _lbl in self._rows:
             r = int(raw_spin.value())
             db_data = stage.currentData()
             db = float(db_data) if isinstance(db_data, (int, float)) else 0.0
@@ -114,17 +123,17 @@ class _SmeterBandPointEditor(QWidget):
         return out
 
     def set_enabled_editor(self, on: bool) -> None:
-        for raw_spin, stage in self._rows:
+        for raw_spin, stage, _lbl in self._rows:
             raw_spin.setEnabled(on)
             stage.setEnabled(on)
 
     def fill_suggested(self) -> None:
-        for (raw_spin, stage), pt in zip(self._rows, self._suggested):
+        for (raw_spin, stage, _lbl), pt in zip(self._rows, self._suggested):
             raw_spin.setValue(pt.raw)
             stage.setCurrentIndex(_combo_index_for_db(stage, pt.db_over_s9))
 
 
-class SmeterCalibrationSettingsWidget(QWidget):
+class SmeterCalibrationSettingsWidget(RetranslatableMixin, QWidget):
     """Zwei Tabs: HF &lt; 50 MHz und VHF/UHF ab 50 MHz (2 m / 70 cm)."""
 
     def __init__(
@@ -135,22 +144,18 @@ class SmeterCalibrationSettingsWidget(QWidget):
     ) -> None:
         super().__init__(parent)
         self._settings = settings
+        self._mhz = SMETER_CALIB_VHF_MIN_HZ // 1_000_000
         self._build_ui()
+        self._register_retranslate()
+        self.retranslate_ui()
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(8)
-        mhz = SMETER_CALIB_VHF_MIN_HZ // 1_000_000
-        outer.addWidget(
-            hint_label(
-                f"Zwei getrennte Kurven: Unter {mhz} MHz (Kurzwelle inkl. 6 m) und ab "
-                f"{mhz} MHz (2 m / 70 cm). Die App wählt anhand der aktuellen VFO-A-Frequenz. "
-                "Je vier Stützpunkte mit steigendem SM0-Rohwert (mindestens zwei gültige "
-                "Rohwerte pro Band, sonst Werkstabelle für dieses Band)."
-            )
-        )
-        self._enable = QCheckBox("Eigene S-Meter-Kalibrierung verwenden")
+        self._hint = hint_label("")
+        outer.addWidget(self._hint)
+        self._enable = QCheckBox()
         self._enable.setChecked(self._settings.use_custom)
         self._enable.toggled.connect(self._on_toggled)
         outer.addWidget(self._enable)
@@ -164,22 +169,32 @@ class SmeterCalibrationSettingsWidget(QWidget):
             points=list(self._settings.points_vhf),
             suggested_points=default_smeter_calibration_points_vhf(),
         )
-        self._tabs.addTab(self._editor_hf, f"Kurzwelle (< {mhz} MHz)")
-        self._tabs.addTab(self._editor_vhf, f"2 m / 70 cm (≥ {mhz} MHz)")
+        self._tabs.addTab(self._editor_hf, "")
+        self._tabs.addTab(self._editor_vhf, "")
         outer.addWidget(self._tabs)
 
         btn_row = QHBoxLayout()
-        btn_hf = QPushButton("Vorschläge (Kurzwelle)")
-        btn_hf.setToolTip("Programm-Standard nur im Tab Kurzwelle einsetzen.")
-        btn_hf.clicked.connect(self._editor_hf.fill_suggested)
-        btn_vhf = QPushButton("Vorschläge (2 m / 70 cm)")
-        btn_vhf.setToolTip("Programm-Standard nur im Tab 2 m / 70 cm einsetzen.")
-        btn_vhf.clicked.connect(self._editor_vhf.fill_suggested)
-        btn_row.addWidget(btn_hf)
-        btn_row.addWidget(btn_vhf)
+        self._btn_hf = QPushButton()
+        self._btn_hf.clicked.connect(self._editor_hf.fill_suggested)
+        self._btn_vhf = QPushButton()
+        self._btn_vhf.clicked.connect(self._editor_vhf.fill_suggested)
+        btn_row.addWidget(self._btn_hf)
+        btn_row.addWidget(self._btn_vhf)
         btn_row.addStretch(1)
         outer.addLayout(btn_row)
         self._on_toggled(self._enable.isChecked())
+
+    def retranslate_ui(self) -> None:
+        self._hint.setText(tr("smeter_cal.hint", mhz=self._mhz))
+        self._enable.setText(tr("smeter_cal.enable"))
+        self._tabs.setTabText(0, tr("smeter_cal.tab_hf", mhz=self._mhz))
+        self._tabs.setTabText(1, tr("smeter_cal.tab_vhf", mhz=self._mhz))
+        self._btn_hf.setText(tr("smeter_cal.suggest_hf"))
+        self._btn_hf.setToolTip(tr("smeter_cal.suggest_hf_tooltip"))
+        self._btn_vhf.setText(tr("smeter_cal.suggest_vhf"))
+        self._btn_vhf.setToolTip(tr("smeter_cal.suggest_vhf_tooltip"))
+        self._editor_hf.retranslate_ui()
+        self._editor_vhf.retranslate_ui()
 
     def _on_toggled(self, on: bool) -> None:
         self._editor_hf.set_enabled_editor(on)

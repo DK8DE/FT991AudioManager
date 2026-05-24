@@ -7,6 +7,8 @@ from typing import Any, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 from mapping.repeater_offset import SHIFT_MINUS, SHIFT_PLUS, SHIFT_SIMPLEX
 
 from .led_widget import Led
@@ -22,7 +24,7 @@ from .menu_icons import (
 _RIG_IO_BLINK_SEQ = (True, False, True, False, True, False, True, False)
 
 
-class RadioControlBar(QWidget):
+class RadioControlBar(QWidget, RetranslatableMixin):
     """Tune, Repeater-Shift (Simp / RPT+ / RPT-), REV, Audio und FLRig."""
 
     repeater_minus_toggled = Signal(bool)
@@ -50,49 +52,19 @@ class RadioControlBar(QWidget):
         self._rpt_minus_btn = QPushButton(self._repeater_shift_caption(SHIFT_SIMPLEX))
         self._rpt_minus_btn.setCheckable(True)
         self._rpt_minus_btn.setMinimumWidth(56)
-        self._rpt_minus_btn.setToolTip(
-            "Repeater-Shift wie am TRX (IF P10): Simp, RPT+ oder RPT-. "
-            "Taste schaltet Minus ein/aus (CAT OS, nur FM/C4FM); ist RPT- aktiv, "
-            "bleibt Minus bei QRG-Änderungen in der App erhalten."
-        )
-        self._rpt_minus_btn.setStyleSheet(
-            "QPushButton:checked {"
-            "  background-color: #5aa9ff;"
-            "  color: #101010;"
-            "  font-weight: bold;"
-            "  border: 1px solid #2a6aaa;"
-            "}"
-        )
         self._rpt_minus_btn.toggled.connect(self._on_repeater_minus_toggled)
 
-        self._tune_btn = QPushButton("Tune")
+        self._tune_btn = QPushButton(tr("radio_control.tune"))
         self._tune_btn.setMinimumWidth(72)
-        self._tune_btn.setToolTip("Antennentuner starten (CAT AC002)")
         self._tune_btn.clicked.connect(self.tune_clicked.emit)
 
-        self._rev_btn = QPushButton("REV")
+        self._rev_btn = QPushButton(tr("radio_control.rev"))
         self._rev_btn.setCheckable(True)
         self._rev_btn.setMinimumWidth(52)
-        self._rev_btn.setToolTip(
-            "Relais: auf Eingangs-QRG schalten (REV ein) / zurück zur "
-            "Ausgangs-QRG (REV aus)"
-        )
-        self._rev_btn.setStyleSheet(
-            "QPushButton:checked {"
-            "  background-color: #5ddc7a;"
-            "  color: #101010;"
-            "  font-weight: bold;"
-            "  border: 1px solid #2f8a47;"
-            "}"
-        )
         self._rev_btn.toggled.connect(self.rev_toggled.emit)
 
-        self._tcall_btn = QPushButton("T.CALL")
+        self._tcall_btn = QPushButton(tr("radio_control.tcall"))
         self._tcall_btn.setMinimumWidth(58)
-        self._tcall_btn.setToolTip(
-            "1750-Hz-Rufton: Taste gedrückt halten (nicht nur anklicken) — "
-            "CAT-Senden, Ton auf Sende- und PC-Ausgabe; loslassen = Stopp"
-        )
         self._tcall_btn.setStyleSheet(
             "QPushButton:pressed {"
             "  background-color: #5ddc7a;"
@@ -106,42 +78,46 @@ class RadioControlBar(QWidget):
 
         icon_size = control_bar_icon_size()
 
-        self._audio_btn = QPushButton("Audioplayer")
+        self._audio_btn = QPushButton(tr("radio_control.audio_player"))
         self._audio_btn.setMinimumWidth(96)
         self._audio_btn.setIcon(control_bar_play_green_icon())
         self._audio_btn.setIconSize(icon_size)
-        self._audio_btn.setToolTip(
-            "Audio-Player (MP3/WAV) mit CAT-PTT für Sendebetrieb"
-        )
         self._audio_btn.clicked.connect(self.audio_player_clicked.emit)
 
-        self._recorder_btn = QPushButton("Audiorecoder")
+        self._recorder_btn = QPushButton(tr("radio_control.audio_recorder"))
         self._recorder_btn.setMinimumWidth(110)
         self._recorder_btn.setIcon(control_bar_record_red_icon())
         self._recorder_btn.setIconSize(icon_size)
-        self._recorder_btn.setToolTip(
-            "MP3-Aufnahme mit CAT-DATA-Mode-Umschaltung "
-            "(USB-CODEC → MP3, Replay über CAT-TX)"
-        )
         self._recorder_btn.clicked.connect(self.audio_recorder_clicked.emit)
 
-        self._sound_btn = QPushButton("Sound")
+        self._sound_btn = QPushButton(tr("radio_control.sound"))
         self._sound_btn.setMinimumWidth(72)
         self._sound_btn.setIcon(control_bar_speaker_white_icon())
         self._sound_btn.setIconSize(icon_size)
-        self._sound_btn.setToolTip(
-            "Globale Soundeinstellungen (Sende/PC, Windows-Mixer)"
-        )
         self._sound_btn.clicked.connect(self.sound_settings_clicked.emit)
 
-        self._live_btn = QPushButton("Live")
+        self._live_btn = QPushButton(tr("radio_control.live"))
         self._live_btn.setMinimumWidth(70)
         self._live_btn.setIcon(control_bar_live_green_led_icon())
         self._live_btn.setIconSize(icon_size)
-        self._live_btn.setToolTip(
-            "Live‑Monitoring und über den PC funken"
-        )
         self._live_btn.clicked.connect(self.live_clicked.emit)
+
+        self._rpt_minus_btn.setStyleSheet(
+            "QPushButton:checked {"
+            "  background-color: #5aa9ff;"
+            "  color: #101010;"
+            "  font-weight: bold;"
+            "  border: 1px solid #2a6aaa;"
+            "}"
+        )
+        self._rev_btn.setStyleSheet(
+            "QPushButton:checked {"
+            "  background-color: #5ddc7a;"
+            "  color: #101010;"
+            "  font-weight: bold;"
+            "  border: 1px solid #2f8a47;"
+            "}"
+        )
 
         ctrl_frame = QFrame(self)
         ctrl_frame.setObjectName("panelFrame")
@@ -159,12 +135,6 @@ class RadioControlBar(QWidget):
         ctrl_layout.addWidget(self._sound_btn)
         ctrl_layout.addStretch(1)
 
-        # --- Rig-Bridge: FLRig (eigenes Panel, rechts) -----------------
-        bridge_tip = (
-            "FLRig-Rig-Bridge über die App-CAT-Leitung.\n"
-            "Grün: Server läuft. Rot: in Einstellungen aus oder gestoppt / kein CAT.\n"
-            "Rot/Grün wechselnd: gerade TCP-Datenverkehr."
-        )
         flrig_frame = QFrame(self)
         flrig_frame.setObjectName("panelFrame")
         flrig_frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -172,20 +142,15 @@ class RadioControlBar(QWidget):
         flrig_layout.setContentsMargins(10, 6, 10, 6)
         flrig_layout.setSpacing(8)
 
-        self._lbl_flrig_title = QLabel("FLRig")
-        self._lbl_flrig_title.setToolTip(bridge_tip)
+        self._lbl_flrig_title = QLabel(tr("radio_control.flrig.title"))
         lf = self._lbl_flrig_title.font()
         lf.setBold(True)
         self._lbl_flrig_title.setFont(lf)
         self._led_flrig = Led(9, flrig_frame)
-        self._led_flrig.setToolTip(bridge_tip)
-        self._lbl_flrig_clients = QLabel("—")
+        self._lbl_flrig_clients = QLabel(tr("common.dash"))
         self._lbl_flrig_clients.setMinimumWidth(22)
         self._lbl_flrig_clients.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        self._lbl_flrig_clients.setToolTip(
-            "Anzahl verbundener Clients (logische Gegenstellen)"
         )
 
         flrig_layout.addWidget(self._lbl_flrig_title)
@@ -195,6 +160,32 @@ class RadioControlBar(QWidget):
         root.addWidget(ctrl_frame, 1)
         root.addWidget(flrig_frame, 0, Qt.AlignmentFlag.AlignRight)
         self.set_controls_enabled(False)
+
+        self._register_retranslate()
+        self.retranslate_ui()
+
+    def retranslate_ui(self) -> None:
+        bridge_tip = tr("radio_control.flrig.tooltip")
+        self._rpt_minus_btn.setToolTip(tr("radio_control.repeater.tooltip"))
+        self._apply_repeater_shift_button()
+        self._tune_btn.setText(tr("radio_control.tune"))
+        self._tune_btn.setToolTip(tr("radio_control.tune.tooltip"))
+        self._rev_btn.setText(tr("radio_control.rev"))
+        self._rev_btn.setToolTip(tr("radio_control.rev.tooltip"))
+        self._tcall_btn.setText(tr("radio_control.tcall"))
+        self._tcall_btn.setToolTip(tr("radio_control.tcall.tooltip"))
+        self._audio_btn.setText(tr("radio_control.audio_player"))
+        self._audio_btn.setToolTip(tr("radio_control.audio_player.tooltip"))
+        self._recorder_btn.setText(tr("radio_control.audio_recorder"))
+        self._recorder_btn.setToolTip(tr("radio_control.audio_recorder.tooltip"))
+        self._live_btn.setText(tr("radio_control.live"))
+        self._live_btn.setToolTip(tr("radio_control.live.tooltip"))
+        self._sound_btn.setText(tr("radio_control.sound"))
+        self._sound_btn.setToolTip(tr("radio_control.sound.tooltip"))
+        self._lbl_flrig_title.setText(tr("radio_control.flrig.title"))
+        self._lbl_flrig_title.setToolTip(bridge_tip)
+        self._led_flrig.setToolTip(bridge_tip)
+        self._lbl_flrig_clients.setToolTip(tr("radio_control.flrig.clients_tooltip"))
 
     def refresh_rig_bridge_indicators(
         self,
@@ -232,7 +223,7 @@ class RadioControlBar(QWidget):
         if fl_want and fl_on:
             self._lbl_flrig_clients.setText(str(n_fl))
         else:
-            self._lbl_flrig_clients.setText("—")
+            self._lbl_flrig_clients.setText(tr("common.dash"))
 
     def set_rev_checked(self, checked: bool) -> None:
         self._rev_btn.blockSignals(True)
@@ -243,10 +234,10 @@ class RadioControlBar(QWidget):
     def _repeater_shift_caption(direction: int) -> str:
         d = int(direction)
         if d == SHIFT_PLUS:
-            return "RPT+"
+            return tr("radio_control.repeater.rpt_plus")
         if d == SHIFT_MINUS:
-            return "RPT-"
-        return "Simp"
+            return tr("radio_control.repeater.rpt_minus")
+        return tr("radio_control.repeater.simp")
 
     def _apply_repeater_shift_button(self) -> None:
         """Setzt Text; Checked nur bei Minus (Taste = Minus ein/aus)."""

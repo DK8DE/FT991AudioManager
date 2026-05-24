@@ -36,6 +36,8 @@ from PySide6.QtWidgets import (
 )
 
 from cat import CatLog, LogEntry, LogLevel
+from i18n import tr
+from i18n.retranslatable import RetranslatableMixin
 
 from .theme import current_log_colors, is_dark_mode
 
@@ -84,7 +86,7 @@ class LogBridge(QObject):
         self.cleared.emit()
 
 
-class LogPanel(QWidget):
+class LogPanel(RetranslatableMixin, QWidget):
     """Eigentliche Log-Ansicht mit Toolbar.
 
     Eingehende Log-Einträge werden in einem internen Puffer gesammelt und
@@ -113,35 +115,30 @@ class LogPanel(QWidget):
         toolbar.setSpacing(6)
         layout.addLayout(toolbar)
 
-        toolbar.addWidget(QLabel("<b>CAT-Log</b>"))
+        self._heading_label = QLabel()
+        toolbar.addWidget(self._heading_label)
 
-        self.copy_button = QPushButton("Kopieren")
-        self.copy_button.setToolTip("Gesamten Log-Inhalt in die Zwischenablage kopieren")
+        self.copy_button = QPushButton()
         self.copy_button.clicked.connect(self._on_copy)
         toolbar.addWidget(self.copy_button)
 
-        self.save_button = QPushButton("Speichern…")
-        self.save_button.setToolTip("Log in Textdatei speichern")
+        self.save_button = QPushButton()
         self.save_button.clicked.connect(self._on_save)
         toolbar.addWidget(self.save_button)
 
-        self.clear_button = QPushButton("Leeren")
+        self.clear_button = QPushButton()
         self.clear_button.clicked.connect(self._on_clear)
         toolbar.addWidget(self.clear_button)
 
         toolbar.addSpacing(12)
 
-        self.autoscroll_check = QCheckBox("Auto-Scroll")
+        self.autoscroll_check = QCheckBox()
         self.autoscroll_check.setChecked(True)
         self.autoscroll_check.toggled.connect(self._on_autoscroll_toggled)
         toolbar.addWidget(self.autoscroll_check)
 
-        self.hide_polling_check = QCheckBox("Polling ausblenden")
+        self.hide_polling_check = QCheckBox()
         self.hide_polling_check.setChecked(True)
-        self.hide_polling_check.setToolTip(
-            "TX-/RM-Polling-Befehle nicht anzeigen — empfohlen, da diese sonst "
-            "den Log fluten."
-        )
         self.hide_polling_check.toggled.connect(self._on_hide_polling_toggled)
         toolbar.addWidget(self.hide_polling_check)
 
@@ -177,6 +174,19 @@ class LogPanel(QWidget):
         for entry in snapshot:
             self._pending.append(entry)
         self._flush_pending()
+        self.retranslate_ui()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self._heading_label.setText(tr("log.heading"))
+        self.copy_button.setText(tr("log.btn.copy"))
+        self.copy_button.setToolTip(tr("log.btn.copy.tooltip"))
+        self.save_button.setText(tr("log.btn.save"))
+        self.save_button.setToolTip(tr("log.btn.save.tooltip"))
+        self.clear_button.setText(tr("log.btn.clear"))
+        self.autoscroll_check.setText(tr("log.check.autoscroll"))
+        self.hide_polling_check.setText(tr("log.check.hide_polling"))
+        self.hide_polling_check.setToolTip(tr("log.check.hide_polling.tooltip"))
 
     # ------------------------------------------------------------------
     # Slots
@@ -266,9 +276,9 @@ class LogPanel(QWidget):
     def _on_save(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "CAT-Log speichern",
-            "cat-log.txt",
-            "Textdateien (*.txt);;Alle Dateien (*)",
+            tr("log.file.save.title"),
+            tr("log.file.save.default"),
+            tr("log.file.filter.txt"),
         )
         if not path:
             return
@@ -276,13 +286,13 @@ class LogPanel(QWidget):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.view.toPlainText())
         except OSError as exc:
-            QMessageBox.critical(self, "Speichern fehlgeschlagen", str(exc))
+            QMessageBox.critical(self, tr("log.msg.save_failed.title"), str(exc))
 
     def _on_autoscroll_toggled(self, checked: bool) -> None:
         self._auto_scroll = bool(checked)
 
 
-class LogDockWidget(QDockWidget):
+class LogDockWidget(RetranslatableMixin, QDockWidget):
     """Andockbares Log-Fenster (Legacy — wird nicht mehr im Hauptfenster genutzt).
 
     Behalten für Tests/Smoke-Checks und Rückwärtskompatibilität. Das produktive
@@ -290,7 +300,7 @@ class LogDockWidget(QDockWidget):
     """
 
     def __init__(self, log: CatLog, parent: Optional[QWidget] = None) -> None:
-        super().__init__("CAT-Log", parent)
+        super().__init__(parent)
         self.setObjectName("CatLogDock")
         self.setAllowedAreas(
             Qt.DockWidgetArea.BottomDockWidgetArea
@@ -304,6 +314,12 @@ class LogDockWidget(QDockWidget):
 
         self.panel = LogPanel(log)
         self.setWidget(self.panel)
+        self.retranslate_ui()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("log.dock.title"))
+        self.panel.retranslate_ui()
 
 
 # ----------------------------------------------------------------------
@@ -311,7 +327,7 @@ class LogDockWidget(QDockWidget):
 # ----------------------------------------------------------------------
 
 
-class LogWindow(QWidget):
+class LogWindow(RetranslatableMixin, QWidget):
     """Eigenständiges Toplevel-Fenster für das CAT-Log.
 
     Wird über das Ansicht-Menü ein-/ausgeblendet. Schließen des Fensters
@@ -329,7 +345,6 @@ class LogWindow(QWidget):
         # in der Taskleiste erscheinen und sich frei bewegen lassen.
         super().__init__(None)
         from .app_icon import app_icon
-        self.setWindowTitle("CAT-Log — FT-991/A Audiomanager")
         self.setWindowIcon(app_icon())
         self.setWindowFlags(Qt.WindowType.Window)
         self.resize(900, 420)
@@ -338,6 +353,12 @@ class LogWindow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self.panel = LogPanel(log)
         layout.addWidget(self.panel)
+        self.retranslate_ui()
+        self._register_retranslate()
+
+    def retranslate_ui(self) -> None:
+        self.setWindowTitle(tr("log.window.title"))
+        self.panel.retranslate_ui()
 
     # ------------------------------------------------------------------
     # Theme-Anbindung (Durchreichen ans LogPanel)

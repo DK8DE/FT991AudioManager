@@ -5,27 +5,12 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from PySide6.QtCore import QCoreApplication
 
 # Stellt sicher, dass das Projektverzeichnis im PYTHONPATH liegt, auch wenn
 # main.py per Doppelklick gestartet wird.
 _PROJECT_ROOT = Path(__file__).resolve().parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
-
-
-def _install_german_qt_translations(app: QCoreApplication) -> None:
-    """Lädt die mitgelieferten Qt-Übersetzungen (u. a. Ja/Nein/Abbrechen, OK)."""
-    from PySide6.QtCore import QLibraryInfo, QTranslator
-
-    path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
-    for prefix in ("qtbase", "qt"):
-        translator = QTranslator()
-        if translator.load(f"{prefix}_de", path):
-            app.installTranslator(translator)
 
 
 def main() -> int:
@@ -42,16 +27,18 @@ def main() -> int:
             message=r"COMError attempting to get property",
         )
 
-    from PySide6.QtCore import QLocale
     from PySide6.QtWidgets import QApplication
 
     from gui.app_icon import app_icon
     from gui.theme import apply_theme
+    from i18n import init_language, install_qt_translations
     from model import AppSettings
 
+    settings = AppSettings.load()
+    init_language(settings.ui.language)
+
     app = QApplication(sys.argv)
-    QLocale.setDefault(QLocale(QLocale.Language.German, QLocale.Country.Germany))
-    _install_german_qt_translations(app)
+    install_qt_translations(app, settings.ui.language)
 
     from gui.tooltip_text import install_tooltip_line_wrap
 
@@ -63,8 +50,6 @@ def main() -> int:
     # App-Icon zentral setzen: vererbt sich auf alle Top-Level-Fenster
     # (Title-Bar + Windows-Taskbar / macOS-Dock / Linux-Panel).
     app.setWindowIcon(app_icon())
-
-    settings = AppSettings.load()
     apply_theme(app, dark=settings.ui.force_dark_mode)
 
     window = MainWindow(settings)

@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from i18n import tr
 from mapping.rx_mapping import RxMode
 
 #: Combo-Daten: nur VFO-Modus, keine Frequenz setzen.
@@ -21,7 +22,11 @@ class AmateurBand:
 
     min_hz: int
     max_hz: int
-    name: str
+    key: str
+
+    @property
+    def name(self) -> str:
+        return tr(f"amateur_bands.{self.key}")
 
     @property
     def center_hz(self) -> int:
@@ -31,28 +36,33 @@ class AmateurBand:
         """``14,000 – 14,350 MHz (20 m)`` — Meterangabe in Klammern."""
         lo_mhz = self.min_hz / 1_000_000.0
         hi_mhz = self.max_hz / 1_000_000.0
-        return f"{lo_mhz:.3f} – {hi_mhz:.3f} MHz ({self.name})"
+        return tr(
+            "amateur_bands.combo_label",
+            lo=lo_mhz,
+            hi=hi_mhz,
+            name=self.name,
+        )
 
 
-# (min_hz, max_hz, Kurzname) — Grenzen inklusive; aufsteigend nach Frequenz.
+# (min_hz, max_hz, i18n-key) — Grenzen inklusive; aufsteigend nach Frequenz.
 _AMATEUR_BANDS: Tuple[Tuple[int, int, str], ...] = (
-    (1_810_000, 1_850_000, "160 m"),
-    (3_500_000, 3_800_000, "80 m"),
-    (5_351_500, 5_366_500, "60 m"),
-    (7_000_000, 7_200_000, "40 m"),
-    (10_100_000, 10_150_000, "30 m"),
-    (14_000_000, 14_350_000, "20 m"),
-    (18_068_000, 18_168_000, "17 m"),
-    (21_000_000, 21_450_000, "15 m"),
-    (24_890_000, 24_990_000, "12 m"),
-    (28_000_000, 29_700_000, "10 m"),
-    (50_000_000, 54_000_000, "6 m"),
-    (144_000_000, 146_000_000, "2 m"),
-    (430_000_000, 440_000_000, "70 cm"),
+    (1_810_000, 1_850_000, "160m"),
+    (3_500_000, 3_800_000, "80m"),
+    (5_351_500, 5_366_500, "60m"),
+    (7_000_000, 7_200_000, "40m"),
+    (10_100_000, 10_150_000, "30m"),
+    (14_000_000, 14_350_000, "20m"),
+    (18_068_000, 18_168_000, "17m"),
+    (21_000_000, 21_450_000, "15m"),
+    (24_890_000, 24_990_000, "12m"),
+    (28_000_000, 29_700_000, "10m"),
+    (50_000_000, 54_000_000, "6m"),
+    (144_000_000, 146_000_000, "2m"),
+    (430_000_000, 440_000_000, "70cm"),
 )
 
 AMATEUR_BANDS: Tuple[AmateurBand, ...] = tuple(
-    AmateurBand(lo, hi, name) for lo, hi, name in _AMATEUR_BANDS
+    AmateurBand(lo, hi, key) for lo, hi, key in _AMATEUR_BANDS
 )
 
 #: Von 70 cm abwärts (für Band-Dropdown).
@@ -96,7 +106,7 @@ def preferred_voice_rx_mode_for_amateur_hz(hz: int) -> Optional[RxMode]:
     band = amateur_band_at_hz(int(hz))
     if band is None:
         return None
-    if band.name in ("6 m", "2 m", "70 cm"):
+    if band.key in ("6m", "2m", "70cm"):
         return RxMode.FM
     if band.max_hz < 10_000_000:
         return RxMode.LSB
@@ -107,7 +117,7 @@ def preferred_voice_rx_mode_for_amateur_hz(hz: int) -> Optional[RxMode]:
 
 def combo_entries_high_to_low() -> List[Tuple[str, int]]:
     """``[(Anzeigetext, Nutzdaten), …]`` — Nutzdaten = ``VFO_BAND_CHOICE`` oder ``center_hz``."""
-    out: List[Tuple[str, int]] = [("VFO", VFO_BAND_CHOICE)]
+    out: List[Tuple[str, int]] = [(tr("amateur_bands.vfo"), VFO_BAND_CHOICE)]
     for band in AMATEUR_BANDS_HIGH_TO_LOW:
         out.append((band.combo_label(), band.center_hz))
     return out
