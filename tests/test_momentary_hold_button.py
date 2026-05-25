@@ -85,6 +85,43 @@ def test_momentary_hold_no_focus_policy(qapp: QApplication) -> None:
     assert btn.focusPolicy() == Qt.FocusPolicy.NoFocus
 
 
+def test_momentary_hold_touch_spurious_release_keeps_hold(qapp: QApplication) -> None:
+    if sys.platform != "win32":
+        pytest.skip("Windows-Touch-Long-Press")
+    import time
+
+    btn = MomentaryHoldButton("PTT")
+    btn.show()
+    releases: list[bool] = []
+    btn.released.connect(lambda: releases.append(True))
+
+    btn._handle_touch_point(1, Qt.TouchPointState.TouchPointPressed, None)
+    btn._engage_mono = time.monotonic() - 0.5
+    qapp.processEvents()
+    assert btn.is_held()
+
+    btn._handle_touch_point(1, Qt.TouchPointState.TouchPointReleased, None)
+    qapp.processEvents()
+    assert btn.is_held()
+    assert releases == []
+
+    QTest.mouseRelease(btn, Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert not btn.is_held()
+    assert releases == [True]
+
+
+def test_windows_touch_suppress_roundtrip() -> None:
+    from gui.windows_touch_suppress import (
+        restore_windows_touch_press_and_hold,
+        suppress_windows_touch_press_and_hold,
+    )
+
+    suppress_windows_touch_press_and_hold()
+    restore_windows_touch_press_and_hold()
+    restore_windows_touch_press_and_hold()
+
+
 def test_momentary_hold_right_click_ignored_while_left_held(qapp: QApplication) -> None:
     btn = MomentaryHoldButton("PTT")
     btn.show()

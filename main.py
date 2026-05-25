@@ -37,6 +37,7 @@ def main() -> int:
     )
 
     from gui.app_icon import app_icon
+    from gui.windows_touch_suppress import restore_windows_touch_press_and_hold
     from gui.theme import apply_theme
     from i18n import init_language, install_qt_translations
     from model import AppSettings
@@ -46,6 +47,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     install_qt_translations(app, settings.ui.language)
+    app.aboutToQuit.connect(restore_windows_touch_press_and_hold)
 
     from live.live_devices import remap_live_settings_devices
 

@@ -64,7 +64,10 @@ class RadioControlBar(QWidget, RetranslatableMixin):
         self._rev_btn.setMinimumWidth(52)
         self._rev_btn.toggled.connect(self.rev_toggled.emit)
 
-        self._tcall_btn = MomentaryHoldButton(tr("radio_control.tcall"))
+        self._tcall_btn = MomentaryHoldButton(
+            tr("radio_control.tcall"),
+            touch_min_width_only=True,
+        )
         self._tcall_btn.setMinimumWidth(58)
         self._tcall_btn.setStyleSheet(
             "QPushButton:pressed {"

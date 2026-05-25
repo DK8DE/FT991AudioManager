@@ -124,6 +124,7 @@ def _mk_dev_value() -> QLabel:
 _LIVE_PTT_BTN_PAD = "6px 16px"
 _LIVE_PTT_BTN_RADIUS = "4px"
 _LIVE_PTT_BTN_BORDER = "2px"
+_LIVE_PTT_BTN_HEIGHT = 44
 
 
 def _live_ptt_idle_button_style() -> str:
@@ -486,6 +487,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._b_ptt.setToolTip(tr("live.btn.ptt.tooltip"))
         self._b_ptt_latch.setText(tr("live.btn.ptt_latch"))
         self._b_ptt_latch.setToolTip(tr("live.btn.ptt_latch.tooltip"))
+        self._sync_live_ptt_button_heights()
         self._tx_label.setToolTip(tr("live.tx_label.tooltip"))
         self._sync_live_eq_master_look()
         self._refresh_gate_comp_readouts()
@@ -541,6 +543,18 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             )
         if getattr(self, "_b_ptt_latch", None):
             self._b_ptt_latch.setStyleSheet(active_style if latched else idle_style)
+        self._sync_live_ptt_button_heights()
+
+    def _sync_live_ptt_button_heights(self) -> None:
+        """PTT und „PTT halten“ — Touch-Höhe 44 px."""
+        ptt = getattr(self, "_b_ptt", None)
+        latch = getattr(self, "_b_ptt_latch", None)
+        if ptt is None or latch is None:
+            return
+        h = _LIVE_PTT_BTN_HEIGHT
+        for btn in (ptt, latch):
+            btn.setMinimumHeight(h)
+            btn.setFixedHeight(h)
 
     def _refresh_ptt_controls_enabled(self) -> None:
         busy = bool(self._cat_live_start_busy)
