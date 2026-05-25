@@ -27,7 +27,14 @@ def main() -> int:
             message=r"COMError attempting to get property",
         )
 
+    from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QApplication
+
+    # Touch direkt an Widgets — kein zusätzlicher synthetischer Maus-Klick danach.
+    QApplication.setAttribute(
+        Qt.ApplicationAttribute.AA_SynthesizeMouseForUnhandledTabletEvents,
+        False,
+    )
 
     from gui.app_icon import app_icon
     from gui.theme import apply_theme

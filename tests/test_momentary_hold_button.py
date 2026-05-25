@@ -34,7 +34,27 @@ def test_momentary_hold_mouse_press_release(qapp: QApplication) -> None:
     assert presses == [True]
     assert releases == []
 
+def test_momentary_hold_focus_out_while_held(qapp: QApplication) -> None:
+    btn = MomentaryHoldButton("PTT")
+    btn.show()
+    releases: list[bool] = []
+    btn.released.connect(lambda: releases.append(True))
+
+    QTest.mousePress(btn, Qt.MouseButton.LeftButton)
+    qapp.processEvents()
+    assert btn.is_held()
+
+    btn.clearFocus()
+    qapp.processEvents()
+    assert btn.is_held()
+    assert releases == []
+
     QTest.mouseRelease(btn, Qt.MouseButton.LeftButton)
     qapp.processEvents()
     assert not btn.is_held()
     assert releases == [True]
+
+
+def test_momentary_hold_no_focus_policy(qapp: QApplication) -> None:
+    btn = MomentaryHoldButton("PTT")
+    assert btn.focusPolicy() == Qt.FocusPolicy.NoFocus

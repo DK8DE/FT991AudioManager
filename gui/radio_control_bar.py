@@ -7,6 +7,7 @@ from typing import Any, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QWidget
 
+from gui.momentary_hold_button import MomentaryHoldButton
 from i18n import tr
 from i18n.retranslatable import RetranslatableMixin
 from mapping.repeater_offset import SHIFT_MINUS, SHIFT_PLUS, SHIFT_SIMPLEX
@@ -63,7 +64,7 @@ class RadioControlBar(QWidget, RetranslatableMixin):
         self._rev_btn.setMinimumWidth(52)
         self._rev_btn.toggled.connect(self.rev_toggled.emit)
 
-        self._tcall_btn = QPushButton(tr("radio_control.tcall"))
+        self._tcall_btn = MomentaryHoldButton(tr("radio_control.tcall"))
         self._tcall_btn.setMinimumWidth(58)
         self._tcall_btn.setStyleSheet(
             "QPushButton:pressed {"
@@ -275,7 +276,8 @@ class RadioControlBar(QWidget, RetranslatableMixin):
         return bool(self._rpt_minus_btn.isChecked())
 
     def is_t_call_pressed(self) -> bool:
-        return self._tcall_btn.isDown()
+        btn = self._tcall_btn
+        return btn.isDown() or btn.is_held()
 
     def set_t_call_active(self, active: bool) -> None:
         self._tcall_btn.setDown(bool(active))
@@ -287,6 +289,7 @@ class RadioControlBar(QWidget, RetranslatableMixin):
         self._tcall_btn.setEnabled(enabled)
         if not enabled:
             self.set_rev_checked(False)
+            self._tcall_btn.release_hold()
             self.set_t_call_active(False)
             self.set_repeater_minus_checked(False)
         self._audio_btn.setEnabled(True)
