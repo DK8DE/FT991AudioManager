@@ -266,6 +266,7 @@ STRINGS: dict[str, str] = {
     'live.label.samplerate.tooltip': 'Automatically matches the highest sample rate valid for all\nselected devices (Windows/WASAPI + PortAudio check).\nBluetooth headsets often use HFP (16 kHz) for the mic and a different profile for playback — the app picks a compatible PortAudio pair internally.',
     'live.label.samplerate.value': '{sr} Hz (Windows)',
     'live.loading.message': 'Loading Live window…\nInitializing audio devices and DSP — please wait a moment.',
+    'live.loading.elapsed': 'Elapsed: {seconds:.1f} s',
     'live.loading.title': 'Live',
     'live.msgbox.device_changed.text': 'Device selection applied — Live was stopped.',
     'live.msgbox.device_changed.title': 'Device changed',

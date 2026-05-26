@@ -2912,13 +2912,18 @@ class MainWindow(QMainWindow, RetranslatableMixin):
     def _on_equalizer_window_closed(self) -> None:
         pass
 
-    def _ensure_live_window(self):  # type: ignore[no-untyped-def]
+    def _ensure_live_window(self, progress=None):  # type: ignore[no-untyped-def]
         """Live-DSP Fenster lazy laden (heavy deps: scipy/sounddevice)."""
         win = self._live_window
         if win is not None:
             return win
+        if progress is not None:
+            progress.bump(8)
         from gui.live_window import LiveWindow as _LiveWin
 
+        if progress is not None:
+            progress.bump(18)
+            QApplication.processEvents()
         w = _LiveWin(
             self._settings,
             persist_settings=self._persist_settings,
@@ -2929,6 +2934,9 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             other_audio_blocking=self._live_transmit_blocked_by_other_windows,
             profile_widget=self.profile_widget,
         )
+        if progress is not None:
+            progress.bump(75)
+            QApplication.processEvents()
         if not self._live_tx_meter_bridge:
             h = getattr(w, "handle_tx_state_changed", None)
             if callable(h):
@@ -2939,34 +2947,31 @@ class MainWindow(QMainWindow, RetranslatableMixin):
                 last = getattr(self.meter_widget, "_last_tx_state", None)
                 if last is not None:
                     led_sync(int(last))
+        if progress is not None:
+            progress.bump(88)
         self._live_window = w
         return w
 
     def _on_live_action(self) -> None:
-        loading: Optional[QProgressDialog] = None
+        loading = None
         win = self._live_window
         try:
             if win is None:
-                loading = QProgressDialog(
-                    tr("live.loading.message"),
-                    "",
-                    0,
-                    0,
-                    self,
-                )
-                loading.setWindowTitle(tr("live.loading.title"))
-                loading.setWindowModality(Qt.WindowModality.WindowModal)
-                loading.setMinimumDuration(0)
-                loading.setCancelButton(None)
-                loading.setAutoClose(False)
-                loading.setAutoReset(False)
-                loading.show()
-                QApplication.processEvents()
+                from gui.animated_wait_dialog import AnimatedWaitDialog
 
-            win = self._ensure_live_window()
+                loading = AnimatedWaitDialog(
+                    tr("live.loading.message"),
+                    tr("live.loading.title"),
+                    parent=self,
+                )
+                loading.start()
+
+            win = self._ensure_live_window(progress=loading)
             rf = getattr(win, "reload_from_app_settings", None)
             if callable(rf):
                 rf()
+            if loading is not None:
+                loading.bump(92)
             led_sync = getattr(win, "_update_tx_rx_led", None)
             if callable(led_sync):
                 last = getattr(self.meter_widget, "_last_tx_state", None)
@@ -2974,6 +2979,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
                     led_sync(int(last))
         finally:
             if loading is not None:
+                loading.finish()
                 loading.close()
 
         if win is not None:
