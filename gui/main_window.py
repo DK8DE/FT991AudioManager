@@ -2932,6 +2932,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             audio_radio_session=self._audio_radio_session,
             operating_mode_provider=self._main_operating_mode,
             other_audio_blocking=self._live_transmit_blocked_by_other_windows,
+            request_cat_tx_poll=self.meter_widget.request_immediate_poll,
             profile_widget=self.profile_widget,
         )
         if progress is not None:

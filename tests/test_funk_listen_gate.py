@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from live import funk_listen_gate as flg
 from live.live_audio_engine import LiveAudioEngine
 from model.live_settings import LiveFunkListenGateSettings, LiveSettings
 
@@ -61,17 +62,25 @@ def test_funk_listen_gate_blocks_quiet_hiss() -> None:
     assert loud_peak > 0.01
 
 
-def test_funk_listen_gate_effective_respects_tuning_flag() -> None:
-    from live import funk_listen_gate as flg
+def test_funk_listen_gate_from_dict_uses_saved_values() -> None:
+    g = LiveFunkListenGateSettings.from_dict({"threshold_db": -48.0})
+    assert abs(g.threshold_db + 48.0) < 0.01
 
-    if flg.SHOW_TUNING_UI:
-        g = LiveFunkListenGateSettings.effective({"threshold_db": -48.0})
-        assert abs(g.threshold_db + 48.0) < 0.01
-    else:
-        g = LiveFunkListenGateSettings.effective({"threshold_db": -48.0})
-        assert abs(g.threshold_db - flg.FIXED_THRESHOLD_DB) < 0.01
-        assert abs(g.hold_ms - flg.FIXED_HOLD_MS) < 0.01
-        assert abs(g.release_ms - flg.FIXED_RELEASE_MS) < 0.01
+
+def test_funk_listen_gate_defaults_from_install_constants() -> None:
+    g = LiveFunkListenGateSettings.from_dict(None)
+    assert abs(g.threshold_db - flg.DEFAULT_THRESHOLD_DB) < 0.01
+    assert abs(g.hold_ms - flg.DEFAULT_HOLD_MS) < 0.01
+    assert abs(g.release_ms - flg.DEFAULT_RELEASE_MS) < 0.01
+
+
+def test_live_settings_persist_funk_listen_gate() -> None:
+    ls = LiveSettings()
+    ls.funk_listen_gate.threshold_db = -41.0
+    raw = ls.to_dict()
+    assert "funk_listen_gate" in raw
+    loaded = LiveSettings.from_dict(raw)
+    assert abs(loaded.funk_listen_gate.threshold_db + 41.0) < 0.01
 
 
 def test_funk_listen_gate_settings_roundtrip() -> None:

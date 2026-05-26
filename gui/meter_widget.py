@@ -412,6 +412,12 @@ class MeterPoller(QObject):
         QTimer.singleShot(0, self._tick)
 
     @Slot()
+    def request_immediate_tick(self) -> None:
+        """Nächsten Poll-Zyklus sofort anstoßen (z. B. nach Live-PTT)."""
+        if self._active:
+            QTimer.singleShot(0, self._tick)
+
+    @Slot()
     def stop(self) -> None:
         if not self._active:
             return
@@ -2918,6 +2924,11 @@ class MeterWidget(RetranslatableMixin, QWidget):
         """Setzt einen mit :meth:`pause_polling` pausierten Poller fort."""
         if self._poller is not None:
             _invoke_poller_slot(self._poller, "start")
+
+    def request_immediate_poll(self) -> None:
+        """TX/RX-Status ohne Warten auf das Poll-Intervall aktualisieren."""
+        if self._poller is not None:
+            _invoke_poller_slot(self._poller, "request_immediate_tick")
 
     def notify_app_frequency_write(self, hz: int, hold_ms: int = -1) -> None:
         """GUI: Frequenz-Schreiben — Poller kurz pausieren."""

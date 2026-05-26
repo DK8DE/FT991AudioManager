@@ -9,6 +9,12 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, List
 
+
+def _default_funk_listen_gate() -> "LiveFunkListenGateSettings":
+    from live.funk_listen_gate import default_funk_listen_gate_settings
+
+    return default_funk_listen_gate_settings()
+
 # Sprach-/Kopfhörer-optimierte 7-Bänder (Hz)
 DEFAULT_LIVE_EQ_FREQ_HZ = (80.0, 160.0, 315.0, 630.0, 1250.0, 2500.0, 5000.0)
 
@@ -97,26 +103,18 @@ class LiveFunkListenGateSettings:
 
     @classmethod
     def from_dict(cls, raw: object) -> "LiveFunkListenGateSettings":
+        defaults = _default_funk_listen_gate()
         if not isinstance(raw, dict):
-            return cls()
+            return _default_funk_listen_gate()
         g = cls(
-            enabled=bool(raw.get("enabled", True)),
-            threshold_db=float(raw.get("threshold_db", -34.3)),
-            attack_ms=float(raw.get("attack_ms", 1.5)),
-            hold_ms=float(raw.get("hold_ms", 80.0)),
-            release_ms=float(raw.get("release_ms", 80.0)),
+            enabled=bool(raw.get("enabled", defaults.enabled)),
+            threshold_db=float(raw.get("threshold_db", defaults.threshold_db)),
+            attack_ms=float(raw.get("attack_ms", defaults.attack_ms)),
+            hold_ms=float(raw.get("hold_ms", defaults.hold_ms)),
+            release_ms=float(raw.get("release_ms", defaults.release_ms)),
         )
         g.clamp()
         return g
-
-    @classmethod
-    def effective(cls, raw: object) -> "LiveFunkListenGateSettings":
-        """Persistierte Werte (Test-UI) oder fest verdrahtete Konstanten."""
-        from live.funk_listen_gate import SHOW_TUNING_UI, fixed_funk_listen_gate_settings
-
-        if not SHOW_TUNING_UI:
-            return fixed_funk_listen_gate_settings()
-        return cls.from_dict(raw)
 
 
 @dataclass
@@ -214,9 +212,10 @@ class LiveSettings:
     blocksize: int = DEFAULT_BLOCKSIZE
     #: Optional gespeicherte Fenstergeometrie (Base64 QByteArray wie andere Fenster).
     window_geometry: str = ""
+    noise_filter_window_geometry: str = ""
     gate: LiveGateSettings = field(default_factory=LiveGateSettings)
     funk_listen_gate: LiveFunkListenGateSettings = field(
-        default_factory=lambda: LiveFunkListenGateSettings.effective(None)
+        default_factory=_default_funk_listen_gate
     )
     compressor: LiveCompressorSettings = field(default_factory=LiveCompressorSettings)
     eq_bands: List[LiveEqBandSettings] = field(default_factory=_default_eq_bands)
@@ -293,7 +292,11 @@ class LiveSettings:
             "samplerate": int(self.samplerate),
             "blocksize": int(self.blocksize),
             "window_geometry": str(self.window_geometry or ""),
+            "noise_filter_window_geometry": str(
+                self.noise_filter_window_geometry or ""
+            ),
             "gate": self.gate.to_dict(),
+            "funk_listen_gate": self.funk_listen_gate.to_dict(),
             "compressor": self.compressor.to_dict(),
             "eq_bands": [b.to_dict() for b in self.eq_bands],
             "eq_enabled": bool(self.eq_enabled),
@@ -306,7 +309,7 @@ class LiveSettings:
             return cls()
 
         gates = LiveGateSettings.from_dict(raw.get("gate"))
-        funk_gate = LiveFunkListenGateSettings.effective(raw.get("funk_listen_gate"))
+        funk_gate = LiveFunkListenGateSettings.from_dict(raw.get("funk_listen_gate"))
         comps = LiveCompressorSettings.from_dict(raw.get("compressor"))
         raw_bands = raw.get("eq_bands")
         bands_e: List[LiveEqBandSettings] = []
@@ -351,6 +354,9 @@ class LiveSettings:
             samplerate=int(raw.get("samplerate", DEFAULT_SAMPLERATE)),
             blocksize=int(raw.get("blocksize", DEFAULT_BLOCKSIZE)),
             window_geometry=str(raw.get("window_geometry", "") or ""),
+            noise_filter_window_geometry=str(
+                raw.get("noise_filter_window_geometry", "") or ""
+            ),
             gate=gates,
             funk_listen_gate=funk_gate,
             compressor=comps,
