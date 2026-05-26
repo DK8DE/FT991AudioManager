@@ -8,6 +8,9 @@ from live.live_devices import (
     _disambiguate_device_rows,
     _looks_like_legacy_pa_index,
     _migrate_legacy_pa_index_to_qt_id,
+    _pa_index_from_saved_label,
+    physical_same_input,
+    physical_same_output,
     remap_live_device_id,
     remap_live_settings_devices,
     resolve_live_pa_index,
@@ -106,3 +109,46 @@ def test_remap_live_settings_migrates_numeric_ids() -> None:
     assert changed is True
     assert live.input_device_id == "guid-in-33"
     assert live.output_device_id == "guid-out-24"
+
+
+def test_physical_same_output_only_by_pa_index() -> None:
+    """Ähnliche Gerätenamen dürfen Funk- und Monitor-Ausgang nicht zusammenlegen."""
+    with patch(
+        "live.live_devices.coerce_output_pa_index",
+        side_effect=lambda x: x,
+    ):
+        assert physical_same_output(16, 17) is False
+        assert physical_same_output(16, 16) is True
+
+
+def test_physical_same_input_only_by_pa_index() -> None:
+    with patch(
+        "live.live_devices.coerce_input_pa_index",
+        side_effect=lambda x: x,
+    ):
+        assert physical_same_input(20, 21) is False
+        assert physical_same_input(20, 20) is True
+
+
+def test_pa_index_from_saved_label() -> None:
+    assert _pa_index_from_saved_label("USB Audio CODEC [PA #22, WASAPI]") == 22
+    assert _pa_index_from_saved_label("USB Audio CODEC") is None
+
+
+def test_resolve_live_pa_index_uses_pa_hint_from_label() -> None:
+    with patch(
+        "live.live_devices.remap_live_device_id",
+        return_value=("guid-missing", "USB Audio CODEC"),
+    ), patch(
+        "live.live_devices._qt_to_pa_map",
+        return_value={},
+    ), patch(
+        "live.live_devices._validate_pa_index_for_direction",
+        return_value=True,
+    ):
+        pa = resolve_live_pa_index(
+            "guid-missing",
+            "USB Audio CODEC [PA #22, WASAPI]",
+            input_device=False,
+        )
+    assert pa == 22

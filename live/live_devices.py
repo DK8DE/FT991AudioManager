@@ -377,6 +377,32 @@ def _qt_to_pa_map(*, input_device: bool) -> dict[str, int]:
     return out
 
 
+def _pa_index_from_saved_label(label: str) -> Optional[int]:
+    """PortAudio-Index aus gespeichertem Anzeigenamen ``… [PA #12, WASAPI]``."""
+    m = re.search(r"\[PA #(\d+)", str(label or ""))
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def _validate_pa_index_for_direction(
+    pa_index: int,
+    *,
+    input_device: bool,
+) -> bool:
+    if not _HAVE_SD or _sd is None:
+        return False
+    try:
+        d = _sd.query_devices(int(pa_index))  # type: ignore[arg-type]
+        key = "max_input_channels" if input_device else "max_output_channels"
+        return int(d.get(key) or 0) > 0
+    except Exception:
+        return False
+
+
 def resolve_live_pa_index(
     saved_id: str,
     saved_label: str = "",
@@ -400,6 +426,12 @@ def resolve_live_pa_index(
     if qt_id in pa_map:
         return pa_map[qt_id]
     label = qt_label or device_label_for_id(qt_id, input_device=input_device)
+    for hint_label in (saved_label, label):
+        pa_hint = _pa_index_from_saved_label(hint_label)
+        if pa_hint is not None and _validate_pa_index_for_direction(
+            pa_hint, input_device=input_device
+        ):
+            return pa_hint
     if not label:
         return None
     row = _best_pa_row_for_qt_name(_sd, label, want_input=input_device)
@@ -638,23 +670,15 @@ def coerce_output_pa_index(pa_index_optional: Optional[int]) -> Optional[int]:
 
 
 def physical_same_output(pa_a: Optional[int], pa_b: Optional[int]) -> bool:
-    """Zwei Ausgangs-Wahlen (:func:`parse_device_id`‑Index inkl. Default) dasselbe Gerät?"""
+    """Zwei Ausgangs-Wahlen (:func:`parse_device_id`‑Index inkl. Default) dasselbe Gerät?
+
+    Nur gleicher PortAudio-Index zählt. Ähnliche Gerätenamen (z. B. zwei
+    „USB Audio CODEC“-Karten) dürfen nicht zusammengelegt werden.
+    """
     ia = coerce_output_pa_index(pa_a)
     ib = coerce_output_pa_index(pa_b)
     if ia is not None and ib is not None:
-        if ia == ib:
-            return True
-        if not _HAVE_SD or _sd is None:
-            return False
-        try:
-            da = _sd.query_devices(ia, "output")  # type: ignore[arg-type]
-            db = _sd.query_devices(ib, "output")  # type: ignore[arg-type]
-            ga = _norm_group_key(str(da.get("name", "")))
-            gb = _norm_group_key(str(db.get("name", "")))
-            return bool(ga) and ga == gb
-        except Exception:
-            return False
-    # Beide ohne auflösbaren Index — nur dann als „gleich“ (kein Vergleich sonst möglich)
+        return ia == ib
     return ia is None and ib is None
 
 
@@ -683,22 +707,14 @@ def coerce_input_pa_index(pa_index_optional: Optional[int]) -> Optional[int]:
 
 
 def physical_same_input(pa_a: Optional[int], pa_b: Optional[int]) -> bool:
-    """Zwei Eingangs-Wahlen dasselbe logische Aufnahmegerät?"""
+    """Zwei Eingangs-Wahlen dasselbe logische Aufnahmegerät?
+
+    Nur gleicher PortAudio-Index — siehe :func:`physical_same_output`.
+    """
     ia = coerce_input_pa_index(pa_a)
     ib = coerce_input_pa_index(pa_b)
     if ia is not None and ib is not None:
-        if ia == ib:
-            return True
-        if not _HAVE_SD or _sd is None:
-            return False
-        try:
-            da = _sd.query_devices(ia, "input")  # type: ignore[arg-type]
-            db = _sd.query_devices(ib, "input")  # type: ignore[arg-type]
-            ga = _norm_group_key(str(da.get("name", "")))
-            gb = _norm_group_key(str(db.get("name", "")))
-            return bool(ga) and ga == gb
-        except Exception:
-            return False
+        return ia == ib
     return ia is None and ib is None
 
 

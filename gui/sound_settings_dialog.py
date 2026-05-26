@@ -434,8 +434,8 @@ class SoundSettingsWindow(RetranslatableMixin, QMainWindow):
         rid = combo.currentData()
         did = "" if rid is None else str(rid).strip()
         setattr(self._settings.live, id_attr, did)
-        label = combo.currentText().split(" [PA #", 1)[0].strip()
-        setattr(self._settings.live, label_attr, label)
+        # PA-Suffix bei Namenskollisionen mit speichern (Fallback-Auflösung).
+        setattr(self._settings.live, label_attr, combo.currentText().strip())
 
     def _on_live_in_dev(self, *_idx: int) -> None:
         self._apply_live_device_selection(
