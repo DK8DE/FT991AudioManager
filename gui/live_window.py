@@ -23,9 +23,11 @@ from PySide6.QtGui import QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -67,9 +69,16 @@ from model import AppSettings
 from model.live_settings import (
     DEFAULT_BLOCKSIZE,
     DEFAULT_SAMPLERATE,
+    LiveCompressorSettings,
     LiveEqBandSettings,
     LiveFunkListenGateSettings,
+    LiveGateSettings,
     LiveSettings,
+)
+from model.live_audio_profile import LiveAudioProfile
+from model.live_audio_profile_store import (
+    DEFAULT_LIVE_AUDIO_PROFILE_NAME,
+    LiveAudioProfileStore,
 )
 from model.live_volume_curve import (
     live_gain_display_percent,
@@ -384,6 +393,8 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._open_sound_settings = open_sound_settings
         self._profile_widget = profile_widget
         self._live_snapshot = LiveSettings.from_dict(settings.live.to_dict())
+        self._live_audio_profile_store = LiveAudioProfileStore.load()
+        self._live_profile_loading = False
         self._cat = serial_cat
         self._audio_radio_session = audio_radio_session
         self._operating_mode_provider = operating_mode_provider
@@ -444,6 +455,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._build_ui()
         self._sync_live_devices_from_settings(refresh_monitors=False)
         self._apply_live_to_ui()
+        self._reload_live_audio_profile_combo(select_last=True)
 
         self._meter_timer = QTimer(self)
         self._meter_timer.setInterval(60)
@@ -515,6 +527,13 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._b_ptt_latch.setToolTip(tr("live.btn.ptt_latch.tooltip"))
         self._b_noise_filter.setText(tr("live.btn.noise_filter"))
         self._b_noise_filter.setToolTip(tr("live.btn.noise_filter.tooltip"))
+        self._live_profile_combo.setToolTip(tr("live.profile.combo.tooltip"))
+        self._b_live_profile_save.setText(tr("live.profile.btn.save"))
+        self._b_live_profile_save.setToolTip(tr("live.profile.btn.save.tooltip"))
+        self._b_live_profile_update.setText(tr("live.profile.btn.update"))
+        self._b_live_profile_update.setToolTip(tr("live.profile.btn.update.tooltip"))
+        self._b_live_profile_delete.setText(tr("live.profile.btn.delete"))
+        self._b_live_profile_delete.setToolTip(tr("live.profile.btn.delete.tooltip"))
         self._sync_live_ptt_button_heights()
         self._tx_label.setToolTip(tr("live.tx_label.tooltip"))
         self._sync_live_eq_master_look()
@@ -580,7 +599,14 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         if ptt is None or latch is None:
             return
         h = _LIVE_PTT_BTN_HEIGHT
-        for btn in (ptt, latch, getattr(self, "_b_noise_filter", None)):
+        for btn in (
+            ptt,
+            latch,
+            getattr(self, "_b_noise_filter", None),
+            getattr(self, "_b_live_profile_save", None),
+            getattr(self, "_b_live_profile_update", None),
+            getattr(self, "_b_live_profile_delete", None),
+        ):
             if btn is None:
                 continue
             btn.setMinimumHeight(h)
@@ -1144,6 +1170,20 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         root.addWidget(gc_row)
 
         row_btn = QHBoxLayout()
+        self._tx_led = TxIndicator()
+        self._tx_label = QLabel(tr("common.dash"))
+        tx_lbl_font = self._tx_label.font()
+        tx_lbl_font.setBold(True)
+        self._tx_label.setFont(tx_lbl_font)
+        self._tx_label.setMinimumWidth(34)
+        self._tx_label.setToolTip(tr("live.tx_label.tooltip"))
+        row_btn.addWidget(
+            self._tx_led, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        row_btn.addWidget(
+            self._tx_label, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+        row_btn.addSpacing(8)
         self._b_ptt = MomentaryHoldButton(tr("live.btn.ptt"))
         self._b_ptt.setToolTip(tr("live.btn.ptt.tooltip"))
         self._b_ptt.setSizePolicy(
@@ -1171,20 +1211,35 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         row_btn.addWidget(self._b_ptt)
         row_btn.addWidget(self._b_ptt_latch)
         row_btn.addWidget(self._b_noise_filter)
-        row_btn.addSpacing(12)
-        self._tx_led = TxIndicator()
-        self._tx_label = QLabel(tr("common.dash"))
-        tx_lbl_font = self._tx_label.font()
-        tx_lbl_font.setBold(True)
-        self._tx_label.setFont(tx_lbl_font)
-        self._tx_label.setMinimumWidth(34)
-        self._tx_label.setToolTip(tr("live.tx_label.tooltip"))
-        row_btn.addWidget(
-            self._tx_led, 0, Qt.AlignmentFlag.AlignVCenter
+        row_btn.addSpacing(8)
+        self._live_profile_combo = QComboBox()
+        self._live_profile_combo.setMinimumWidth(150)
+        self._live_profile_combo.setSizePolicy(
+            QSizePolicy.Policy.MinimumExpanding,
+            QSizePolicy.Policy.Fixed,
         )
-        row_btn.addWidget(
-            self._tx_label, 0, Qt.AlignmentFlag.AlignVCenter
+        self._live_profile_combo.currentIndexChanged.connect(
+            self._on_live_audio_profile_selected
         )
+        self._b_live_profile_save = QPushButton(tr("live.profile.btn.save"))
+        self._b_live_profile_save.setToolTip(tr("live.profile.btn.save.tooltip"))
+        self._b_live_profile_save.clicked.connect(self._on_live_audio_profile_save)
+        self._b_live_profile_update = QPushButton(tr("live.profile.btn.update"))
+        self._b_live_profile_update.setToolTip(tr("live.profile.btn.update.tooltip"))
+        self._b_live_profile_update.clicked.connect(self._on_live_audio_profile_update)
+        self._b_live_profile_delete = QPushButton(tr("live.profile.btn.delete"))
+        self._b_live_profile_delete.setToolTip(tr("live.profile.btn.delete.tooltip"))
+        self._b_live_profile_delete.clicked.connect(self._on_live_audio_profile_delete)
+        for btn in (
+            self._b_live_profile_save,
+            self._b_live_profile_update,
+            self._b_live_profile_delete,
+        ):
+            btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        row_btn.addWidget(self._live_profile_combo, 1)
+        row_btn.addWidget(self._b_live_profile_save)
+        row_btn.addWidget(self._b_live_profile_update)
+        row_btn.addWidget(self._b_live_profile_delete)
         row_btn.addStretch(1)
         root.addLayout(row_btn)
         self.setCentralWidget(cen)
@@ -1689,8 +1744,184 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         liv.compressor.release_ms = float(self._c_rel.value())
         liv.compressor.makeup_db = float(self._c_mk.value()) / 10.0
 
+        liv.funk_listen_gate = LiveFunkListenGateSettings.from_dict(
+            self._live_snapshot.funk_listen_gate.to_dict()
+        )
+
         liv.clamp_recursive()
         return liv
+
+    def _build_live_audio_profile_from_ui(self, name: str) -> LiveAudioProfile:
+        return LiveAudioProfile.from_live_settings(self._gather_live_from_ui(), name)
+
+    def _current_live_audio_profile_name(self) -> str:
+        idx = self._live_profile_combo.currentIndex()
+        if idx < 0:
+            return ""
+        data = self._live_profile_combo.itemData(idx)
+        if data is None:
+            return str(self._live_profile_combo.currentText() or "").strip()
+        return str(data).strip()
+
+    def _reload_live_audio_profile_combo(
+        self,
+        *,
+        select_name: Optional[str] = None,
+        select_last: bool = False,
+    ) -> None:
+        store = self._live_audio_profile_store
+        want = str(select_name or "").strip()
+        if not want and select_last:
+            want = str(store.last_profile or "").strip()
+        if not want and store.names():
+            want = store.names()[0]
+
+        self._live_profile_combo.blockSignals(True)
+        self._live_profile_combo.clear()
+        for name in store.names():
+            self._live_profile_combo.addItem(name, name)
+        pick = -1
+        if want:
+            pick = self._live_profile_combo.findData(want)
+        if pick < 0 and self._live_profile_combo.count() > 0:
+            pick = 0
+        if pick >= 0:
+            self._live_profile_combo.setCurrentIndex(pick)
+        self._live_profile_combo.blockSignals(False)
+        self._refresh_live_audio_profile_actions()
+
+    def _refresh_live_audio_profile_actions(self) -> None:
+        has_selection = self._live_profile_combo.currentIndex() >= 0
+        self._b_live_profile_update.setEnabled(has_selection)
+        self._b_live_profile_delete.setEnabled(has_selection)
+
+    def _apply_live_audio_profile(self, profile: LiveAudioProfile) -> None:
+        liv = self._gather_live_from_ui()
+        profile.apply_to(liv)
+        self._live_snapshot = liv
+        merged = LiveSettings.from_dict(self._settings.live.to_dict())
+        merged.eq_enabled = liv.eq_enabled
+        merged.eq_bands = [
+            LiveEqBandSettings.from_dict(b.to_dict()) for b in liv.eq_bands
+        ]
+        merged.gate = LiveGateSettings.from_dict(liv.gate.to_dict())
+        merged.compressor = LiveCompressorSettings.from_dict(liv.compressor.to_dict())
+        merged.funk_listen_gate = LiveFunkListenGateSettings.from_dict(
+            liv.funk_listen_gate.to_dict()
+        )
+        merged.input_gain = liv.input_gain
+        merged.output_gain = liv.output_gain
+        merged.funk_output_gain = liv.funk_output_gain
+        merged.funk_listen_gain = liv.funk_listen_gain
+        merged.clamp_recursive()
+        self._settings.live = merged
+        self._apply_live_to_ui()
+        self._engine.reset_funk_listen_noise_gate()
+        self._push_snapshot(refresh_monitors=True)
+        nf = getattr(self, "_noise_filter_window", None)
+        if nf is not None and nf.isVisible():
+            nf.reload_from_settings()
+
+    def _on_live_audio_profile_selected(self, index: int) -> None:
+        if index < 0 or self._live_profile_loading:
+            return
+        name = self._current_live_audio_profile_name()
+        if not name:
+            return
+        profile = self._live_audio_profile_store.find(name)
+        if profile is None:
+            return
+        self._live_audio_profile_store.set_last_profile(name)
+        self._apply_live_audio_profile(profile)
+
+    def _on_live_audio_profile_save(self) -> None:
+        default_name = (
+            self._current_live_audio_profile_name()
+            or tr("live.profile.default_new_name")
+        )
+        new_name, ok = QInputDialog.getText(
+            self,
+            tr("live.profile.dialog.save.title"),
+            tr("live.profile.dialog.save.label"),
+            text=default_name,
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name:
+            return
+        if self._live_audio_profile_store.find(new_name) is not None:
+            answer = QMessageBox.question(
+                self,
+                tr("live.profile.dialog.overwrite.title"),
+                tr("live.profile.dialog.overwrite.text").format(name=new_name),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            profile = self._build_live_audio_profile_from_ui(new_name)
+            self._live_audio_profile_store.upsert(profile)
+        except OSError as exc:
+            QMessageBox.critical(self, tr("live.profile.msg.save_failed.title"), str(exc))
+            return
+        self._reload_live_audio_profile_combo(select_name=new_name)
+
+    def _on_live_audio_profile_update(self) -> None:
+        name = self._current_live_audio_profile_name()
+        if not name:
+            return
+        answer = QMessageBox.question(
+            self,
+            tr("live.profile.dialog.update.title"),
+            tr("live.profile.dialog.update.text").format(name=name),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            profile = self._build_live_audio_profile_from_ui(name)
+            self._live_audio_profile_store.upsert(profile)
+        except OSError as exc:
+            QMessageBox.critical(self, tr("live.profile.msg.save_failed.title"), str(exc))
+            return
+        self._reload_live_audio_profile_combo(select_name=name)
+
+    def _on_live_audio_profile_delete(self) -> None:
+        name = self._current_live_audio_profile_name()
+        if not name:
+            return
+        if (
+            name == DEFAULT_LIVE_AUDIO_PROFILE_NAME
+            and len(self._live_audio_profile_store.names()) <= 1
+        ):
+            QMessageBox.information(
+                self,
+                tr("live.profile.msg.delete_blocked.title"),
+                tr("live.profile.msg.delete_blocked.text"),
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            tr("live.profile.dialog.delete.title"),
+            tr("live.profile.dialog.delete.text").format(name=name),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._live_audio_profile_store.remove(name)
+        self._reload_live_audio_profile_combo(select_last=True)
+        name_after = self._current_live_audio_profile_name()
+        profile = self._live_audio_profile_store.find(name_after)
+        if profile is not None:
+            self._live_profile_loading = True
+            try:
+                self._apply_live_audio_profile(profile)
+            finally:
+                self._live_profile_loading = False
 
     def _update_vol_slider_labels(self) -> None:
         pairs = (
