@@ -277,49 +277,48 @@ def build_dark_stylesheet() -> str:
         border-radius: {SIDEBAR_ITEM_RADIUS}px;
     }}
 
-    /* --- Slider (SQL, AGC, MIC, DSP) — hellblauer Track + Griff --- */
+    /* --- Slider (SQL, AGC, MIC, DSP, Soundeinstellungen) — grüner Griff --- */
     QSlider::groove:vertical {{
-        background: {SLIDER_INACTIVE};
-        width: 8px;
-        border-radius: 4px;
+        background: #353535;
+        width: 10px;
+        border-radius: 5px;
     }}
     QSlider::handle:vertical {{
-        background: {ACCENT_BLUE};
+        background: #52c41a;
         height: 22px;
         width: 22px;
-        margin: 0 -7px;
+        margin: 0 -8px;
         border-radius: 11px;
-        border: none;
+        border: 1px solid #1e5c16;
     }}
-    /* Fusion: sub-page = oberhalb, add-page = unterhalb des Griffs — Blau von unten */
     QSlider::add-page:vertical {{
-        background: {ACCENT_BLUE};
-        border-radius: 2px;
+        background: #353535;
+        border-radius: 5px;
     }}
     QSlider::sub-page:vertical {{
-        background: {SLIDER_INACTIVE};
-        border-radius: 2px;
+        background: #353535;
+        border-radius: 5px;
     }}
     QSlider::groove:horizontal {{
-        background: {SLIDER_INACTIVE};
-        height: 8px;
-        border-radius: 4px;
+        background: #353535;
+        height: 10px;
+        border-radius: 5px;
     }}
     QSlider::handle:horizontal {{
-        background: {ACCENT_BLUE};
+        background: #52c41a;
         width: 22px;
         height: 22px;
-        margin: -7px 0;
+        margin: -8px 0;
         border-radius: 11px;
-        border: none;
+        border: 1px solid #1e5c16;
     }}
     QSlider::sub-page:horizontal {{
-        background: {ACCENT_BLUE};
-        border-radius: 2px;
+        background: #353535;
+        border-radius: 5px;
     }}
     QSlider::add-page:horizontal {{
-        background: {SLIDER_INACTIVE};
-        border-radius: 2px;
+        background: #353535;
+        border-radius: 5px;
     }}
 
     /* --- AF/RF-Balken --- */

@@ -6,6 +6,8 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtGui import QMouseEvent, QTouchEvent
 from PySide6.QtWidgets import QSlider, QStyle, QStyleOptionSlider
 
+from gui.slider_styles import apply_yaesu_green_slider_style
+
 _TOUCH_MIN_CROSS = 32
 
 
@@ -18,6 +20,7 @@ class TouchSlider(QSlider):
         self._touch_point_ids: set[int] = set()
         self._touch_grabbed = False
         self._apply_touch_minimum_size()
+        apply_yaesu_green_slider_style(self)
 
     def _apply_touch_minimum_size(self) -> None:
         if self.orientation() == Qt.Orientation.Horizontal:

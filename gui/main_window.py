@@ -104,7 +104,6 @@ from .meter_widget import (
 from .profile_widget import ProfileWidget
 from .radio_control_bar import RadioControlBar
 from .settings_dialog import ConnectionSettingsDialog
-from .theme import apply_theme
 from .update_check import UpdateCheckOutcome, UpdateCheckThread
 from mapping.amateur_bands import (
     amateur_band_at_hz,
@@ -253,6 +252,11 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         self._tcall_release_engage_plain: bool = False
         #: Vorübergehend von DATA-USB/… auf DATA-FM — danach zurückschalten.
         self._tcall_restore_data_mode: Optional[RxMode] = None
+        #: Betriebsart vor T.CALL (für Wiederherstellung statt engage_plain→FM).
+        self._tcall_saved_rx_mode: Optional[RxMode] = None
+        #: Während T.CALL keine Mode-/Band-UI vom Poller nachziehen.
+        self._tcall_suppress_radio_ui: bool = False
+        self._tcall_async_restore_pending: bool = False
         #: MT-Frequenz pro Kanal (Memory-Loader) — Abgleich bei VFO-Drehen mit aktivem MC.
         self._memory_slot_frequency_hz: dict[int, int] = {}
         #: Für Dropdown-Persistenz: vollständige :class:`~mapping.memory_mapping.MemoryChannel`.
@@ -272,6 +276,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         _tcall_worker.engage_data_finished.connect(
             self._on_tcall_radio_engage_data_finished
         )
+        _tcall_worker.restore_finished.connect(self._on_tcall_async_restore_finished)
         self._build_menu()
 
         # Statusleiste: links Verbindung + Speicherkanal-Laden, rechts Mode/TX.
@@ -501,11 +506,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         self._vfo_a_caption = QLabel(tr("main.vfo_a_caption"))
         self._vfo_a_caption.setFont(vfo_caption_font)
         self._vfo_a_caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
-        _vfo_digits_color = (
-            _VFO_TRIPLET_FREQ_COLOR_DARK
-            if self._settings.ui.force_dark_mode
-            else None
-        )
+        _vfo_digits_color = _VFO_TRIPLET_FREQ_COLOR_DARK
         self._vfo_a_triplet = VfoTripletWidget(
             text_color=_vfo_digits_color,
             digit_font=QFont(vfo_caption_font),
@@ -845,15 +846,6 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         self.log_toggle_action.setShortcut("Ctrl+L")
         self.log_toggle_action.toggled.connect(self._on_log_toggle)
         self._view_menu.addAction(self.log_toggle_action)
-
-        self._view_menu.addSeparator()
-
-        self.dark_mode_action = QAction(tr("menu.view.dark_mode"), self)
-        self.dark_mode_action.setCheckable(True)
-        self.dark_mode_action.setChecked(self._settings.ui.force_dark_mode)
-        self.dark_mode_action.setShortcut("Ctrl+D")
-        self.dark_mode_action.toggled.connect(self._on_dark_mode_toggled)
-        self._view_menu.addAction(self.dark_mode_action)
 
         self._view_menu.addSeparator()
 
@@ -1199,6 +1191,73 @@ class MainWindow(QMainWindow, RetranslatableMixin):
                 pass
         return False
 
+    def _begin_tcall_session(self) -> None:
+        self._tcall_suppress_radio_ui = True
+        self._tcall_async_restore_pending = False
+        self._tcall_saved_rx_mode = None
+        if self._cat.is_connected():
+            try:
+                self._tcall_saved_rx_mode = FT991CAT(self._cat).read_rx_mode()
+            except CatError:
+                pass
+        if self._tcall_saved_rx_mode is None:
+            self._tcall_saved_rx_mode = self._main_operating_mode()
+
+    def _finish_tcall_session(self) -> None:
+        if self._tcall_async_restore_pending:
+            return
+        self._tcall_suppress_radio_ui = False
+        self._tcall_saved_rx_mode = None
+        self.meter_widget.ensure_polling()
+        self.meter_widget.request_immediate_poll()
+        self._sync_meter_dsp_mode_visibility()
+
+    def _tcall_invoke_async_restore(self) -> None:
+        self._tcall_async_restore_pending = True
+        _invoke_cat_worker_slot(self._audio_radio_session.worker, "run_restore")
+
+    def _sync_mode_combo_to_saved_rx_mode(self, mode: RxMode) -> None:
+        pw = self.profile_widget
+        pw._last_radio_mode = mode
+        idx = pw.mode_combo.findText(mode.value)
+        if idx >= 0:
+            pw.mode_combo.blockSignals(True)
+            try:
+                pw.mode_combo.setCurrentIndex(idx)
+            finally:
+                pw.mode_combo.blockSignals(False)
+        self._status_mode_display = mode.value
+        self._mode_label.setText(_status_bar_mode_text(mode.value))
+        self._sync_meter_dsp_mode_visibility()
+
+    def _tcall_restore_saved_rx_mode(self) -> bool:
+        """Stellt die Betriebsart von vor T.CALL wieder her (nicht DATA-FM→FM)."""
+        saved = self._tcall_saved_rx_mode
+        if saved is None or not self._cat.is_connected():
+            return False
+        setup = self._audio_radio_session.setup
+        try:
+            ft = FT991CAT(self._cat)
+            if ft.read_rx_mode() != saved:
+                if saved in (RxMode.DATA_USB, RxMode.DATA_LSB, RxMode.DATA_FM):
+                    ok, msg = setup.set_data_mode(saved)
+                    if not ok:
+                        self._on_t_call_error(
+                            msg or tr("tcall.mode_not_restored", mode=saved.value)
+                        )
+                        return False
+                elif not ft.set_rx_mode(saved):
+                    self._on_t_call_error(
+                        tr("tcall.mode_not_restored", mode=saved.value)
+                    )
+                    return False
+            setup.reconcile_in_data_mode_with_radio()
+        except CatError as exc:
+            self._on_t_call_error(str(exc))
+            return False
+        self._sync_mode_combo_to_saved_rx_mode(saved)
+        return True
+
     def _on_t_call_active_changed(self, active: bool) -> None:
         self._radio_control_bar.set_t_call_active(active)
 
@@ -1217,6 +1276,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             return
 
         self.meter_widget.pause_polling()
+        self._begin_tcall_session()
         self._tcall_release_restore_full = False
         self._tcall_release_engage_plain = False
         self._tcall_restore_data_mode = None
@@ -1232,7 +1292,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
                 ok, msg = setup.set_data_mode(RxMode.DATA_FM)
                 if not ok:
                     self._on_t_call_error(msg or tr("tcall.data_fm_not_set"))
-                    self.meter_widget.ensure_polling()
+                    self._finish_tcall_session()
                     return
                 if msg:
                     self.statusBar().showMessage(tr("tcall.status", message=msg), 4000)
@@ -1269,7 +1329,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             return
         if not ok:
             self._on_t_call_error(message or tr("tcall.data_fm_failed"))
-            self.meter_widget.ensure_polling()
+            self._finish_tcall_session()
             return
         if message:
             self.statusBar().showMessage(tr("tcall.status", message=message), 4000)
@@ -1282,33 +1342,35 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             self._tcall_restore_data_mode = None
             if self._cat.is_connected():
                 self._audio_radio_session.setup.set_data_mode(mode)
+            self._sync_mode_combo_to_saved_rx_mode(mode)
             self._tcall_release_restore_full = False
             self._tcall_release_engage_plain = False
             self._tcall_cat_pending = False
+            self._finish_tcall_session()
             return
         if self._tcall_release_restore_full:
-            _invoke_cat_worker_slot(self._audio_radio_session.worker, "run_restore")
-        elif self._tcall_release_engage_plain:
-            _invoke_cat_worker_slot(self._audio_radio_session.worker, "run_engage_plain")
+            self._tcall_invoke_async_restore()
+        else:
+            self._tcall_restore_saved_rx_mode()
         self._tcall_release_restore_full = False
         self._tcall_release_engage_plain = False
         self._tcall_restore_data_mode = None
         self._tcall_cat_pending = False
+        if not self._tcall_async_restore_pending:
+            self._finish_tcall_session()
 
     def _t_call_arm_tx_and_audio(self) -> None:
         if not self._radio_control_bar.is_t_call_pressed():
             self._tcall_abort_radio_switch()
-            self.meter_widget.ensure_polling()
             return
         if not self._cat.is_connected():
-            self.meter_widget.ensure_polling()
+            self._finish_tcall_session()
             return
         try:
             FT991CAT(self._cat).set_cat_transmit(True, wait=False)
         except CatError as exc:
             self._on_t_call_error(str(exc))
             self._tcall_abort_radio_switch()
-            self.meter_widget.ensure_polling()
             return
         self._t_call.start()
 
@@ -1322,7 +1384,21 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             except CatError as exc:
                 self._on_t_call_error(str(exc))
             self._tcall_restore_radio_after_call()
-        self.meter_widget.ensure_polling()
+        else:
+            self._finish_tcall_session()
+
+    def _on_tcall_async_restore_finished(self, ok: bool, message: str) -> None:
+        if not self._tcall_async_restore_pending:
+            return
+        self._tcall_async_restore_pending = False
+        if not ok and message:
+            self._on_t_call_error(message)
+        elif ok and message:
+            self.statusBar().showMessage(tr("tcall.status", message=message), 4000)
+        saved = self._tcall_saved_rx_mode
+        if saved is not None:
+            self._sync_mode_combo_to_saved_rx_mode(saved)
+        self._finish_tcall_session()
 
     def _tcall_restore_radio_after_call(self) -> None:
         """Nach T.CALL: vorherigen Funk-Mode/Menüs wiederherstellen."""
@@ -1337,19 +1413,22 @@ class MainWindow(QMainWindow, RetranslatableMixin):
                     )
                 elif msg:
                     self.statusBar().showMessage(tr("tcall.status", message=msg), 4000)
+            self._sync_mode_combo_to_saved_rx_mode(mode)
             self._tcall_release_restore_full = False
             self._tcall_release_engage_plain = False
+            self._finish_tcall_session()
             return
         if not self._cat.is_connected():
             self._tcall_release_restore_full = False
             self._tcall_release_engage_plain = False
+            self._finish_tcall_session()
             return
-        worker = self._audio_radio_session.worker
         if self._tcall_release_restore_full:
             self.statusBar().showMessage(tr("tcall.restoring_radio"), 3000)
-            _invoke_cat_worker_slot(worker, "run_restore")
-        elif self._tcall_release_engage_plain:
-            _invoke_cat_worker_slot(worker, "run_engage_plain")
+            self._tcall_invoke_async_restore()
+        else:
+            self._tcall_restore_saved_rx_mode()
+            self._finish_tcall_session()
         self._tcall_release_restore_full = False
         self._tcall_release_engage_plain = False
 
@@ -1700,6 +1779,8 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         radio_transmitting: bool = False,
     ) -> None:
         """Vom MeterWidget bei VFO/Mode-Updates (RX-Slow-Path und ggf. FA/FB während TX)."""
+        if self._tcall_suppress_radio_ui:
+            return
         if isinstance(mode, RxMode):
             self._status_mode_display = mode.value
             self._mode_label.setText(_status_bar_mode_text(mode.value))
@@ -1868,19 +1949,9 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         eingestellt ist (SSB/AM/FM/DATA/C4FM). Andere Modi (CW/RTTY) werden
         ignoriert, sodass die letzte gültige Auswahl erhalten bleibt.
         """
+        if self._tcall_suppress_radio_ui:
+            return
         self.profile_widget.notify_radio_mode(mode)
-
-    def _on_dark_mode_toggled(self, checked: bool) -> None:
-        qapp = QApplication.instance()
-        if isinstance(qapp, QApplication):
-            apply_theme(cast(QApplication, qapp), dark=checked)
-        digit_color = _VFO_TRIPLET_FREQ_COLOR_DARK if checked else None
-        self._vfo_a_triplet.set_text_color(digit_color)
-        self._vfo_b_triplet.set_text_color(digit_color)
-        if self._log_window is not None:
-            self._log_window.set_dark_mode(checked)
-        self._settings.ui.force_dark_mode = bool(checked)
-        self._persist_settings()
 
     def _sync_language_menu_checks(self) -> None:
         lang = self._settings.ui.language
@@ -1972,7 +2043,6 @@ class MainWindow(QMainWindow, RetranslatableMixin):
 
         self._view_menu.setTitle(tr("menu.view"))
         self.log_toggle_action.setText(tr("menu.view.cat_log"))
-        self.dark_mode_action.setText(tr("menu.view.dark_mode"))
         self._language_menu.setTitle(tr("menu.view.language"))
         self._language_de_action.setText(tr("menu.view.language_de"))
         self._language_en_action.setText(tr("menu.view.language_en"))
@@ -3158,7 +3228,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             self._log_window.restore_geometry_from_base64(
                 self._settings.ui.log_window_geometry
             )
-            self._log_window.set_dark_mode(self._settings.ui.force_dark_mode)
+            self._log_window.set_dark_mode(True)
         return self._log_window
 
     def _show_log_window(self) -> None:

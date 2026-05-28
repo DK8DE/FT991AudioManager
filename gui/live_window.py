@@ -87,26 +87,11 @@ if TYPE_CHECKING:
 
 _YAESU_GREEN = "#52c41a"
 
-_LIVE_GREEN_SLIDER_STYLE_HORIZONTAL = (
-    "QSlider::groove:horizontal { background-color:#353535; height:10px; }"
-    "QSlider::handle:horizontal {"
-    f" background-color:{_YAESU_GREEN};"
-    " border:1px solid #1e5c16;"
-    " min-width:22px; max-width:22px; min-height:22px; margin:-8px 0;"
-    "}"
-)
-
-
-def _style_live_green_horizontal_slider(sl: TouchSlider) -> None:
-    sl.setStyleSheet(_LIVE_GREEN_SLIDER_STYLE_HORIZONTAL)
-
-
 # PTT-Buttons: identische Padding-/Rahmenwerte für Ruhezustand und aktiv, sonst „wächst“
 # der Knopf beim Umschalten (Systemstil ≠ explizites QSS).
 _LIVE_PTT_BTN_PAD = "6px 16px"
 _LIVE_PTT_BTN_RADIUS = "4px"
 _LIVE_PTT_BTN_BORDER = "2px"
-_LIVE_PTT_BTN_HEIGHT = 44
 
 
 def _live_ptt_idle_button_style() -> str:
@@ -503,7 +488,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._b_live_profile_update.setToolTip(tr("live.profile.btn.update.tooltip"))
         self._b_live_profile_delete.setText(tr("live.profile.btn.delete"))
         self._b_live_profile_delete.setToolTip(tr("live.profile.btn.delete.tooltip"))
-        self._sync_live_ptt_button_heights()
         self._tx_label.setToolTip(tr("live.tx_label.tooltip"))
         self._sync_live_eq_master_look()
         self._refresh_gate_comp_readouts()
@@ -585,7 +569,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             )
         if getattr(self, "_b_ptt_latch", None):
             self._b_ptt_latch.setStyleSheet(active_style if latched else idle_style)
-        self._sync_live_ptt_button_heights()
 
     def _refresh_afl_button_appearance(self) -> None:
         btn = getattr(self, "_b_afl", None)
@@ -596,27 +579,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             if btn.isChecked()
             else _live_ptt_idle_button_style()
         )
-
-    def _sync_live_ptt_button_heights(self) -> None:
-        """PTT und „PTT halten“ — Touch-Höhe 44 px."""
-        ptt = getattr(self, "_b_ptt", None)
-        latch = getattr(self, "_b_ptt_latch", None)
-        if ptt is None or latch is None:
-            return
-        h = _LIVE_PTT_BTN_HEIGHT
-        for btn in (
-            ptt,
-            latch,
-            getattr(self, "_b_live_profile_save", None),
-            getattr(self, "_b_live_profile_update", None),
-            getattr(self, "_b_live_profile_delete", None),
-            getattr(self, "_b_afl", None),
-            getattr(self, "_btn_audio_routing", None),
-        ):
-            if btn is None:
-                continue
-            btn.setMinimumHeight(h)
-            btn.setFixedHeight(h)
 
     def _refresh_ptt_controls_enabled(self) -> None:
         """PTT-Knopf nicht während CAT-Start ausgrauen — wirkt sonst „hängend“."""
@@ -895,15 +857,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         srl.setContentsMargins(4, 0, 0, 10)
         srl.setSpacing(12)
 
-        vs_style = (
-            "QSlider::groove:vertical { background-color:#353535; width:10px; }"
-            "QSlider::handle:vertical {"
-            f" background-color:{_YAESU_GREEN};"
-            " border:1px solid #1e5c16;"
-            " min-height:22px; max-height:22px; min-width:22px; margin:0 -8px;"
-            "}"
-        )
-
         def _mk_v_col(caption: str, peak_bar: ScaledMeterBar) -> tuple[QSlider, QLabel, QLabel]:
             col = QWidget()
             col.setSizePolicy(
@@ -928,7 +881,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
                 QSizePolicy.Policy.Fixed,
                 QSizePolicy.Policy.Expanding,
             )
-            sl.setStyleSheet(vs_style)
             lb = QLabel(tr("live.strip.percent", pct=100))
             lb.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             lb.setMinimumWidth(42)
@@ -1131,23 +1083,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             fgv.addWidget(read_lbl, fr, 2)
             fr += 1
 
-        for sl in (
-            self._g_thr,
-            self._g_att,
-            self._g_hld,
-            self._g_rel,
-            self._c_thr,
-            self._c_rat,
-            self._c_att,
-            self._c_rel,
-            self._c_mk,
-            self._fg_thr,
-            self._fg_att,
-            self._fg_hld,
-            self._fg_rel,
-        ):
-            _style_live_green_horizontal_slider(sl)
-
         gc_row = QWidget()
         gc_lay = QHBoxLayout(gc_row)
         gc_lay.setContentsMargins(0, 0, 0, 0)
@@ -1242,7 +1177,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         row_btn.addWidget(self._b_afl)
         row_btn.addWidget(self._btn_audio_routing)
         self._refresh_afl_button_appearance()
-        self._sync_live_ptt_button_heights()
         self._lbl_live_footer = QLabel()
         self._lbl_live_footer.setWordWrap(False)
         root.addLayout(row_btn)

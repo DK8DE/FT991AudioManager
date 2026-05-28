@@ -64,7 +64,7 @@ def main() -> int:
     # App-Icon zentral setzen: vererbt sich auf alle Top-Level-Fenster
     # (Title-Bar + Windows-Taskbar / macOS-Dock / Linux-Panel).
     app.setWindowIcon(app_icon())
-    apply_theme(app, dark=settings.ui.force_dark_mode)
+    apply_theme(app, dark=True)
 
     window = MainWindow(settings)
     app.aboutToQuit.connect(window.shutdown_background_services)

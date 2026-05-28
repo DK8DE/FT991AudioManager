@@ -88,7 +88,7 @@ class AppSettingsRoundtripTest(unittest.TestCase):
             self.assertEqual(loaded.ui.last_profile, "SSB Sprache")
             self.assertFalse(loaded.ui.auto_apply_profile)
             self.assertTrue(loaded.ui.show_advanced)
-            self.assertFalse(loaded.ui.force_dark_mode)
+            self.assertTrue(loaded.ui.force_dark_mode)
 
     def test_force_dark_mode_default_is_true(self) -> None:
         with TemporaryDirectory() as tmp:

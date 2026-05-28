@@ -104,10 +104,7 @@ class UiSettings:
     last_profile: Optional[str] = None
     auto_apply_profile: bool = False
     show_advanced: bool = False
-    #: Dark Mode ist der Standard für eine frische Installation — sowohl
-    #: hier (kein Settings-File) als auch im ``load()``-Fallback unten
-    #: (Key fehlt). Wer das nicht mag, schaltet im View-Menü um; der
-    #: nächste ``save()`` schreibt dann ``false`` persistent in die JSON.
+    #: Dark Mode ist immer aktiv (kein UI-Toggle mehr).
     force_dark_mode: bool = True
     #: Ob das CAT-Log-Fenster beim Start angezeigt werden soll.
     show_cat_log: bool = False
@@ -209,7 +206,7 @@ class AppSettings:
             last_profile=ui_raw.get("last_profile"),
             auto_apply_profile=bool(ui_raw.get("auto_apply_profile", False)),
             show_advanced=bool(ui_raw.get("show_advanced", False)),
-            force_dark_mode=bool(ui_raw.get("force_dark_mode", True)),
+            force_dark_mode=True,
             show_cat_log=bool(ui_raw.get("show_cat_log", False)),
             log_window_geometry=str(ui_raw.get("log_window_geometry") or ""),
             hide_extended_in_ssb=bool(ui_raw.get("hide_extended_in_ssb", True)),

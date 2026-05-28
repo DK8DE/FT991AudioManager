@@ -30,15 +30,14 @@ class MeterVerticalSlider(TouchSlider):
     """Vertikaler Slider für SQL, DSP, AGC, MIC — mit rechts sichtbaren Ticks."""
 
     def __init__(self, parent=None) -> None:
-        super().__init__(Qt.Orientation.Vertical, parent)
-        #: Während ``paintEvent``: Style-Option ohne Ticks, damit Qt keine eigenen
-        #: Striche malt — **ohne** ``setTickPosition`` im Paint (sonst Rekursion /
-        #: Paint-Fehler unter PySide6/Windows).
+        #: Vor ``super().__init__`` — ``TouchSlider`` setzt dort das Stylesheet,
+        #: was ``initStyleOption`` auslöst.
         self._meter_paint_suppress_style_ticks = False
+        super().__init__(Qt.Orientation.Vertical, parent)
 
     def initStyleOption(self, option: QStyleOptionSlider) -> None:
         super().initStyleOption(option)
-        if self._meter_paint_suppress_style_ticks:
+        if getattr(self, "_meter_paint_suppress_style_ticks", False):
             cast(Any, option).tickPosition = QSlider.TickPosition.NoTicks
 
     def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802
