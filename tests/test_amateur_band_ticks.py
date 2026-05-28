@@ -6,7 +6,10 @@ import unittest
 
 from mapping.amateur_bands import (
     AMATEUR_BANDS,
+    SPECIAL_BANDS,
     band_100khz_tick_frequencies,
+    band_strip_tick_frequencies,
+    band_strip_tick_label,
     band_tick_frequencies,
     frequency_label_100khz,
     frequency_label_for_tick,
@@ -59,6 +62,21 @@ class AmateurBandTicksTest(unittest.TestCase):
     def test_100khz_label(self) -> None:
         self.assertEqual(frequency_label_100khz(14_000_000), "14.0")
         self.assertEqual(frequency_label_100khz(14_100_000), "14.1")
+
+    def test_cb_band_strip_ticks(self) -> None:
+        band = SPECIAL_BANDS[0]
+        ticks = band_strip_tick_frequencies(band)
+        self.assertEqual(ticks[0], 26_965_000)
+        self.assertEqual(ticks[-1], 27_405_000)
+        self.assertLessEqual(len(ticks), 7)
+
+    def test_freenet_band_strip_ticks(self) -> None:
+        band = SPECIAL_BANDS[1]
+        ticks = band_strip_tick_frequencies(band)
+        self.assertEqual(ticks[0], 149_025_000)
+        self.assertEqual(ticks[-1], 149_087_500)
+        self.assertLessEqual(len(ticks), 7)
+        self.assertIn("149.025", band_strip_tick_label(ticks[0], band))
 
 
 if __name__ == "__main__":  # pragma: no cover

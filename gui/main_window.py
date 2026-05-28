@@ -106,8 +106,9 @@ from .radio_control_bar import RadioControlBar
 from .settings_dialog import ConnectionSettingsDialog
 from .update_check import UpdateCheckOutcome, UpdateCheckThread
 from mapping.amateur_bands import (
+    BandKind,
     amateur_band_at_hz,
-    amateur_band_for_hz,
+    display_band_at_hz,
     combo_entries_high_to_low,
     preferred_voice_rx_mode_for_amateur_hz,
     VFO_BAND_CHOICE,
@@ -122,6 +123,7 @@ from .vfo_triplet_widget import VfoTripletWidget
 
 _VFO_CAPTION_STYLE_IDLE = "color: #888888; font-weight: bold;"
 _VFO_CAPTION_STYLE_IN_BAND = "color: #5ddc7a; font-weight: bold;"
+_VFO_CAPTION_STYLE_SPECIAL_BAND = "color: #f0c040; font-weight: bold;"
 _VFO_CAPTION_STYLE_OUT_OF_BAND = "color: #ff6b6b; font-weight: bold;"
 _VFO_CAPTION_TO_FREQ_GAP_PX = 10
 # Feste Ziffernfarbe nur bei erzwungenem Dark-Mode; sonst palette(window-text).
@@ -1682,21 +1684,32 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             caption.setStyleSheet(_VFO_CAPTION_STYLE_IDLE)
             caption.setToolTip("")
             return
-        band = amateur_band_for_hz(hz)
-        if band is not None:
-            caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
-            caption.setToolTip(tr("main.vfo.tooltip.in_band", band=band))
-        else:
+        band = display_band_at_hz(hz)
+        if band is None:
             caption.setStyleSheet(_VFO_CAPTION_STYLE_OUT_OF_BAND)
             caption.setToolTip(tr("main.vfo.tooltip.out_of_band"))
+            return
+        if band.kind is BandKind.AMATEUR:
+            caption.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
+            caption.setToolTip(tr("main.vfo.tooltip.in_band", band=band.name))
+        else:
+            caption.setStyleSheet(_VFO_CAPTION_STYLE_SPECIAL_BAND)
+            caption.setToolTip(tr("main.vfo.tooltip.special_band", band=band.name))
+
+    def _band_strip_name_style(self, band) -> str:
+        if band is None:
+            return _VFO_CAPTION_STYLE_IDLE
+        if band.kind is BandKind.AMATEUR:
+            return _VFO_CAPTION_STYLE_IN_BAND
+        return _VFO_CAPTION_STYLE_SPECIAL_BAND
 
     def _refresh_band_strip(self) -> None:
         connected = self._cat.is_connected()
         hz = self._vfo_a_display_hz if connected else 0
-        band = amateur_band_at_hz(hz) if hz > 0 else None
+        band = display_band_at_hz(hz) if hz > 0 else None
         if band is not None:
             self._band_strip_name.setText(band.name)
-            self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IN_BAND)
+            self._band_strip_name.setStyleSheet(self._band_strip_name_style(band))
         elif connected and hz > 0:
             self._band_strip_name.setText(tr("common.dash"))
             self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_OUT_OF_BAND)

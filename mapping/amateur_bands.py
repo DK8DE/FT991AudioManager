@@ -1,12 +1,13 @@
 """Amateurfunk-Bänder (Region 1 / DE-typisch) für VFO-Anzeige und Bandwahl.
 
-Nur für die GUI-Farbmarkierung (grün = im Amateurband, rot = außerhalb).
+Grün = Amateurband, gelb = CB/Freenet, rot = sonst außerhalb.
 Die CAT-Bandgrenzen des FT-991/A liegen in :mod:`mapping.vfo_bands`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import List, Optional, Tuple
 
 from i18n import tr
@@ -16,13 +17,22 @@ from mapping.rx_mapping import RxMode
 VFO_BAND_CHOICE = -1
 
 
+class BandKind(Enum):
+    """Kategorie für Farbe und Band-Streifen."""
+
+    AMATEUR = "amateur"
+    CB = "cb"
+    FREENET = "freenet"
+
+
 @dataclass(frozen=True)
 class AmateurBand:
-    """Ein Amateurband mit ITU-Grenzen (Hz, inklusive)."""
+    """Ein Band mit Grenzen (Hz, inklusive) für Anzeige und Band-Streifen."""
 
     min_hz: int
     max_hz: int
     key: str
+    kind: BandKind = BandKind.AMATEUR
 
     @property
     def name(self) -> str:
@@ -65,6 +75,18 @@ AMATEUR_BANDS: Tuple[AmateurBand, ...] = tuple(
     AmateurBand(lo, hi, key) for lo, hi, key in _AMATEUR_BANDS
 )
 
+#: CB (EU 11 m) und Freenet (149 MHz) — gelbe Markierung, eigener Band-Streifen.
+_SPECIAL_BANDS: Tuple[Tuple[int, int, str, BandKind], ...] = (
+    (26_965_000, 27_405_000, "cb", BandKind.CB),
+    (149_025_000, 149_087_500, "freenet", BandKind.FREENET),
+)
+
+SPECIAL_BANDS: Tuple[AmateurBand, ...] = tuple(
+    AmateurBand(lo, hi, key, kind) for lo, hi, key, kind in _SPECIAL_BANDS
+)
+
+DISPLAY_BANDS: Tuple[AmateurBand, ...] = AMATEUR_BANDS + SPECIAL_BANDS
+
 #: Von 70 cm abwärts (für Band-Dropdown).
 AMATEUR_BANDS_HIGH_TO_LOW: Tuple[AmateurBand, ...] = tuple(reversed(AMATEUR_BANDS))
 
@@ -88,6 +110,22 @@ def amateur_band_at_hz(hz: int) -> Optional[AmateurBand]:
         if band.min_hz <= f <= band.max_hz:
             return band
     return None
+
+
+def display_band_at_hz(hz: int) -> Optional[AmateurBand]:
+    """Amateur-, CB- oder Freenet-Band für VFO-Farbe und Band-Streifen."""
+    f = int(hz)
+    if f <= 0:
+        return None
+    for band in DISPLAY_BANDS:
+        if band.min_hz <= f <= band.max_hz:
+            return band
+    return None
+
+
+def display_band_for_hz(hz: int) -> Optional[str]:
+    band = display_band_at_hz(hz)
+    return band.name if band is not None else None
 
 
 def is_in_amateur_band(hz: int) -> bool:
@@ -218,3 +256,19 @@ def frequency_label_100khz(hz: int) -> str:
     if frac == 0:
         return f"{mhz}.0"
     return f"{mhz}.{frac}"
+
+
+def band_strip_tick_frequencies(band: AmateurBand) -> List[int]:
+    """Tick-Markierungen für den Band-Streifen (100 kHz oder feiner bei schmalen Bändern)."""
+    span = band.max_hz - band.min_hz
+    if span > 1_000_000:
+        return band_100khz_tick_frequencies(band)
+    return band_tick_frequencies(band, max_ticks=7)
+
+
+def band_strip_tick_label(hz: int, band: AmateurBand) -> str:
+    """Beschriftung unter einer Tick-Marke im Band-Streifen."""
+    span = band.max_hz - band.min_hz
+    if span > 1_000_000:
+        return frequency_label_100khz(hz)
+    return frequency_label_for_tick(hz, band)

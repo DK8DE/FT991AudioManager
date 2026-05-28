@@ -9,6 +9,8 @@ from mapping.amateur_bands import (
     VFO_BAND_CHOICE,
     amateur_band_for_hz,
     combo_entries_high_to_low,
+    display_band_at_hz,
+    display_band_for_hz,
     is_in_amateur_band,
     preferred_voice_rx_mode_for_amateur_hz,
 )
@@ -27,6 +29,23 @@ class AmateurBandsTest(unittest.TestCase):
     def test_out_of_band(self) -> None:
         self.assertIsNone(amateur_band_for_hz(55_999_400))
         self.assertFalse(is_in_amateur_band(100_000_000))
+        self.assertIsNone(display_band_at_hz(55_999_400))
+
+    def test_cb_band(self) -> None:
+        band = display_band_at_hz(27_000_000)
+        self.assertIsNotNone(band)
+        assert band is not None
+        self.assertEqual(band.name, "CB")
+        self.assertEqual(display_band_for_hz(26_965_000), "CB")
+        self.assertIsNone(amateur_band_for_hz(27_000_000))
+
+    def test_freenet_band(self) -> None:
+        band = display_band_at_hz(149_050_000)
+        self.assertIsNotNone(band)
+        assert band is not None
+        self.assertEqual(band.name, "Freenet")
+        self.assertEqual(display_band_for_hz(149_087_500), "Freenet")
+        self.assertIsNone(amateur_band_for_hz(149_050_000))
 
     def test_combo_order_high_to_low(self) -> None:
         entries = combo_entries_high_to_low()

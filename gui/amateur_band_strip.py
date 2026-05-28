@@ -19,8 +19,9 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from mapping.amateur_bands import (
     AmateurBand,
-    band_100khz_tick_frequencies,
-    frequency_label_100khz,
+    BandKind,
+    band_strip_tick_frequencies,
+    band_strip_tick_label,
 )
 
 from i18n import tr
@@ -42,6 +43,9 @@ _TRACK_FILL = QColor(0, 0, 0)
 _TRACK_BORDER = QColor(255, 255, 255)
 _NEEDLE_COLOR = QColor(255, 80, 80)
 _NEEDLE_LINE_COLOR = QColor(255, 70, 70)
+_NEEDLE_COLOR_SPECIAL = QColor(240, 192, 48)
+_NEEDLE_LINE_COLOR_SPECIAL = QColor(220, 170, 30)
+_TRACK_BORDER_SPECIAL = QColor(240, 200, 64)
 
 
 class AmateurBandStripWidget(RetranslatableMixin, QWidget):
@@ -90,7 +94,7 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
             return
         self._band = band
         self._ticks = (
-            band_100khz_tick_frequencies(band) if band is not None else []
+            band_strip_tick_frequencies(band) if band is not None else []
         )
         self._recompute_target_ratio()
         self.update()
@@ -124,8 +128,29 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
             return 0
         return self._band.max_hz - self._band.min_hz
 
+    def _band_kind(self) -> Optional[BandKind]:
+        return self._band.kind if self._band is not None else None
+
+    def _is_special_band(self) -> bool:
+        kind = self._band_kind()
+        return kind is not None and kind is not BandKind.AMATEUR
+
+    def _needle_colors(self) -> tuple[QColor, QColor, QColor]:
+        if self._is_special_band():
+            return (
+                _NEEDLE_COLOR_SPECIAL,
+                _NEEDLE_LINE_COLOR_SPECIAL,
+                QColor(140, 100, 10),
+            )
+        return _NEEDLE_COLOR, _NEEDLE_LINE_COLOR, QColor(120, 20, 20)
+
+    def _track_border_color(self) -> QColor:
+        if self._is_special_band():
+            return _TRACK_BORDER_SPECIAL
+        return _TRACK_BORDER
+
     def _inner_ticks(self) -> List[int]:
-        """100-kHz-Markierungen ohne ersten/letzten Strich am Balkenrand."""
+        """Tick-Markierungen ohne ersten/letzten Strich am Balkenrand."""
         if len(self._ticks) <= 2:
             return []
         return self._ticks[1:-1]
@@ -196,8 +221,8 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
         if self._band is None or not self._ticks:
             return 6
         fm = QFontMetrics(self._label_font())
-        first = frequency_label_100khz(self._ticks[0])
-        last = frequency_label_100khz(self._ticks[-1])
+        first = band_strip_tick_label(self._ticks[0], self._band)
+        last = band_strip_tick_label(self._ticks[-1], self._band)
         return max(
             6,
             (fm.horizontalAdvance(first) + 4) // 2,
@@ -269,7 +294,7 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
         fm = QFontMetrics(font)
         items: List[tuple[int, str, float, str]] = []
         for i, hz in enumerate(self._ticks):
-            label = frequency_label_100khz(hz)
+            label = band_strip_tick_label(hz, self._band)
             x = self._hz_to_x(hz, track)
             if i == 0:
                 align = "left"
@@ -398,7 +423,7 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
                 p.setPen(Qt.PenStyle.NoPen)
                 p.setBrush(_TRACK_FILL)
                 p.drawRoundedRect(track, _TRACK_RADIUS, _TRACK_RADIUS)
-                p.setPen(QPen(_TRACK_BORDER, 1.5))
+                p.setPen(QPen(self._track_border_color(), 1.5))
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.drawRoundedRect(track, _TRACK_RADIUS, _TRACK_RADIUS)
                 for hz in self._inner_ticks():
@@ -443,6 +468,7 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
             if in_band:
                 needle_x = track.left() + self._display_ratio * track.width()
                 needle_h = 9
+                needle_fill, needle_line, needle_outline = self._needle_colors()
                 tri = QPolygonF(
                     [
                         QPointF(needle_x, track.top() + needle_h),
@@ -450,10 +476,10 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
                         QPointF(needle_x + 6, track.top()),
                     ]
                 )
-                p.setPen(QPen(QColor(120, 20, 20), 1))
-                p.setBrush(_NEEDLE_COLOR)
+                p.setPen(QPen(needle_outline, 1))
+                p.setBrush(needle_fill)
                 p.drawPolygon(tri)
-                p.setPen(QPen(_NEEDLE_LINE_COLOR, 2))
+                p.setPen(QPen(needle_line, 2))
                 p.drawLine(
                     int(needle_x),
                     track.top() + needle_h,

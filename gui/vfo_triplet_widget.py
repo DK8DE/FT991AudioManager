@@ -1,8 +1,8 @@
 """Dreiteilige VFO-Frequenz (MHz | kHz | Hz) mit Mausrad und flachem Eingabe-Stil.
 
-Beispiel 149.112500 MHz → Anzeige ``149`` **·** ``112`` ``500`` (dicht, Punkt vor kHz).
-Mausrad über einem Block: Schritt 1 MHz / 1 kHz / 10 Hz pro Raster (120°-Tick);
-der Hz-Block bleibt auf Zehner (…0 Hz).
+Beispiel 149.112500 MHz → Anzeige ``149`` **·** ``112`` ``50`` (dicht, Punkt vor kHz).
+Die Einerstelle der Hz-Anzeige entfällt — am FT-991 ist sie immer 0 (10-Hz-Raster).
+Mausrad über einem Block: Schritt 1 MHz / 1 kHz / 10 Hz pro Raster (120°-Tick).
 """
 
 from __future__ import annotations
@@ -23,7 +23,9 @@ from mapping.vfo_bands import (
 
 VFO_MIN_HZ = VFO_CAT_MIN_HZ
 VFO_MAX_HZ = VFO_CAT_MAX_HZ
-#: Hz-Segment (letzte drei Stellen): nur 10-Hz-Schritte, Einerstelle immer 0.
+#: Hz-Segment in der Anzeige: zwei Stellen (Zehner/Hunderter), Einerstelle immer 0.
+VFO_HZ_DISPLAY_DIGITS = 2
+#: Internes Hz-Raster beim Drehen/Eingeben.
 VFO_HZ_SEGMENT_STEP = 10
 
 
@@ -52,13 +54,23 @@ def snap_vfo_hz_to_10hz_grid(hz: int) -> int:
 
 
 def decompose_frequency_hz(hz: int) -> Tuple[int, int, int]:
-    """Hz → (MHz-Anteil, drei kHz-Stellen, drei Hz-Stellen)."""
+    """Hz → (MHz-Anteil, drei kHz-Stellen, drei Hz-Stellen intern)."""
     h = max(0, min(VFO_MAX_HZ, int(hz)))
     mhz = h // 1_000_000
     rest = h % 1_000_000
     k3 = rest // 1000
     h3 = rest % 1000
     return mhz, k3, h3
+
+
+def hz_segment_display_from_h3(h3: int) -> int:
+    """Sichtbare Hz-Stellen ohne die am Funkgerät fehlende Einerstelle."""
+    return max(0, min(99, int(h3) // 10))
+
+
+def h3_from_hz_segment_display(display: int) -> int:
+    """Zweistellige Hz-Anzeige → interne Hz-Stellen (…0)."""
+    return max(0, min(99, int(display))) * 10
 
 
 def compose_frequency_hz(mhz: int, k3: int, h3: int) -> int:
@@ -101,7 +113,7 @@ class _HzStepEdit(QLineEdit):
 
 
 class VfoTripletWidget(QWidget):
-    """Drei Blöcke für MHz (variabel) | kHz (000–999) | Hz (000–999)."""
+    """Drei Blöcke für MHz (variabel) | kHz (000–999) | Hz (00–99, ×10)."""
 
     user_frequency_changed = Signal(int)
 
@@ -216,22 +228,25 @@ class VfoTripletWidget(QWidget):
         """Feste Pixelbreite reicht bei großer Schrift nicht — an FontMetrics anpassen."""
         self._mhz.setFixedWidth(field_width_for_digits(self._mhz, 3, extra_px=12))
         self._khz.setFixedWidth(field_width_for_digits(self._khz, 3))
-        self._hz.setFixedWidth(field_width_for_digits(self._hz, 3))
+        self._hz.setFixedWidth(
+            field_width_for_digits(self._hz, VFO_HZ_DISPLAY_DIGITS)
+        )
 
     def _parse_blocks(self) -> Optional[int]:
         try:
             m = int(self._mhz.text().strip() or "0")
             k = int(self._khz.text().strip() or "0")
-            h = int(self._hz.text().strip() or "0")
+            h_display = int(self._hz.text().strip() or "0")
         except ValueError:
             return None
+        h = h3_from_hz_segment_display(h_display)
         return compose_frequency_hz(m, k, h)
 
     def _display_hz(self, hz: int) -> None:
         m, k, h = decompose_frequency_hz(hz)
         self._mhz.setText(str(m))
         self._khz.setText(f"{k:03d}")
-        self._hz.setText(f"{h:03d}")
+        self._hz.setText(f"{hz_segment_display_from_h3(h):02d}")
 
     def _any_segment_focused(self) -> bool:
         """True, solange der Nutzer per Tastatur in einem Block tippt."""
