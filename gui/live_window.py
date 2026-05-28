@@ -41,7 +41,6 @@ from PySide6.QtWidgets import (
 from gui.app_icon import app_icon
 from gui.touch_slider import TouchSlider
 from gui.momentary_hold_button import MomentaryHoldButton
-from gui.noise_filter_window import NoiseFilterWindow
 from i18n import tr
 from i18n.retranslatable import RetranslatableMixin
 from gui.live_eq_editor_widget import LiveEqEditorWidget
@@ -59,11 +58,7 @@ from cat import SerialCAT
 from cat.ft991_cat import FT991CAT
 from mapping import TX_STATE_CAT_TX, TX_STATE_MIC_PTT, TX_STATE_RX
 from live.live_audio_engine import LiveAudioEngine
-from live.live_devices import (
-    list_input_devices,
-    list_output_devices,
-    remap_live_settings_devices,
-)
+from live.live_devices import remap_live_settings_devices
 from mapping.rx_mapping import RxMode
 from model import AppSettings
 from model.live_settings import (
@@ -92,40 +87,18 @@ if TYPE_CHECKING:
 
 _YAESU_GREEN = "#52c41a"
 
-
-def _live_device_label(
-    device_id: str,
-    *,
-    input_device: bool,
-    saved_label: str = "",
-) -> str:
-    did = str(device_id or "").strip()
-    if not did:
-        sl = str(saved_label or "").strip()
-        return sl if sl else tr("live.device.not_selected")
-    listing = list_input_devices() if input_device else list_output_devices()
-    for dev_id, lbl, _tip in listing:
-        if str(dev_id) == did:
-            return lbl
-    sl = str(saved_label or "").strip()
-    if sl:
-        return sl
-    return tr("live.device.unknown", id=did)
+_LIVE_GREEN_SLIDER_STYLE_HORIZONTAL = (
+    "QSlider::groove:horizontal { background-color:#353535; height:10px; }"
+    "QSlider::handle:horizontal {"
+    f" background-color:{_YAESU_GREEN};"
+    " border:1px solid #1e5c16;"
+    " min-width:22px; max-width:22px; min-height:22px; margin:-8px 0;"
+    "}"
+)
 
 
-def _mk_dev_caption(text: str) -> QLabel:
-    lbl = QLabel(text)
-    lbl.setStyleSheet("color:#9a9a9a;")
-    lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-    return lbl
-
-
-def _mk_dev_value() -> QLabel:
-    lbl = QLabel("—")
-    lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    lbl.setStyleSheet("color:#e8e8e8;")
-    return lbl
+def _style_live_green_horizontal_slider(sl: TouchSlider) -> None:
+    sl.setStyleSheet(_LIVE_GREEN_SLIDER_STYLE_HORIZONTAL)
 
 
 # PTT-Buttons: identische Padding-/Rahmenwerte für Ruhezustand und aktiv, sonst „wächst“
@@ -479,7 +452,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._kbd_ptt_momentary_engaged = False
         #: Globaler KeyRelease‑Filter für Strg+Y (Refcount über sichtbare Live‑Fenster).
         self._live_ctrl_y_filter_acquired = False
-        self._noise_filter_window: Optional[NoiseFilterWindow] = None
+        self._live_footer_error: Optional[str] = None
         self._last_synced_tx_state: Optional[int] = None
         self._refresh_ptt_button_appearance()
         self._refresh_ptt_controls_enabled()
@@ -489,19 +462,11 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
 
     def retranslate_ui(self) -> None:
         self.setWindowTitle(tr("live.window.title"))
-        self._group_devices.setTitle(tr("live.group.devices"))
-        self._cap_dev_mic.setText(tr("live.caption.pc_mic"))
-        self._cap_dev_mon.setText(tr("live.caption.monitor"))
-        self._cap_dev_funk_in.setText(tr("live.caption.funk_in"))
-        self._cap_dev_funk_out.setText(tr("live.caption.funk_out"))
-        self._btn_audio_routing.setText(tr("common.open_sound_settings"))
+        self._btn_audio_routing.setText(tr("live.btn.audio_routing"))
         self._btn_audio_routing.setToolTip(tr("live.open_sound_settings.tooltip"))
-        self._lbl_sr_caption.setText(tr("live.label.samplerate"))
-        self._lbl_sr.setToolTip(tr("live.label.samplerate.tooltip"))
-        self._lbl_bs_caption.setText(tr("live.label.block"))
-        self._lbl_bs.setToolTip(tr("live.label.block.tooltip"))
-        self._chk_live_mithoren.setText(tr("live.check.self_monitor"))
-        self._chk_live_mithoren.setToolTip(tr("live.check.self_monitor.tooltip"))
+        self._b_afl.setText(tr("live.btn.afl"))
+        self._b_afl.setToolTip(tr("live.btn.afl.tooltip"))
+        self._refresh_afl_button_appearance()
         self._group_eq.setTitle(tr("live.group.eq"))
         self._chk_eq_master.setText(tr("live.check.eq_master"))
         self._cap_strip_mic.setText(tr("live.strip.mic_send"))
@@ -514,6 +479,12 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._gate_att_lbl_caption.setText(tr("live.gate.attack"))
         self._gate_hld_lbl_caption.setText(tr("live.gate.hold"))
         self._gate_rel_lbl_caption.setText(tr("live.gate.release"))
+        self._group_rx_noise_gate.setTitle(tr("live.group.rx_noise_gate"))
+        self._fg_en.setText(tr("live.funk_gate.enabled"))
+        self._fg_thr_lbl_caption.setText(tr("live.funk_gate.threshold"))
+        self._fg_att_lbl_caption.setText(tr("live.funk_gate.attack"))
+        self._fg_hld_lbl_caption.setText(tr("live.funk_gate.hold"))
+        self._fg_rel_lbl_caption.setText(tr("live.funk_gate.release"))
         self._group_compressor.setTitle(tr("live.group.compressor"))
         self._c_en.setText(tr("live.comp.enabled"))
         self._comp_thr_lbl_caption.setText(tr("live.comp.threshold"))
@@ -525,8 +496,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._b_ptt.setToolTip(tr("live.btn.ptt.tooltip"))
         self._b_ptt_latch.setText(tr("live.btn.ptt_latch"))
         self._b_ptt_latch.setToolTip(tr("live.btn.ptt_latch.tooltip"))
-        self._b_noise_filter.setText(tr("live.btn.noise_filter"))
-        self._b_noise_filter.setToolTip(tr("live.btn.noise_filter.tooltip"))
         self._live_profile_combo.setToolTip(tr("live.profile.combo.tooltip"))
         self._b_live_profile_save.setText(tr("live.profile.btn.save"))
         self._b_live_profile_save.setToolTip(tr("live.profile.btn.save.tooltip"))
@@ -538,7 +507,33 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._tx_label.setToolTip(tr("live.tx_label.tooltip"))
         self._sync_live_eq_master_look()
         self._refresh_gate_comp_readouts()
-        self._update_device_summary_labels()
+        self._refresh_live_footer()
+
+    def _refresh_live_footer(self) -> None:
+        lbl = getattr(self, "_lbl_live_footer", None)
+        if lbl is None:
+            return
+        err = getattr(self, "_live_footer_error", None)
+        if err:
+            err_one_line = " ".join(str(err).split())
+            lbl.setText(err_one_line)
+            lbl.setStyleSheet("color:#ffb74d;font-size:11px;")
+            lbl.setToolTip(err_one_line)
+            return
+        liv = self._live_snapshot
+        cached_sr = int(liv.samplerate)
+        cached_bs = int(liv.blocksize)
+        if cached_sr > 0:
+            sr_text = tr("live.label.samplerate.value", sr=cached_sr)
+        else:
+            sr_text = tr("live.label.samplerate.pending")
+        bs_text = str(cached_bs) if cached_bs > 0 else tr("common.dash")
+        lbl.setText(
+            f"{tr('live.label.samplerate')} {sr_text}   ·   "
+            f"{tr('live.label.block')} {bs_text}"
+        )
+        lbl.setStyleSheet("color:#9a9a9a;font-size:11px;")
+        lbl.setToolTip(tr("live.label.samplerate.tooltip"))
 
     def _live_engine_runtime_settings_overlay(self, liv: LiveSettings) -> LiveSettings:
         """Übergabe an Audio-Engine — Funk-Eing.-Mithören während Sendung ausblenden."""
@@ -592,6 +587,16 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             self._b_ptt_latch.setStyleSheet(active_style if latched else idle_style)
         self._sync_live_ptt_button_heights()
 
+    def _refresh_afl_button_appearance(self) -> None:
+        btn = getattr(self, "_b_afl", None)
+        if btn is None:
+            return
+        btn.setStyleSheet(
+            _live_ptt_active_button_style()
+            if btn.isChecked()
+            else _live_ptt_idle_button_style()
+        )
+
     def _sync_live_ptt_button_heights(self) -> None:
         """PTT und „PTT halten“ — Touch-Höhe 44 px."""
         ptt = getattr(self, "_b_ptt", None)
@@ -602,10 +607,11 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         for btn in (
             ptt,
             latch,
-            getattr(self, "_b_noise_filter", None),
             getattr(self, "_b_live_profile_save", None),
             getattr(self, "_b_live_profile_update", None),
             getattr(self, "_b_live_profile_delete", None),
+            getattr(self, "_b_afl", None),
+            getattr(self, "_btn_audio_routing", None),
         ):
             if btn is None:
                 continue
@@ -855,83 +861,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         cen = QWidget()
         root = QVBoxLayout(cen)
 
-        self._group_devices = QGroupBox(tr("live.group.devices"))
-        dev_lay = QVBoxLayout(self._group_devices)
-        dev_lay.setContentsMargins(8, 10, 8, 6)
-        dev_lay.setSpacing(4)
-
-        routing = QHBoxLayout()
-        routing.setSpacing(10)
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(2)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(3, 1)
-
-        self._lbl_dev_mic = _mk_dev_value()
-        self._lbl_dev_mon = _mk_dev_value()
-        self._lbl_dev_funk_in = _mk_dev_value()
-        self._lbl_dev_funk_out = _mk_dev_value()
-        self._cap_dev_mic = _mk_dev_caption(tr("live.caption.pc_mic"))
-        self._cap_dev_mon = _mk_dev_caption(tr("live.caption.monitor"))
-        self._cap_dev_funk_in = _mk_dev_caption(tr("live.caption.funk_in"))
-        self._cap_dev_funk_out = _mk_dev_caption(tr("live.caption.funk_out"))
-        grid.addWidget(self._cap_dev_mic, 0, 0)
-        grid.addWidget(self._lbl_dev_mic, 0, 1)
-        grid.addWidget(self._cap_dev_mon, 0, 2)
-        grid.addWidget(self._lbl_dev_mon, 0, 3)
-        grid.addWidget(self._cap_dev_funk_in, 1, 0)
-        grid.addWidget(self._lbl_dev_funk_in, 1, 1)
-        grid.addWidget(self._cap_dev_funk_out, 1, 2)
-        grid.addWidget(self._lbl_dev_funk_out, 1, 3)
-        routing.addLayout(grid, stretch=1)
-
-        self._btn_audio_routing = QPushButton(tr("common.open_sound_settings"))
-        self._btn_audio_routing.setToolTip(tr("live.open_sound_settings.tooltip"))
-        self._btn_audio_routing.setSizePolicy(
-            QSizePolicy.Policy.Fixed,
-            QSizePolicy.Policy.Fixed,
-        )
-        if self._open_sound_settings is not None:
-            self._btn_audio_routing.clicked.connect(self._open_sound_settings)
-        else:
-            self._btn_audio_routing.setEnabled(False)
-        routing.addWidget(
-            self._btn_audio_routing,
-            0,
-            Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight,
-        )
-        dev_lay.addLayout(routing)
-
-        self._lbl_dev_error = QLabel()
-        self._lbl_dev_error.setWordWrap(True)
-        self._lbl_dev_error.setStyleSheet("color:#ffb74d;")
-        self._lbl_dev_error.hide()
-        dev_lay.addWidget(self._lbl_dev_error)
-
-        bf = QHBoxLayout()
-        self._lbl_sr_caption = QLabel(tr("live.label.samplerate"))
-        self._lbl_sr = QLabel(tr("live.label.samplerate.pending"))
-        self._lbl_sr.setToolTip(tr("live.label.samplerate.tooltip"))
-        bf.addWidget(self._lbl_sr_caption)
-        bf.addWidget(self._lbl_sr)
-        bf.addSpacing(14)
-        self._lbl_bs_caption = QLabel(tr("live.label.block"))
-        self._lbl_bs = QLabel(tr("common.dash"))
-        self._lbl_bs.setToolTip(tr("live.label.block.tooltip"))
-        bf.addWidget(self._lbl_bs_caption)
-        bf.addWidget(self._lbl_bs)
-        bf.addSpacing(14)
-        self._chk_live_mithoren = QCheckBox(tr("live.check.self_monitor"))
-        self._chk_live_mithoren.setToolTip(tr("live.check.self_monitor.tooltip"))
-        self._chk_live_mithoren.toggled.connect(
-            self._on_suppress_live_monitor_toggled
-        )
-        bf.addWidget(self._chk_live_mithoren)
-        bf.addStretch(1)
-        dev_lay.addLayout(bf)
-        root.addWidget(self._group_devices)
-
         self._chk_eq_master = QCheckBox(tr("live.check.eq_master"))
         self._chk_eq_master.toggled.connect(self._on_chk_eq_master)
         self._chk_eq_master.setStyleSheet(f"color:{_YAESU_GREEN};")
@@ -1161,12 +1090,71 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             cgrid.addWidget(rlbl, cr, 2)
             cr += 1
 
+        # RX Noise Gate (Funk-Mithör / Funk-Rückweg)
+        self._group_rx_noise_gate = QGroupBox(tr("live.group.rx_noise_gate"))
+        fgv = QGridLayout(self._group_rx_noise_gate)
+        fgv.setHorizontalSpacing(8)
+        fgv.setColumnStretch(1, 1)
+        self._fg_en = QCheckBox(tr("live.funk_gate.enabled"))
+        self._fg_en.toggled.connect(self._pull_rx_noise_gate)
+        self._fg_thr = TouchSlider(Qt.Orientation.Horizontal)
+        self._fg_thr.setRange(-700, -10)
+        self._fg_thr.valueChanged.connect(self._pull_rx_noise_gate)
+        self._fg_att = TouchSlider(Qt.Orientation.Horizontal)
+        self._fg_att.setRange(1, 20)
+        self._fg_att.valueChanged.connect(self._pull_rx_noise_gate)
+        self._fg_hld = TouchSlider(Qt.Orientation.Horizontal)
+        self._fg_hld.setRange(5, 200)
+        self._fg_hld.valueChanged.connect(self._pull_rx_noise_gate)
+        self._fg_rel = TouchSlider(Qt.Orientation.Horizontal)
+        self._fg_rel.setRange(20, 500)
+        self._fg_rel.valueChanged.connect(self._pull_rx_noise_gate)
+
+        fgv.addWidget(self._fg_en, 0, 0, 1, 3)
+        fr = 1
+        self._fg_thr_lbl = _mk_read_lbl()
+        self._fg_att_lbl = _mk_read_lbl()
+        self._fg_hld_lbl = _mk_read_lbl()
+        self._fg_rel_lbl = _mk_read_lbl()
+        self._fg_thr_lbl_caption = QLabel(tr("live.funk_gate.threshold"))
+        self._fg_att_lbl_caption = QLabel(tr("live.funk_gate.attack"))
+        self._fg_hld_lbl_caption = QLabel(tr("live.funk_gate.hold"))
+        self._fg_rel_lbl_caption = QLabel(tr("live.funk_gate.release"))
+        for cap_lbl, slid, read_lbl in (
+            (self._fg_thr_lbl_caption, self._fg_thr, self._fg_thr_lbl),
+            (self._fg_att_lbl_caption, self._fg_att, self._fg_att_lbl),
+            (self._fg_hld_lbl_caption, self._fg_hld, self._fg_hld_lbl),
+            (self._fg_rel_lbl_caption, self._fg_rel, self._fg_rel_lbl),
+        ):
+            fgv.addWidget(cap_lbl, fr, 0)
+            fgv.addWidget(slid, fr, 1)
+            fgv.addWidget(read_lbl, fr, 2)
+            fr += 1
+
+        for sl in (
+            self._g_thr,
+            self._g_att,
+            self._g_hld,
+            self._g_rel,
+            self._c_thr,
+            self._c_rat,
+            self._c_att,
+            self._c_rel,
+            self._c_mk,
+            self._fg_thr,
+            self._fg_att,
+            self._fg_hld,
+            self._fg_rel,
+        ):
+            _style_live_green_horizontal_slider(sl)
+
         gc_row = QWidget()
         gc_lay = QHBoxLayout(gc_row)
         gc_lay.setContentsMargins(0, 0, 0, 0)
         gc_lay.setSpacing(10)
         gc_lay.addWidget(self._group_noise_gate, 1)
         gc_lay.addWidget(self._group_compressor, 1)
+        gc_lay.addWidget(self._group_rx_noise_gate, 1)
         root.addWidget(gc_row)
 
         row_btn = QHBoxLayout()
@@ -1201,16 +1189,8 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._b_ptt_latch.setCheckable(True)
         self._b_ptt_latch.setToolTip(tr("live.btn.ptt_latch.tooltip"))
         self._b_ptt_latch.toggled.connect(self._on_live_ptt_latch_toggled)
-        self._b_noise_filter = QPushButton(tr("live.btn.noise_filter"))
-        self._b_noise_filter.setToolTip(tr("live.btn.noise_filter.tooltip"))
-        self._b_noise_filter.setSizePolicy(
-            QSizePolicy.Policy.Minimum,
-            QSizePolicy.Policy.Fixed,
-        )
-        self._b_noise_filter.clicked.connect(self._on_noise_filter_clicked)
         row_btn.addWidget(self._b_ptt)
         row_btn.addWidget(self._b_ptt_latch)
-        row_btn.addWidget(self._b_noise_filter)
         row_btn.addSpacing(8)
         self._live_profile_combo = QComboBox()
         self._live_profile_combo.setMinimumWidth(150)
@@ -1241,7 +1221,33 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         row_btn.addWidget(self._b_live_profile_update)
         row_btn.addWidget(self._b_live_profile_delete)
         row_btn.addStretch(1)
+        self._b_afl = QPushButton(tr("live.btn.afl"))
+        self._b_afl.setToolTip(tr("live.btn.afl.tooltip"))
+        self._b_afl.setCheckable(True)
+        self._b_afl.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
+        )
+        self._b_afl.toggled.connect(self._on_afl_toggled)
+        self._btn_audio_routing = QPushButton(tr("live.btn.audio_routing"))
+        self._btn_audio_routing.setToolTip(tr("live.open_sound_settings.tooltip"))
+        self._btn_audio_routing.setSizePolicy(
+            QSizePolicy.Policy.Minimum,
+            QSizePolicy.Policy.Fixed,
+        )
+        if self._open_sound_settings is not None:
+            self._btn_audio_routing.clicked.connect(self._open_sound_settings)
+        else:
+            self._btn_audio_routing.setEnabled(False)
+        row_btn.addWidget(self._b_afl)
+        row_btn.addWidget(self._btn_audio_routing)
+        self._refresh_afl_button_appearance()
+        self._sync_live_ptt_button_heights()
+        self._lbl_live_footer = QLabel()
+        self._lbl_live_footer.setWordWrap(False)
         root.addLayout(row_btn)
+        root.addWidget(self._lbl_live_footer)
+        self._refresh_live_footer()
         self.setCentralWidget(cen)
 
     def reload_from_app_settings(self) -> None:
@@ -1283,53 +1289,11 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._schedule_samplerate_label_update(liv, refresh_monitors_after=refresh_monitors)
 
     def _update_device_summary_labels(self, error: Optional[str] = None) -> None:
-        liv = self._live_snapshot
-
-        def _set(
-            lbl: QLabel,
-            device_id: str,
-            saved_label: str,
-            *,
-            input_device: bool,
-        ) -> None:
-            text = _live_device_label(
-                device_id,
-                input_device=input_device,
-                saved_label=saved_label,
-            )
-            lbl.setText(text)
-            lbl.setToolTip(text)
-
-        _set(
-            self._lbl_dev_mic,
-            liv.input_device_id,
-            liv.input_device_label,
-            input_device=True,
-        )
-        _set(
-            self._lbl_dev_mon,
-            liv.output_device_id,
-            liv.output_device_label,
-            input_device=False,
-        )
-        _set(
-            self._lbl_dev_funk_in,
-            liv.funk_output_device_id,
-            liv.funk_output_device_label,
-            input_device=False,
-        )
-        _set(
-            self._lbl_dev_funk_out,
-            liv.funk_listen_input_device_id,
-            liv.funk_listen_input_device_label,
-            input_device=True,
-        )
-        if error:
-            self._lbl_dev_error.setText(error)
-            self._lbl_dev_error.show()
+        if error is not None:
+            self._live_footer_error = str(error).strip() or None
         else:
-            self._lbl_dev_error.clear()
-            self._lbl_dev_error.hide()
+            self._live_footer_error = None
+        self._refresh_live_footer()
 
     def _resolve_live_target_data_mode(self, mode: Optional[RxMode] = None) -> None:
         """DATA‑Ziel aus Funkmodus ableiten und Session‑Flag mit Gerät abgleichen."""
@@ -1678,9 +1642,10 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._sl_flisten_v.blockSignals(False)
         self._update_vol_slider_labels()
 
-        self._chk_live_mithoren.blockSignals(True)
-        self._chk_live_mithoren.setChecked(not bool(liv.suppress_live_monitor_mic))
-        self._chk_live_mithoren.blockSignals(False)
+        self._b_afl.blockSignals(True)
+        self._b_afl.setChecked(not bool(liv.suppress_live_monitor_mic))
+        self._b_afl.blockSignals(False)
+        self._refresh_afl_button_appearance()
 
         self._chk_eq_master.blockSignals(True)
         self._chk_eq_master.setChecked(bool(liv.eq_enabled))
@@ -1704,6 +1669,25 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._c_rel.setValue(int(round(c.release_ms)))
         self._c_mk.setValue(int(round(c.makeup_db * 10)))
 
+        fg = liv.funk_listen_gate
+        self._fg_en.blockSignals(True)
+        self._fg_thr.blockSignals(True)
+        self._fg_att.blockSignals(True)
+        self._fg_hld.blockSignals(True)
+        self._fg_rel.blockSignals(True)
+        self._fg_en.setChecked(bool(fg.enabled))
+        self._fg_thr.setValue(
+            max(-700, min(-10, int(round(fg.threshold_db * 10.0))))
+        )
+        self._fg_att.setValue(int(round(fg.attack_ms)))
+        self._fg_hld.setValue(int(round(fg.hold_ms)))
+        self._fg_rel.setValue(int(round(fg.release_ms)))
+        self._fg_en.blockSignals(False)
+        self._fg_thr.blockSignals(False)
+        self._fg_att.blockSignals(False)
+        self._fg_hld.blockSignals(False)
+        self._fg_rel.blockSignals(False)
+
         self._refresh_gate_comp_readouts()
         self._push_snapshot(persist_disk=False, refresh_monitors=False)
         self._schedule_samplerate_label_update(liv, refresh_monitors_after=True)
@@ -1717,7 +1701,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             self._settings.live.funk_listen_input_device_id or ""
         )
         liv.funk_listen_enabled = True
-        liv.suppress_live_monitor_mic = not bool(self._chk_live_mithoren.isChecked())
+        liv.suppress_live_monitor_mic = not bool(self._b_afl.isChecked())
         liv.samplerate = int(self._live_snapshot.samplerate)
         liv.blocksize = int(self._live_snapshot.blocksize)
         liv.input_gain = live_gain_from_slider(int(self._sl_mic_v.value()))
@@ -1744,9 +1728,11 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         liv.compressor.release_ms = float(self._c_rel.value())
         liv.compressor.makeup_db = float(self._c_mk.value()) / 10.0
 
-        liv.funk_listen_gate = LiveFunkListenGateSettings.from_dict(
-            self._live_snapshot.funk_listen_gate.to_dict()
-        )
+        liv.funk_listen_gate.enabled = bool(self._fg_en.isChecked())
+        liv.funk_listen_gate.threshold_db = float(self._fg_thr.value()) / 10.0
+        liv.funk_listen_gate.attack_ms = float(self._fg_att.value())
+        liv.funk_listen_gate.hold_ms = float(self._fg_hld.value())
+        liv.funk_listen_gate.release_ms = float(self._fg_rel.value())
 
         liv.clamp_recursive()
         return liv
@@ -1818,9 +1804,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._apply_live_to_ui()
         self._engine.reset_funk_listen_noise_gate()
         self._push_snapshot(refresh_monitors=True)
-        nf = getattr(self, "_noise_filter_window", None)
-        if nf is not None and nf.isVisible():
-            nf.reload_from_settings()
 
     def _on_live_audio_profile_selected(self, index: int) -> None:
         if index < 0 or self._live_profile_loading:
@@ -1966,8 +1949,8 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         del _chk
         self._push_snapshot()
 
-    def _on_suppress_live_monitor_toggled(self, _checked: bool) -> None:
-        del _checked
+    def _on_afl_toggled(self, _checked: bool) -> None:
+        self._refresh_afl_button_appearance()
         self._push_snapshot()
 
     def _refresh_gate_comp_readouts(self) -> None:
@@ -1984,55 +1967,15 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._comp_rel_lbl.setText(tr("live.readout.ms_nbsp", value=self._c_rel.value()))
         self._comp_mk_lbl.setText(tr("live.readout.db", value=self._c_mk.value() / 10.0))
 
-    def _ensure_noise_filter_window(self) -> NoiseFilterWindow:
-        win = self._noise_filter_window
-        if win is not None:
-            return win
-        win = NoiseFilterWindow(
-            read_gate=lambda: LiveFunkListenGateSettings.from_dict(
-                self._live_snapshot.funk_listen_gate.to_dict()
-            ),
-            on_gate_changed=self._apply_funk_listen_gate_settings,
-            read_geometry_b64=lambda: str(
-                self._settings.live.noise_filter_window_geometry or ""
-            ),
-            write_geometry_b64=self._save_noise_filter_geometry,
-            parent=None,
-        )
-        self._noise_filter_window = win
-        return win
+        self._fg_thr_lbl.setText(tr("live.readout.db", value=self._fg_thr.value() / 10.0))
+        self._fg_att_lbl.setText(tr("live.readout.ms_nbsp", value=self._fg_att.value()))
+        self._fg_hld_lbl.setText(tr("live.readout.ms_nbsp", value=self._fg_hld.value()))
+        self._fg_rel_lbl.setText(tr("live.readout.ms_nbsp", value=self._fg_rel.value()))
 
-    def _save_noise_filter_geometry(self, b64: str) -> None:
-        self._settings.live.noise_filter_window_geometry = str(b64 or "")
-        self._persist()
-
-    def _on_noise_filter_clicked(self) -> None:
-        win = self._ensure_noise_filter_window()
-        win.reload_from_settings()
-        win.show()
-        win.raise_()
-        win.activateWindow()
-
-    def _apply_funk_listen_gate_settings(
-        self,
-        fg: LiveFunkListenGateSettings,
-    ) -> None:
-        """Rauschfilter-Fenster: Gate live übernehmen und speichern."""
-        liv = LiveSettings.from_dict(self._live_snapshot.to_dict())
-        liv.funk_listen_gate = LiveFunkListenGateSettings.from_dict(fg.to_dict())
-        liv.clamp_recursive()
-        self._live_snapshot = liv
-        self._settings.live.funk_listen_gate = LiveFunkListenGateSettings.from_dict(
-            liv.funk_listen_gate.to_dict()
-        )
+    def _pull_rx_noise_gate(self, *_v: object) -> None:
+        self._refresh_gate_comp_readouts()
+        self._push_snapshot()
         self._engine.reset_funk_listen_noise_gate()
-        self._push_live_engine_runtime_settings(liv)
-        if (
-            self._engine.is_idle_listen_monitor_running()
-            or self._engine.is_mic_preview_running()
-        ):
-            self._engine.push_idle_listen_settings(liv)
-        self._persist()
 
     def _pull_slider_gate_comp(self, _value: Optional[int] = None) -> None:
         del _value
@@ -2059,16 +2002,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         if refresh_monitors_after:
             self._sr_refresh_monitors_after = True
         ref = liv if liv is not None else self._live_snapshot
-        cached_sr = int(ref.samplerate)
-        cached_bs = int(ref.blocksize)
-        if cached_sr > 0:
-            self._lbl_sr.setText(tr("live.label.samplerate.value", sr=cached_sr))
-        else:
-            self._lbl_sr.setText(tr("live.label.samplerate.pending"))
-        if cached_bs > 0:
-            self._lbl_bs.setText(str(cached_bs))
-        else:
-            self._lbl_bs.setText(tr("common.dash"))
+        self._refresh_live_footer()
         self._sr_preview_req += 1
         req = self._sr_preview_req
         self._sr_preview_pending = req
@@ -2079,14 +2013,13 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
     ) -> None:
         if request_id != self._sr_preview_pending:
             return
-        self._lbl_sr.setText(tr("live.label.samplerate.value", sr=sr))
-        self._lbl_bs.setText(str(bs))
         prev_sr = int(self._live_snapshot.samplerate)
         prev_bs = int(self._live_snapshot.blocksize)
         self._live_snapshot.samplerate = sr
         self._live_snapshot.blocksize = bs
         self._settings.live.samplerate = sr
         self._settings.live.blocksize = bs
+        self._refresh_live_footer()
         if self._engine.is_running():
             self._sr_refresh_monitors_after = False
             return
@@ -2295,8 +2228,5 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         if self._audio_radio_session is not None:
             self._audio_radio_session.detach_for_force_close(self)
         self._sync_live_eq_profile_for_session(entering=False)
-        nf = getattr(self, "_noise_filter_window", None)
-        if nf is not None:
-            nf.force_close()
         self._shutdown_sr_preview_thread()
         self._shutdown_ptt_thread()
