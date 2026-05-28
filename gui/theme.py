@@ -277,9 +277,9 @@ def build_dark_stylesheet() -> str:
         border-radius: {SIDEBAR_ITEM_RADIUS}px;
     }}
 
-    /* --- Slider (SQL, AGC, MIC, DSP, Soundeinstellungen) — grüner Griff --- */
+    /* --- Slider (SQL, AGC, MIC, DSP, Soundeinstellungen) — grüner Griff, blauer Track --- */
     QSlider::groove:vertical {{
-        background: #353535;
+        background: {SLIDER_INACTIVE};
         width: 10px;
         border-radius: 5px;
     }}
@@ -291,16 +291,17 @@ def build_dark_stylesheet() -> str:
         border-radius: 11px;
         border: 1px solid #1e5c16;
     }}
+    /* Fusion: sub-page = oberhalb, add-page = unterhalb des Griffs — Blau von unten */
     QSlider::add-page:vertical {{
-        background: #353535;
+        background: {ACCENT_BLUE};
         border-radius: 5px;
     }}
     QSlider::sub-page:vertical {{
-        background: #353535;
+        background: {SLIDER_INACTIVE};
         border-radius: 5px;
     }}
     QSlider::groove:horizontal {{
-        background: #353535;
+        background: {SLIDER_INACTIVE};
         height: 10px;
         border-radius: 5px;
     }}
@@ -313,11 +314,11 @@ def build_dark_stylesheet() -> str:
         border: 1px solid #1e5c16;
     }}
     QSlider::sub-page:horizontal {{
-        background: #353535;
+        background: {ACCENT_BLUE};
         border-radius: 5px;
     }}
     QSlider::add-page:horizontal {{
-        background: #353535;
+        background: {SLIDER_INACTIVE};
         border-radius: 5px;
     }}
 

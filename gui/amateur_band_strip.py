@@ -20,8 +20,10 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 from mapping.amateur_bands import (
     AmateurBand,
     BandKind,
-    band_strip_tick_frequencies,
+    band_strip_groove_tick_frequencies,
+    band_strip_label_tick_frequencies,
     band_strip_tick_label,
+    snap_band_strip_frequency_hz,
 )
 
 from i18n import tr
@@ -62,7 +64,8 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
         self._display_ratio = 0.0
         self._active = False
         self._dragging = False
-        self._ticks: List[int] = []
+        self._groove_ticks: List[int] = []
+        self._label_ticks: List[int] = []
         self.setMinimumHeight(
             _TRACK_HEIGHT + _LABEL_ROW_H + 18 + _LABEL_EXTRA_OFFSET_PX
         )
@@ -93,8 +96,11 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
         if self._band == band:
             return
         self._band = band
-        self._ticks = (
-            band_strip_tick_frequencies(band) if band is not None else []
+        self._groove_ticks = (
+            band_strip_groove_tick_frequencies(band) if band is not None else []
+        )
+        self._label_ticks = (
+            band_strip_label_tick_frequencies(band) if band is not None else []
         )
         self._recompute_target_ratio()
         self.update()
@@ -150,10 +156,10 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
         return _TRACK_BORDER
 
     def _inner_ticks(self) -> List[int]:
-        """Tick-Markierungen ohne ersten/letzten Strich am Balkenrand."""
-        if len(self._ticks) <= 2:
+        """Kanal-/Tick-Markierungen ohne ersten/letzten Strich am Balkenrand."""
+        if len(self._groove_ticks) <= 2:
             return []
-        return self._ticks[1:-1]
+        return self._groove_ticks[1:-1]
 
     def _in_band_frequency(self) -> bool:
         return (
@@ -218,11 +224,11 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
         return font
 
     def _horizontal_label_pad(self) -> int:
-        if self._band is None or not self._ticks:
+        if self._band is None or not self._label_ticks:
             return 6
         fm = QFontMetrics(self._label_font())
-        first = band_strip_tick_label(self._ticks[0], self._band)
-        last = band_strip_tick_label(self._ticks[-1], self._band)
+        first = band_strip_tick_label(self._label_ticks[0], self._band)
+        last = band_strip_tick_label(self._label_ticks[-1], self._band)
         return max(
             6,
             (fm.horizontalAdvance(first) + 4) // 2,
@@ -255,7 +261,8 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
         ratio = max(0.0, min(1.0, ratio))
         span = self._band_span_hz()
         hz = self._band.min_hz + int(round(ratio * span))
-        return max(self._band.min_hz, min(self._band.max_hz, hz))
+        hz = max(self._band.min_hz, min(self._band.max_hz, hz))
+        return snap_band_strip_frequency_hz(hz, self._band)
 
     def _apply_drag_hz(self, hz: int) -> None:
         if self._band is None:
@@ -289,16 +296,16 @@ class AmateurBandStripWidget(RetranslatableMixin, QWidget):
         return text_x, text_x + text_w
 
     def _visible_tick_labels(self, track, font: QFont) -> List[tuple[int, str, float, str]]:
-        if self._band is None or not self._ticks:
+        if self._band is None or not self._label_ticks:
             return []
         fm = QFontMetrics(font)
         items: List[tuple[int, str, float, str]] = []
-        for i, hz in enumerate(self._ticks):
+        for i, hz in enumerate(self._label_ticks):
             label = band_strip_tick_label(hz, self._band)
             x = self._hz_to_x(hz, track)
             if i == 0:
                 align = "left"
-            elif i == len(self._ticks) - 1:
+            elif i == len(self._label_ticks) - 1:
                 align = "right"
             else:
                 align = "center"

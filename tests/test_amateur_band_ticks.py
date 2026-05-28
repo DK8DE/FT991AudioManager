@@ -8,9 +8,16 @@ from mapping.amateur_bands import (
     AMATEUR_BANDS,
     SPECIAL_BANDS,
     band_100khz_tick_frequencies,
+    band_strip_groove_tick_frequencies,
+    band_strip_label_tick_frequencies,
     band_strip_tick_frequencies,
     band_strip_tick_label,
     band_tick_frequencies,
+    cb_all_channel_frequencies_hz,
+    cb_band_strip_label_frequencies,
+    cb_channel_frequency_hz,
+    freenet_all_channel_frequencies_hz,
+    snap_band_strip_frequency_hz,
     frequency_label_100khz,
     frequency_label_for_tick,
 )
@@ -65,18 +72,45 @@ class AmateurBandTicksTest(unittest.TestCase):
 
     def test_cb_band_strip_ticks(self) -> None:
         band = SPECIAL_BANDS[0]
-        ticks = band_strip_tick_frequencies(band)
-        self.assertEqual(ticks[0], 26_965_000)
-        self.assertEqual(ticks[-1], 27_405_000)
-        self.assertLessEqual(len(ticks), 7)
+        groove = band_strip_groove_tick_frequencies(band)
+        labels = band_strip_label_tick_frequencies(band)
+        self.assertEqual(len(groove), 80)
+        self.assertEqual(groove, cb_all_channel_frequencies_hz())
+        self.assertEqual(labels, cb_band_strip_label_frequencies())
+        self.assertEqual(groove[0], cb_channel_frequency_hz(41))
+        self.assertEqual(groove[39], cb_channel_frequency_hz(80))
+        self.assertEqual(groove[40], cb_channel_frequency_hz(1))
+        self.assertEqual(groove[-1], cb_channel_frequency_hz(40))
+        self.assertEqual(band_strip_tick_label(groove[0], band), "41")
+        self.assertEqual(band_strip_tick_label(groove[-1], band), "40")
+        self.assertEqual(band_strip_tick_label(27_075_000, band), "10")
+
+    def test_snap_cb_and_freenet(self) -> None:
+        cb_band = SPECIAL_BANDS[0]
+        fn_band = SPECIAL_BANDS[1]
+        self.assertEqual(
+            snap_band_strip_frequency_hz(27_072_000, cb_band), 27_075_000
+        )
+        self.assertEqual(
+            snap_band_strip_frequency_hz(26_864_000, cb_band),
+            cb_channel_frequency_hz(71),
+        )
+        self.assertEqual(
+            snap_band_strip_frequency_hz(27_000_005, cb_band), 27_005_000
+        )
+        self.assertEqual(
+            snap_band_strip_frequency_hz(149_040_000, fn_band), 149_037_500
+        )
 
     def test_freenet_band_strip_ticks(self) -> None:
         band = SPECIAL_BANDS[1]
-        ticks = band_strip_tick_frequencies(band)
-        self.assertEqual(ticks[0], 149_025_000)
-        self.assertEqual(ticks[-1], 149_087_500)
-        self.assertLessEqual(len(ticks), 7)
-        self.assertIn("149.025", band_strip_tick_label(ticks[0], band))
+        groove = band_strip_groove_tick_frequencies(band)
+        self.assertEqual(groove, freenet_all_channel_frequencies_hz())
+        self.assertEqual(len(groove), 6)
+        self.assertEqual(groove[0], 149_025_000)
+        self.assertEqual(groove[-1], 149_087_500)
+        self.assertEqual(band_strip_tick_label(groove[0], band), "1")
+        self.assertEqual(band_strip_tick_label(groove[3], band), "4")
 
 
 if __name__ == "__main__":  # pragma: no cover

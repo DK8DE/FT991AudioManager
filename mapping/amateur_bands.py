@@ -75,9 +75,9 @@ AMATEUR_BANDS: Tuple[AmateurBand, ...] = tuple(
     AmateurBand(lo, hi, key) for lo, hi, key in _AMATEUR_BANDS
 )
 
-#: CB (EU 11 m) und Freenet (149 MHz) — gelbe Markierung, eigener Band-Streifen.
+#: CB (DE 80-Kanal) und Freenet (149 MHz) — gelbe Markierung, eigener Band-Streifen.
 _SPECIAL_BANDS: Tuple[Tuple[int, int, str, BandKind], ...] = (
-    (26_965_000, 27_405_000, "cb", BandKind.CB),
+    (26_565_000, 27_405_000, "cb", BandKind.CB),
     (149_025_000, 149_087_500, "freenet", BandKind.FREENET),
 )
 
@@ -86,6 +86,78 @@ SPECIAL_BANDS: Tuple[AmateurBand, ...] = tuple(
 )
 
 DISPLAY_BANDS: Tuple[AmateurBand, ...] = AMATEUR_BANDS + SPECIAL_BANDS
+
+#: CEPT/FCC CB-Kanäle 1–40 (26,965–27,405 MHz). Nicht linear (Kanäle 23–25 versetzt).
+_CB_CHANNELS_1_40_HZ: Tuple[int, ...] = (
+    26_965_000,
+    26_975_000,
+    26_985_000,
+    27_005_000,
+    27_015_000,
+    27_025_000,
+    27_035_000,
+    27_055_000,
+    27_065_000,
+    27_075_000,
+    27_085_000,
+    27_105_000,
+    27_115_000,
+    27_125_000,
+    27_135_000,
+    27_155_000,
+    27_165_000,
+    27_175_000,
+    27_185_000,
+    27_205_000,
+    27_215_000,
+    27_225_000,
+    27_255_000,
+    27_235_000,
+    27_245_000,
+    27_265_000,
+    27_275_000,
+    27_285_000,
+    27_295_000,
+    27_305_000,
+    27_315_000,
+    27_325_000,
+    27_335_000,
+    27_345_000,
+    27_355_000,
+    27_365_000,
+    27_375_000,
+    27_385_000,
+    27_395_000,
+    27_405_000,
+)
+
+#: Kanäle 41–80 (26,565–26,955 MHz, 10-kHz-Raster) — im Band vor Kanal 1.
+CB_LOW_BLOCK_FIRST_HZ = 26_565_000
+CB_LOW_BLOCK_STEP_HZ = 10_000
+CB_LOW_BLOCK_CHANNEL_COUNT = 40
+
+CB_BAND_MIN_HZ = CB_LOW_BLOCK_FIRST_HZ
+CB_BAND_MAX_HZ = _CB_CHANNELS_1_40_HZ[-1]
+CB_TOTAL_CHANNEL_COUNT = CB_LOW_BLOCK_CHANNEL_COUNT + len(_CB_CHANNELS_1_40_HZ)
+
+#: Beschriftete Kanäle unter dem CB-Band-Streifen (41–80, dann 1–40).
+CB_STRIP_LABEL_CHANNELS: Tuple[int, ...] = (
+    41,
+    50,
+    60,
+    70,
+    80,
+    1,
+    10,
+    20,
+    30,
+    40,
+)
+
+#: Freenet Kanal 1 … 6 (12,5-kHz-Raster ab 149,025 MHz).
+FREENET_FIRST_CHANNEL_HZ = 149_025_000
+FREENET_CHANNEL_STEP_HZ = 12_500
+FREENET_CHANNEL_COUNT = 6
 
 #: Von 70 cm abwärts (für Band-Dropdown).
 AMATEUR_BANDS_HIGH_TO_LOW: Tuple[AmateurBand, ...] = tuple(reversed(AMATEUR_BANDS))
@@ -123,9 +195,170 @@ def display_band_at_hz(hz: int) -> Optional[AmateurBand]:
     return None
 
 
+def is_cb_block_hz(hz: int) -> bool:
+    """True im gesamten 80-Kanal-CB-Bereich (26,565–27,405 MHz)."""
+    f = int(hz)
+    return CB_BAND_MIN_HZ <= f <= CB_BAND_MAX_HZ
+
+
+def is_cb_channels_1_40_hz(hz: int) -> bool:
+    f = int(hz)
+    return _CB_CHANNELS_1_40_HZ[0] <= f <= _CB_CHANNELS_1_40_HZ[-1]
+
+
+def is_cb_channels_41_80_hz(hz: int) -> bool:
+    f = int(hz)
+    return (
+        cb_channel_frequency_hz(41)
+        <= f
+        <= cb_channel_frequency_hz(80)
+    )
+
+
+def cb_channel_frequency_hz(channel: int) -> int:
+    """Frequenz eines CB-Kanals 1–40 (CEPT) oder 41–80 (FM-Zusatzblock) in Hz."""
+    ch = int(channel)
+    if 1 <= ch <= 40:
+        return _CB_CHANNELS_1_40_HZ[ch - 1]
+    if 41 <= ch <= 80:
+        return CB_LOW_BLOCK_FIRST_HZ + (ch - 41) * CB_LOW_BLOCK_STEP_HZ
+    raise ValueError(f"CB-Kanal ausserhalb 1–{CB_TOTAL_CHANNEL_COUNT}: {ch}")
+
+
+def cb_all_channel_frequencies_hz() -> List[int]:
+    """Alle 80 Kanäle in Frequenz-Reihenfolge (41–80, dann 1–40)."""
+    return [
+        cb_channel_frequency_hz(ch)
+        for ch in list(range(41, 81)) + list(range(1, 41))
+    ]
+
+
+def cb_band_strip_label_frequencies() -> List[int]:
+    """Beschriftete Kanäle unter dem CB-Band-Streifen."""
+    return [cb_channel_frequency_hz(ch) for ch in CB_STRIP_LABEL_CHANNELS]
+
+
 def display_band_for_hz(hz: int) -> Optional[str]:
     band = display_band_at_hz(hz)
     return band.name if band is not None else None
+
+
+def _channel_number_at_hz(
+    hz: int,
+    *,
+    first_hz: int,
+    step_hz: int,
+    channel_count: int,
+    band_min_hz: int,
+    band_max_hz: int,
+    tolerance_hz: int = 50,
+) -> Optional[int]:
+    """Kanalnummer, wenn ``hz`` praktisch auf einem Kanal liegt."""
+    f = int(hz)
+    if not (band_min_hz <= f <= band_max_hz):
+        return None
+    idx = round((f - first_hz) / step_hz)
+    ch = int(idx) + 1
+    if not (1 <= ch <= channel_count):
+        return None
+    ch_hz = first_hz + int(idx) * step_hz
+    if abs(f - ch_hz) > tolerance_hz:
+        return None
+    return ch
+
+
+def cb_channel_at_hz(hz: int, *, tolerance_hz: int = 50) -> Optional[int]:
+    f = int(hz)
+    for ch in list(range(41, 81)) + list(range(1, 41)):
+        ch_hz = cb_channel_frequency_hz(ch)
+        if abs(f - ch_hz) <= tolerance_hz:
+            return ch
+    return None
+
+
+def freenet_channel_at_hz(hz: int) -> Optional[int]:
+    if not is_freenet_block_hz(hz):
+        return None
+    return _channel_number_at_hz(
+        hz,
+        first_hz=FREENET_FIRST_CHANNEL_HZ,
+        step_hz=FREENET_CHANNEL_STEP_HZ,
+        channel_count=FREENET_CHANNEL_COUNT,
+        band_min_hz=FREENET_FIRST_CHANNEL_HZ,
+        band_max_hz=freenet_channel_frequency_hz(FREENET_CHANNEL_COUNT),
+    )
+
+
+def is_freenet_block_hz(hz: int) -> bool:
+    f = int(hz)
+    return (
+        FREENET_FIRST_CHANNEL_HZ
+        <= f
+        <= freenet_channel_frequency_hz(FREENET_CHANNEL_COUNT)
+    )
+
+
+def freenet_channel_frequency_hz(channel: int) -> int:
+    ch = int(channel)
+    if not 1 <= ch <= FREENET_CHANNEL_COUNT:
+        raise ValueError(f"Freenet-Kanal ausserhalb 1–{FREENET_CHANNEL_COUNT}: {ch}")
+    return FREENET_FIRST_CHANNEL_HZ + (ch - 1) * FREENET_CHANNEL_STEP_HZ
+
+
+def freenet_all_channel_frequencies_hz() -> List[int]:
+    return [
+        freenet_channel_frequency_hz(ch)
+        for ch in range(1, FREENET_CHANNEL_COUNT + 1)
+    ]
+
+
+def freenet_band_strip_tick_frequencies() -> List[int]:
+    return freenet_all_channel_frequencies_hz()
+
+
+def band_strip_snap_frequencies_hz(band: AmateurBand) -> Optional[List[int]]:
+    """Kanalfrequenzen für Einrasten im Band-Streifen (CB/Freenet)."""
+    if band.kind is BandKind.CB:
+        return cb_all_channel_frequencies_hz()
+    if band.kind is BandKind.FREENET:
+        return freenet_all_channel_frequencies_hz()
+    return None
+
+
+def snap_band_strip_frequency_hz(hz: int, band: AmateurBand) -> int:
+    """Frequenz auf nächsten Kanal rasten (CB/Freenet) oder im Band belassen."""
+    freqs = band_strip_snap_frequencies_hz(band)
+    f = int(hz)
+    if not freqs:
+        return max(band.min_hz, min(band.max_hz, f))
+    if f <= freqs[0]:
+        return freqs[0]
+    if f >= freqs[-1]:
+        return freqs[-1]
+    best = freqs[0]
+    best_dist = abs(f - best)
+    for ch_hz in freqs[1:]:
+        d = abs(f - ch_hz)
+        if d < best_dist:
+            best_dist = d
+            best = ch_hz
+    return best
+
+
+def display_band_label_at_hz(hz: int) -> Optional[str]:
+    """Bandname für die Anzeige — bei CB/Freenet inkl. Kanalnummer, wenn erkannt."""
+    band = display_band_at_hz(hz)
+    if band is None:
+        return None
+    if band.kind is BandKind.CB:
+        ch = cb_channel_at_hz(hz)
+        if ch is not None:
+            return tr("amateur_bands.cb_channel", channel=ch)
+    elif band.kind is BandKind.FREENET:
+        ch = freenet_channel_at_hz(hz)
+        if ch is not None:
+            return tr("amateur_bands.freenet_channel", channel=ch)
+    return band.name
 
 
 def is_in_amateur_band(hz: int) -> bool:
@@ -258,16 +491,40 @@ def frequency_label_100khz(hz: int) -> str:
     return f"{mhz}.{frac}"
 
 
-def band_strip_tick_frequencies(band: AmateurBand) -> List[int]:
-    """Tick-Markierungen für den Band-Streifen (100 kHz oder feiner bei schmalen Bändern)."""
+def band_strip_groove_tick_frequencies(band: AmateurBand) -> List[int]:
+    """Striche im Band-Streifen — bei CB/Freenet alle Kanäle."""
+    if band.kind is BandKind.CB:
+        return cb_all_channel_frequencies_hz()
+    if band.kind is BandKind.FREENET:
+        return freenet_all_channel_frequencies_hz()
     span = band.max_hz - band.min_hz
     if span > 1_000_000:
         return band_100khz_tick_frequencies(band)
     return band_tick_frequencies(band, max_ticks=7)
 
 
+def band_strip_label_tick_frequencies(band: AmateurBand) -> List[int]:
+    """Beschriftete Tick-Markierungen unter dem Band-Streifen."""
+    if band.kind is BandKind.CB:
+        return cb_band_strip_label_frequencies()
+    if band.kind is BandKind.FREENET:
+        return freenet_all_channel_frequencies_hz()
+    return band_strip_groove_tick_frequencies(band)
+
+
+def band_strip_tick_frequencies(band: AmateurBand) -> List[int]:
+    """Rückwärtskompatibel — Groove-Ticks (alle Kanäle bei CB/Freenet)."""
+    return band_strip_groove_tick_frequencies(band)
+
+
 def band_strip_tick_label(hz: int, band: AmateurBand) -> str:
     """Beschriftung unter einer Tick-Marke im Band-Streifen."""
+    if band.kind is BandKind.CB:
+        ch = cb_channel_at_hz(hz)
+        return str(ch if ch is not None else "?")
+    if band.kind is BandKind.FREENET:
+        ch = freenet_channel_at_hz(hz)
+        return str(ch if ch is not None else "?")
     span = band.max_hz - band.min_hz
     if span > 1_000_000:
         return frequency_label_100khz(hz)

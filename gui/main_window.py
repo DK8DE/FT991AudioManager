@@ -109,6 +109,7 @@ from mapping.amateur_bands import (
     BandKind,
     amateur_band_at_hz,
     display_band_at_hz,
+    display_band_label_at_hz,
     combo_entries_high_to_low,
     preferred_voice_rx_mode_for_amateur_hz,
     VFO_BAND_CHOICE,
@@ -612,7 +613,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         self._band_strip_name = QLabel(tr("common.dash"))
         self._band_strip_name.setFont(band_caption_font)
         self._band_strip_name.setStyleSheet(_VFO_CAPTION_STYLE_IDLE)
-        self._band_strip_name.setMinimumWidth(48)
+        self._band_strip_name.setMinimumWidth(80)
         self._band_strip = AmateurBandStripWidget()
         self._band_strip.frequency_changed.connect(self._on_band_strip_frequency)
         self._band_strip.frequency_drag_finished.connect(
@@ -1694,7 +1695,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             caption.setToolTip(tr("main.vfo.tooltip.in_band", band=band.name))
         else:
             caption.setStyleSheet(_VFO_CAPTION_STYLE_SPECIAL_BAND)
-            caption.setToolTip(tr("main.vfo.tooltip.special_band", band=band.name))
+            caption.setToolTip(tr("main.vfo.tooltip.special_band", band=display_band_label_at_hz(hz) or band.name))
 
     def _band_strip_name_style(self, band) -> str:
         if band is None:
@@ -1708,7 +1709,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         hz = self._vfo_a_display_hz if connected else 0
         band = display_band_at_hz(hz) if hz > 0 else None
         if band is not None:
-            self._band_strip_name.setText(band.name)
+            self._band_strip_name.setText(display_band_label_at_hz(hz) or band.name)
             self._band_strip_name.setStyleSheet(self._band_strip_name_style(band))
         elif connected and hz > 0:
             self._band_strip_name.setText(tr("common.dash"))
