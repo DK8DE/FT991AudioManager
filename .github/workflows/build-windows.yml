@@ -163,6 +163,17 @@ jobs:
           cd dist
           7z a -tzip FT991AudioManager-${{ github.ref_name }}-Windows.zip FT991AudioManager\
 
+      - name: Install PDF tools (Pandoc + wkhtmltopdf)
+        run: choco install pandoc wkhtmltopdf -y --no-progress
+
+      - name: Build manual PDFs (DE + EN)
+        shell: pwsh
+        run: |
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
+          & "${{ github.workspace }}\scripts\build_manual_pdfs.ps1" -Version "${{ steps.ver.outputs.version }}"
+          $manualDir = Join-Path "${{ github.workspace }}" "dist\manuals"
+          Get-ChildItem -Path $manualDir -Filter "*.pdf" | ForEach-Object { Write-Host "Manual PDF: $($_.FullName) ($([math]::Round($_.Length / 1KB, 1)) KB)" }
+
       - name: Generate Release Notes
         shell: pwsh
         run: |
@@ -179,6 +190,12 @@ jobs:
           ### Portable (ZIP)
           - Datei: ``FT991AudioManager-${{ github.ref_name }}-Windows.zip``
           - Entpacken und ``FT991AudioManager.exe`` starten.
+
+          ### Bedienungsanleitung (PDF, Deutsch)
+          - Datei: ``FT991AudioManager-Bedienungsanleitung-$ver.pdf``
+
+          ### User Manual (PDF, English)
+          - Datei: ``FT991AudioManager-UserManual-$ver.pdf``
 
           ### Systemvoraussetzungen
           - Windows 10/11 (64-bit)
@@ -197,6 +214,8 @@ jobs:
           files: |
             dist/FT991AudioManager-${{ github.ref_name }}-Windows.zip
             dist/installer/FT991AudioManager-Setup-${{ steps.ver.outputs.version }}.exe
+            dist/manuals/FT991AudioManager-Bedienungsanleitung-${{ steps.ver.outputs.version }}.pdf
+            dist/manuals/FT991AudioManager-UserManual-${{ steps.ver.outputs.version }}.pdf
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -8,6 +8,8 @@
 
       - FT991AudioManager-Setup-<Version>.exe  (Inno Setup, empfohlen)
       - FT991AudioManager-v<Version>-Windows.zip (portable)
+      - FT991AudioManager-Bedienungsanleitung-<Version>.pdf (Deutsch)
+      - FT991AudioManager-UserManual-<Version>.pdf (Englisch)
 
     Das Skript erzeugt den Tag v<APP_VERSION> und fuehrt "git push origin <Tag>" aus.
     Vorher APP_VERSION und APP_DATE in version.py anpassen; Aenderungen committen und
@@ -59,6 +61,9 @@ if ($appVersion -eq "") {
 $tag = "v$appVersion"
 $setupName = "FT991AudioManager-Setup-$appVersion.exe"
 $zipName = "FT991AudioManager-$tag-Windows.zip"
+$manualDeName = "FT991AudioManager-Bedienungsanleitung-$appVersion.pdf"
+$manualEnName = "FT991AudioManager-UserManual-$appVersion.pdf"
+$buildManualsScript = Join-Path $ProjectRoot "scripts\build_manual_pdfs.ps1"
 
 Push-Location $ProjectRoot
 try {
@@ -97,7 +102,23 @@ try {
     Write-Host "Nach dem Push erstellt GitHub Actions:" -ForegroundColor Cyan
     Write-Host "  - dist/installer/$setupName" -ForegroundColor Cyan
     Write-Host "  - dist/$zipName" -ForegroundColor Cyan
+    Write-Host "  - dist/manuals/$manualDeName" -ForegroundColor Cyan
+    Write-Host "  - dist/manuals/$manualEnName" -ForegroundColor Cyan
     Write-Host ""
+
+    if (Test-Path $buildManualsScript) {
+        $pandocCmd = Get-Command pandoc -ErrorAction SilentlyContinue
+        if ($pandocCmd) {
+            Write-Host "Lokale Vorab-Pruefung: Handbuch-PDFs erzeugen ..." -ForegroundColor Cyan
+            & $buildManualsScript -Version $appVersion
+            Write-Host "Lokale PDFs in dist/manuals/ (werden nicht mit dem Tag gepusht)." -ForegroundColor Yellow
+            Write-Host ""
+        }
+        elseif (-not $DryRun) {
+            Write-Host "Pandoc lokal nicht installiert — PDFs werden in GitHub Actions erzeugt." -ForegroundColor Yellow
+            Write-Host ""
+        }
+    }
 
     $existingLocal = git tag -l $tag 2>$null
     if ($existingLocal) {
@@ -121,6 +142,9 @@ try {
             Write-Host "  git tag $tag" -ForegroundColor Magenta
         }
         Write-Host "  git push $Remote $tag" -ForegroundColor Magenta
+        if (Test-Path $buildManualsScript) {
+            Write-Host "  (CI) scripts/build_manual_pdfs.ps1 -Version $appVersion" -ForegroundColor Magenta
+        }
         Write-Host "`nKeine Aenderungen ausgefuehrt." -ForegroundColor Magenta
         return
     }
@@ -136,9 +160,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "git push fehlgeschlagen (Exit $LASTEXITCODE)." }
 
     Write-Host ""
-    Write-Host "Fertig. GitHub Actions sollte jetzt den Release-Workflow starten (ZIP + Inno Setup)." -ForegroundColor Green
+    Write-Host "Fertig. GitHub Actions sollte jetzt den Release-Workflow starten (ZIP, Inno Setup, Handbuch-PDFs)." -ForegroundColor Green
     Write-Host "Auf GitHub: Repository oeffnen, Tab Actions, Workflow Build Windows EXE, danach Releases." -ForegroundColor Green
-    Write-Host "Erwartete Assets: $setupName und $zipName" -ForegroundColor Green
+    Write-Host "Erwartete Assets: $setupName, $zipName, $manualDeName, $manualEnName" -ForegroundColor Green
 }
 finally {
     Pop-Location

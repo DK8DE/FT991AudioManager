@@ -13,6 +13,7 @@ Neuer schlanker Aufbau (ab 0.5.1):
 - Die Verbindungs-Konfiguration liegt unter **Datei → Einstellungen**.
 - Speicherkanäle unter **Funktionen → Speicherkanäle**.
 - Das CAT-Log liegt unter **Ansicht → CAT-Log anzeigen** (eigenes Fenster).
+- **Hilfe → Anleitung**: Handbuch-PDF (DE/EN) des aktuellen Releases im Browser.
 - **Hilfe → Update prüfen**: Abgleich mit dem neuesten Release auf GitHub.
 """
 
@@ -76,7 +77,7 @@ from rig_bridge import RigBridgeManager
 
 from version import APP_NAME, APP_VERSION
 
-from i18n import tr, set_language, language_manager
+from i18n import tr, set_language, language_manager, current_language
 from i18n.retranslatable import RetranslatableMixin
 
 from .about_window import AboutWindow
@@ -105,6 +106,7 @@ from .profile_widget import ProfileWidget
 from .radio_control_bar import RadioControlBar
 from .settings_dialog import ConnectionSettingsDialog
 from .update_check import UpdateCheckOutcome, UpdateCheckThread
+from .user_manual import manual_pdf_download_url
 from mapping.amateur_bands import (
     BandKind,
     amateur_band_at_hz,
@@ -879,6 +881,16 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         )
         self._version_action.triggered.connect(self._show_about)
         self._help_menu.addAction(self._version_action)
+
+        self._manual_action = QAction(tr("menu.help.manual"), self)
+        self._manual_action.setIcon(
+            menu_action_icon(
+                QStyle.StandardPixmap.SP_FileDialogDetailedView,
+                theme_name="help-contents",
+            )
+        )
+        self._manual_action.triggered.connect(self._on_open_user_manual)
+        self._help_menu.addAction(self._manual_action)
 
         self._update_check_action = QAction(tr("menu.help.check_updates"), self)
         self._update_check_action.setIcon(
@@ -2089,6 +2101,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
 
         self._help_menu.setTitle(tr("menu.help"))
         self._version_action.setText(tr("menu.help.version"))
+        self._manual_action.setText(tr("menu.help.manual"))
         self._update_check_action.setText(tr("menu.help.check_updates"))
 
         self._vfo_a_caption.setText(tr("main.vfo_a_caption"))
@@ -3311,6 +3324,14 @@ class MainWindow(QMainWindow, RetranslatableMixin):
 
     def _show_about(self) -> None:
         AboutWindow(self).exec()
+
+    def _on_open_user_manual(self) -> None:
+        """Hilfe -> Anleitung — Handbuch-PDF der installierten Version im Browser."""
+        lang = current_language()
+        if lang not in ("de", "en"):
+            lang = "de"
+        url = manual_pdf_download_url(APP_VERSION, lang)
+        QDesktopServices.openUrl(QUrl(url))
 
     def _on_check_for_updates(self) -> None:
         """Hilfe → Update prüfen — neuestes Release per GitHub-API."""

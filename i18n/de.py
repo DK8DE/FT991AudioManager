@@ -510,6 +510,7 @@ STRINGS: dict[str, str] = {
     'menu.functions.sound_settings': '&Soundeinstellung…',
     'menu.help': '&Hilfe',
     'menu.help.check_updates': 'Update &prüfen…',
+    'menu.help.manual': 'An&leitung',
     'menu.help.version': '&Version',
     'menu.view': '&Ansicht',
     'menu.view.cat_log': 'CAT-&Log anzeigen',
