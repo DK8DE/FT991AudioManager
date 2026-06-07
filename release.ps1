@@ -12,8 +12,9 @@
       - FT991AudioManager-UserManual-<Version>.pdf (Englisch)
 
     Das Skript erzeugt den Tag v<APP_VERSION> und fuehrt "git push origin <Tag>" aus.
-    Vorher APP_VERSION und APP_DATE in version.py anpassen; Aenderungen committen und
-    auf main pushen, damit der Tag auf dem richtigen Stand liegt.
+    Vorher APP_VERSION und APP_DATE in version.py anpassen; release.ps1 aktualisiert
+    zusaetzlich die Versionszeile in README.md. Aenderungen committen und auf main
+    pushen, damit der Tag (und die README auf GitHub) auf dem richtigen Stand liegt.
 
 .PARAMETER Remote
     Git-Remote-Name (Standard: origin).
@@ -64,11 +65,16 @@ $zipName = "FT991AudioManager-$tag-Windows.zip"
 $manualDeName = "FT991AudioManager-Bedienungsanleitung-$appVersion.pdf"
 $manualEnName = "FT991AudioManager-UserManual-$appVersion.pdf"
 $buildManualsScript = Join-Path $ProjectRoot "scripts\build_manual_pdfs.ps1"
+$syncReadmeScript = Join-Path $ProjectRoot "scripts\sync_readme_version.ps1"
 
 Push-Location $ProjectRoot
 try {
     if (-not (Test-Path (Join-Path $ProjectRoot ".git"))) {
         throw "Kein Git-Repository im Projektroot: $ProjectRoot"
+    }
+
+    if (Test-Path $syncReadmeScript) {
+        & $syncReadmeScript -Version $appVersion -ProjectRoot $ProjectRoot -DryRun:$DryRun
     }
 
     if (-not (Test-Path $WorkflowFile)) {
