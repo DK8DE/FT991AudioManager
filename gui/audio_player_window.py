@@ -2079,16 +2079,24 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
             if self._controller.is_busy():
                 self._controller.stop()
             if self._radio_setup.in_data_mode:
-                voice = self._radio_setup.voice_mode.value
-                self.lbl_status.setText(
-                    tr("player.status.mic_ptt", voice=voice)
-                )
-                _invoke_worker_slot(
-                    self._setup_worker,
-                    "run_engage_plain_forced",
-                )
+                from gui.live_window import live_session_holds_data_mode
+
+                if not live_session_holds_data_mode():
+                    voice = self._radio_setup.voice_mode.value
+                    self.lbl_status.setText(
+                        tr("player.status.mic_ptt", voice=voice)
+                    )
+                    _invoke_worker_slot(
+                        self._setup_worker,
+                        "run_engage_plain_forced",
+                    )
             return
         if state == TX_STATE_RX and self._mic_ptt_interrupted:
+            self._mic_ptt_interrupted = False
+            from gui.live_window import live_session_holds_data_mode
+
+            if live_session_holds_data_mode():
+                return
             # User hat MIC PTT losgelassen — Mode jetzt verifizieren und
             # ggf. nochmal sauber setzen (Force-Write während TX wird vom
             # FT-991 nicht immer angenommen).

@@ -446,10 +446,13 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         if recorder is not None and recorder.isVisible():
             recorder.sync_data_mode_from_main(mode)
         live_win = self._live_window
-        if live_win is not None and live_win.isVisible():
-            sync = getattr(live_win, "sync_data_mode_from_main", None)
-            if callable(sync):
-                sync(mode)
+        if live_win is not None:
+            from gui.live_window import _live_window_accepts_background_audio
+
+            if _live_window_accepts_background_audio(live_win):
+                sync = getattr(live_win, "sync_data_mode_from_main", None)
+                if callable(sync):
+                    sync(mode)
 
     def _sync_meter_dsp_mode_visibility(self) -> None:
         """DSP-Slider ausblenden, wenn die Betriebsart sie am FT-991 nicht nutzt."""
@@ -1665,6 +1668,28 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             self._vfo_ab_button.setEnabled(True)
         self._refresh_band_strip()
         self._persist_settings()
+        self._notify_live_window_cat_connection(connected)
+
+    def _notify_live_window_cat_connection(self, connected: bool) -> None:
+        if connected:
+            return
+        win = self._live_window
+        if win is None:
+            return
+        fn = getattr(win, "handle_cat_disconnected", None)
+        if callable(fn):
+            fn()
+
+    def _resume_live_window_after_connect(self) -> None:
+        """Live-Fenster nach abgeschlossener Connect-Init wieder anbinden."""
+        win = self._live_window
+        if win is None or not win.isVisible():
+            return
+        if not self._cat.is_connected():
+            return
+        fn = getattr(win, "handle_cat_reconnected", None)
+        if callable(fn):
+            fn()
 
     def _on_meter_status_message(self, message: str, timeout_ms: int) -> None:
         sb = self.statusBar()
@@ -2296,6 +2321,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         sb = self.statusBar()
         if sb is not None and status_msg:
             sb.showMessage(status_msg, 4000)
+        self._resume_live_window_after_connect()
 
     # ------------------------------------------------------------------
     # Speicherkanal-Combo
@@ -3401,6 +3427,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             self._settings.ui.log_window_geometry = (
                 self._log_window.geometry_to_base64()
             )
+            self._log_window.panel.deactivate()
             self._log_window.close()
             self._log_window = None
         if self._equalizer_window is not None:

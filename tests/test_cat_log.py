@@ -55,6 +55,19 @@ class CatLogBasicsTest(unittest.TestCase):
         self.assertEqual(len(log), 0)
         self.assertEqual(cleared_count[0], 1)
 
+    def test_remove_cleared_observer(self) -> None:
+        log = CatLog()
+        cleared_count = [0]
+
+        def on_cleared() -> None:
+            cleared_count[0] += 1
+
+        log.add_cleared_observer(on_cleared)
+        log.remove_cleared_observer(on_cleared)
+        log.log_info("eins")
+        log.clear()
+        self.assertEqual(cleared_count[0], 0)
+
     def test_observer_exception_doesnt_break_log(self) -> None:
         log = CatLog()
 

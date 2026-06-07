@@ -165,6 +165,21 @@ def _live_window_accepts_background_audio(w: "LiveWindow") -> bool:
     return bool(w.isVisible() or w.isMinimized())
 
 
+def live_session_holds_data_mode() -> bool:
+    """True solange Live offen ist und der Funk im DATA-Modus bleiben soll."""
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        return False
+    for w in app.topLevelWidgets():
+        if not isinstance(w, LiveWindow):
+            continue
+        if not _live_window_accepts_background_audio(w):
+            continue
+        if bool(getattr(w, "_live_data_session_active", False)):
+            return True
+    return False
+
+
 def _should_release_ptt_on_window_leave(
     *,
     visible: bool,
@@ -394,6 +409,9 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
                 self._setup_worker.pc_menus_finished.connect(
                     self._on_live_radio_pc_menus_for_start,
                 )
+                self._setup_worker.pc_menus_finished.connect(
+                    self._on_live_session_pc_menus_finished,
+                )
                 self._setup_worker.engage_data_finished.connect(
                     self._on_live_radio_engage_finished,
                 )
@@ -439,6 +457,13 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._live_ctrl_y_filter_acquired = False
         self._live_footer_error: Optional[str] = None
         self._last_synced_tx_state: Optional[int] = None
+        self._resume_live_transport_after_reconnect = False
+        self._resume_live_engine_after_reconnect = False
+        self._resume_idle_monitor_after_reconnect = False
+        self._reconnect_engine_resume_pending = False
+        self._live_data_session_active = False
+        self._pending_open_window_data_engage = False
+        self._engage_data_session_only = False
         self._refresh_ptt_button_appearance()
         self._refresh_ptt_controls_enabled()
         self._install_live_keyboard_shortcuts()
@@ -756,6 +781,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         *,
         clear_ptt_wants: bool = False,
         invoke_release_voice_after_live: bool = True,
+        refresh_idle_monitor_after: bool = True,
     ) -> None:
         self._clear_live_transport_pending_flags()
         self._mic_ptt_interrupted_live = False
@@ -767,7 +793,8 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._safe_live_cat_tx_off()
         if invoke_release_voice_after_live:
             self._release_voice_plain_after_stop_live_if_not_mithoren()
-        QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
+        if refresh_idle_monitor_after:
+            QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
         if clear_ptt_wants:
             self._clear_live_ptt_wants()
         else:
@@ -1189,6 +1216,155 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._sync_live_devices_from_settings(refresh_monitors=True)
         self._apply_live_to_ui()
 
+    def handle_cat_disconnected(self) -> None:
+        """CAT/USB weg — Live-Audio stoppen, CAT-Pending abbrechen, UI offline."""
+        self._live_cat_settle.stop()
+        engine_running = self._engine.is_running()
+        idle_running = self._engine.is_idle_listen_monitor_running()
+        transport_wanted = self._desired_live_transport_on()
+        window_active = _live_window_accepts_background_audio(self)
+        self._resume_live_transport_after_reconnect = bool(transport_wanted)
+        self._resume_live_engine_after_reconnect = bool(engine_running)
+        self._resume_idle_monitor_after_reconnect = bool(
+            window_active and (idle_running or engine_running or transport_wanted)
+        )
+        self._clear_live_transport_pending_flags()
+        self._reconnect_engine_resume_pending = False
+        self._mic_ptt_interrupted_live = False
+        if engine_running or self._live_cat_tx_armed or self._cat_live_start_busy:
+            self._stop_live_via_ptt(
+                clear_ptt_wants=False,
+                invoke_release_voice_after_live=False,
+                refresh_idle_monitor_after=False,
+            )
+        else:
+            self._safe_live_cat_tx_off()
+        self._engine.stop_idle_listen_monitor()
+        self._engine.stop_mic_preview_monitor()
+        self._idle_monitor_fp_key = None
+        self._mic_preview_fp_key = None
+        self._update_tx_rx_led(self._last_synced_tx_state or TX_STATE_RX)
+
+    def handle_cat_reconnected(self) -> None:
+        """CAT wieder da — nach kurzer Wartezeit Audio/Geräte wieder anbinden."""
+        if not self.isVisible():
+            return
+        if self._cat is None or not self._cat.is_connected():
+            return
+        # USB-Audio-Geräte brauchen nach Einstecken oft ein paar 100 ms.
+        QTimer.singleShot(700, self._apply_cat_reconnected_resume)
+
+    def _apply_cat_reconnected_resume(self, attempt: int = 0) -> None:
+        if not self.isVisible() or self._cat is None or not self._cat.is_connected():
+            return
+        invalidate_windows_audio_device_cache()
+        self._sync_live_devices_from_settings(refresh_monitors=False)
+        self._update_device_summary_labels()
+        if self._audio_radio_session is not None:
+            self._audio_radio_session.on_window_shown(self)
+        QTimer.singleShot(0, self._ensure_live_data_mode_for_session)
+        last = self._last_synced_tx_state
+        self._update_tx_rx_led(last if last is not None else TX_STATE_RX)
+
+        if self._resume_live_transport_after_reconnect and self._desired_live_transport_on():
+            self._resume_live_transport_after_reconnect = False
+            self._resume_live_engine_after_reconnect = False
+            self._resume_idle_monitor_after_reconnect = False
+            self._sync_ptt_live_transport()
+            return
+
+        if self._resume_live_engine_after_reconnect:
+            outcome = self._restart_live_engine_after_reconnect(attempt)
+            if outcome == "started":
+                self._resume_live_engine_after_reconnect = False
+                self._resume_idle_monitor_after_reconnect = False
+                return
+            if outcome in ("pending", "retry"):
+                return
+
+        if self._resume_idle_monitor_after_reconnect or attempt == 0:
+            prereq_ok, _ = self._engine.prerequisites_ok()
+            if prereq_ok:
+                self._resume_idle_monitor_after_reconnect = False
+                self._defer_refresh_idle_listen_monitor()
+                return
+            if attempt < 10:
+                QTimer.singleShot(
+                    400,
+                    lambda: self._apply_cat_reconnected_resume(attempt + 1),
+                )
+                return
+            self._resume_idle_monitor_after_reconnect = False
+
+    def _restart_live_engine_after_reconnect(self, attempt: int) -> str:
+        """Live-Stream ohne erneutes PTT-Drücken fortsetzen.
+
+        Rückgabe: ``started`` | ``pending`` (CAT-Worker) | ``retry`` | ``failed``
+        """
+        if not self._cat.is_connected():
+            return "failed"
+        liv = LiveSettings.from_dict(self._live_snapshot.to_dict())
+        prereq_ok, _ = self._engine.prerequisites_ok()
+        if not prereq_ok:
+            if attempt < 10:
+                QTimer.singleShot(
+                    400,
+                    lambda: self._apply_cat_reconnected_resume(attempt + 1),
+                )
+                return "retry"
+            return "failed"
+
+        if self._radio_setup is not None and self._setup_worker is not None:
+            self._reconnect_engine_resume_pending = True
+            if not self._radio_setup.is_applied:
+                self._cat_live_start_busy = True
+                self._pending_live_after_pc_then_engage = True
+                _invoke_setup_worker_slot(self._setup_worker, "run_apply_pc_menus")
+                return "pending"
+            if not self._radio_setup.in_data_mode:
+                self._cat_live_start_busy = True
+                self._invoke_worker_engage_data_for_live()
+                return "pending"
+            if self._desired_live_transport_on():
+                self._request_live_cat_tx_on()
+            self._cat_live_start_busy = True
+            self._resolve_live_target_data_mode()
+            ok, txt = self._engine.start(LiveSettings.from_dict(liv.to_dict()))
+            if not ok:
+                self._safe_live_cat_tx_off()
+                self._cat_live_start_busy = False
+                self._reconnect_engine_resume_pending = False
+                if attempt < 10:
+                    QTimer.singleShot(
+                        400,
+                        lambda: self._apply_cat_reconnected_resume(attempt + 1),
+                    )
+                    return "retry"
+                return "failed"
+            self._push_live_engine_runtime_settings(
+                LiveSettings.from_dict(liv.to_dict())
+            )
+            self._cat_live_start_busy = False
+            self._reconnect_engine_resume_pending = False
+            fn = self._request_cat_tx_poll_fn
+            if callable(fn):
+                fn()
+            return "started"
+
+        ok, txt = self._engine.start(LiveSettings.from_dict(liv.to_dict()))
+        if not ok:
+            if attempt < 10:
+                QTimer.singleShot(
+                    400,
+                    lambda: self._apply_cat_reconnected_resume(attempt + 1),
+                )
+                return "retry"
+            return "failed"
+        self._push_live_engine_runtime_settings(
+            LiveSettings.from_dict(liv.to_dict())
+        )
+        return "started"
+
     def apply_devices_from_settings(self, *, notify_if_live_stopped: bool = True) -> None:
         """Soundeinstellungen haben Live-Geräte geändert — sofort übernehmen."""
         was_running = self._engine.is_running()
@@ -1251,20 +1427,66 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._radio_setup.align_data_mode_to_rx_mode(mode)
         self._radio_setup.reconcile_in_data_mode_with_radio()
 
+    def _radio_matches_target_data_mode(self) -> bool:
+        if self._radio_setup is None:
+            return False
+        if not self._radio_setup.in_data_mode:
+            return False
+        if self._cat is None or not self._cat.is_connected():
+            return True
+        try:
+            return FT991CAT(self._cat).read_rx_mode() == self._radio_setup.data_mode
+        except Exception:
+            return self._radio_setup.in_data_mode
+
+    def _ensure_live_data_mode_for_session(self) -> None:
+        """DATA-Modus für die Live-Session — bleibt bis Fensterende aktiv."""
+        if not _live_window_accepts_background_audio(self):
+            return
+        if self._cat is None or not self._cat.is_connected():
+            return
+        if self._radio_setup is None or self._setup_worker is None:
+            return
+        self._resolve_live_target_data_mode()
+        if not self._radio_setup.is_applied:
+            self._pending_open_window_data_engage = True
+            _invoke_setup_worker_slot(self._setup_worker, "run_apply_pc_menus")
+            return
+        self._pending_open_window_data_engage = False
+        if self._radio_matches_target_data_mode():
+            self._live_data_session_active = True
+            return
+        self._live_data_session_active = True
+        self._invoke_worker_engage_data_for_live(session_only=True)
+
+    def _on_live_session_pc_menus_finished(self, ok: bool, message: str) -> None:
+        if not self._pending_open_window_data_engage:
+            return
+        if not ok:
+            self._pending_open_window_data_engage = False
+            return
+        QTimer.singleShot(0, self._ensure_live_data_mode_for_session)
+
     def sync_data_mode_from_main(self, mode: Optional[RxMode] = None) -> None:
-        """DATA‑Ziel wie Audio‑Recorder/‑Player aus der Hauptfenster‑Betriebsart."""
+        """DATA‑Ziel aus Hauptfenster — während Live offen ist DATA-Variante mitführen."""
         if self._radio_setup is None:
             return
         self._resolve_live_target_data_mode(mode)
-        if not self._radio_setup.is_applied or not self._radio_setup.in_data_mode:
+        if not self._live_data_session_active:
             return
-        data_mode = self._radio_setup.data_mode
-        if self._engine.is_running():
+        if not self._radio_setup.is_applied:
             return
-        if self._radio_setup.data_mode == data_mode:
+        if self._cat is None or not self._cat.is_connected():
             return
         if self._setup_worker is None:
             return
+        data_mode = self._radio_setup.data_mode
+        try:
+            current = FT991CAT(self._cat).read_rx_mode()
+            if current == data_mode:
+                return
+        except Exception:
+            pass
         _invoke_setup_worker_slot(
             self._setup_worker,
             "run_set_data_mode",
@@ -1293,6 +1515,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._suppress_idle_listen_monitor = False
         if self._audio_radio_session is not None:
             self._audio_radio_session.on_window_shown(self)
+        QTimer.singleShot(0, self._ensure_live_data_mode_for_session)
         QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
 
     def hideEvent(self, event) -> None:  # type: ignore[override]
@@ -1349,21 +1572,24 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
                 return
             self._stop_live_via_ptt(clear_ptt_wants=True)
             self._mic_ptt_interrupted_live = True
-
-            if self._radio_setup.in_data_mode:
-                _invoke_setup_worker_slot(self._setup_worker, "run_engage_plain_forced")
             QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
             return
         if state == TX_STATE_RX and self._mic_ptt_interrupted_live:
-            if self._radio_setup.needs_plain_verify and self._setup_worker is not None:
-                _invoke_setup_worker_slot(self._setup_worker, "run_verify_plain")
             self._mic_ptt_interrupted_live = False
+            QTimer.singleShot(0, self._ensure_live_data_mode_for_session)
 
     def _on_live_ptt_failed(self, message: str) -> None:
-        if message.strip():
+        if (
+            message.strip()
+            and self._cat is not None
+            and self._cat.is_connected()
+        ):
             QMessageBox.warning(self, tr("live.msgbox.ptt.title"), message)
 
     def _on_live_radio_pc_menus_for_start(self, ok: bool, message: str) -> None:
+        if self._cat is None or not self._cat.is_connected():
+            self._clear_live_transport_pending_flags()
+            return
         if not getattr(self, "_pending_live_after_pc_then_engage", False):
             return
         self._pending_live_after_pc_then_engage = False
@@ -1375,30 +1601,56 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._invoke_worker_engage_data_for_live()
 
     def _on_live_radio_engage_finished(self, ok: bool, message: str) -> None:
+        if self._cat is None or not self._cat.is_connected():
+            self._clear_live_transport_pending_flags()
+            self._reconnect_engine_resume_pending = False
+            self._engage_data_session_only = False
+            return
+        session_only = bool(self._engage_data_session_only)
+        self._engage_data_session_only = False
         was_waiting = bool(self._live_cat_waiting_engage_finish)
+        reconnect_resume = bool(self._reconnect_engine_resume_pending)
         self._live_cat_waiting_engage_finish = False
-        if not was_waiting and not self._desired_live_transport_on():
+        if session_only:
+            if ok:
+                self._live_data_session_active = True
+            else:
+                self._live_data_session_active = False
+                if message.strip() and self._cat.is_connected():
+                    QMessageBox.warning(self, tr("live.msgbox.title"), message)
+            return
+        if (
+            not was_waiting
+            and not self._desired_live_transport_on()
+            and not reconnect_resume
+        ):
             return
         if self._radio_setup is None:
             return
         if not ok:
             if was_waiting or self._cat_live_start_busy:
+                self._reconnect_engine_resume_pending = False
                 self._abort_live_cat_start(
                     message or tr("live.error.data_mode_failed"),
                 )
             return
-        if not self._desired_live_transport_on():
+        if not self._desired_live_transport_on() and not reconnect_resume:
             self._clear_live_transport_pending_flags()
             return
         self._cat_live_start_busy = True
-        self._request_live_cat_tx_on()
+        if self._desired_live_transport_on():
+            self._request_live_cat_tx_on()
         self._schedule_live_engine_after_radio_settled(fresh_data_engaged=True)
 
-    def _invoke_worker_engage_data_for_live(self) -> None:
+    def _invoke_worker_engage_data_for_live(self, *, session_only: bool = False) -> None:
         """Nur wenn PC‑Menüs und Snapshot bereits da sind."""
         if self._setup_worker is None or self._radio_setup is None:
+            if session_only:
+                self._live_data_session_active = False
+                return
             self._abort_live_cat_start(tr("live.error.internal_no_worker"))
             return
+        self._engage_data_session_only = bool(session_only)
         self._live_cat_waiting_engage_finish = True
         _invoke_setup_worker_slot(self._setup_worker, "run_engage_data")
 
@@ -1406,7 +1658,12 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._clear_live_transport_pending_flags()
         self._safe_live_cat_tx_off()
         self._clear_live_ptt_wants()
-        QMessageBox.warning(self, tr("live.msgbox.title"), detail)
+        if (
+            detail.strip()
+            and self._cat is not None
+            and self._cat.is_connected()
+        ):
+            QMessageBox.warning(self, tr("live.msgbox.title"), detail)
         QTimer.singleShot(0, self._defer_refresh_idle_listen_monitor)
 
     def _schedule_live_engine_after_radio_settled(self, *, fresh_data_engaged: bool = True) -> None:
@@ -1418,11 +1675,13 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._live_cat_settle.start(ms)
 
     def _on_live_radio_settled_start_engine(self) -> None:
-        if not self._desired_live_transport_on():
+        reconnect_resume = bool(self._reconnect_engine_resume_pending)
+        if not self._desired_live_transport_on() and not reconnect_resume:
             self._clear_live_transport_pending_flags()
             return
         if self._engine.is_running():
             self._cat_live_start_busy = False
+            self._reconnect_engine_resume_pending = False
             return
         if not self._cat_live_start_busy:
             self._cat_live_start_busy = True
@@ -1434,14 +1693,20 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._live_snapshot = liv
         self._settings.live = liv
         self._vol_persist_timer.start()
-        self._request_live_cat_tx_on()
+        if self._desired_live_transport_on():
+            self._request_live_cat_tx_on()
         ok_s, txt = self._engine.start(LiveSettings.from_dict(liv.to_dict()))
         if not ok_s:
             self._safe_live_cat_tx_off()
+            self._reconnect_engine_resume_pending = False
             self._abort_live_cat_start(txt or tr("live.error.stream_start_failed"))
             return
         self._push_live_engine_runtime_settings(LiveSettings.from_dict(liv.to_dict()))
         self._cat_live_start_busy = False
+        if self._reconnect_engine_resume_pending:
+            self._resume_live_engine_after_reconnect = False
+            self._resume_idle_monitor_after_reconnect = False
+        self._reconnect_engine_resume_pending = False
         self._refresh_ptt_controls_enabled()
         self._refresh_ptt_button_appearance()
         fn = self._request_cat_tx_poll_fn
@@ -1478,10 +1743,11 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             _invoke_setup_worker_slot(self._setup_worker, "run_apply_pc_menus")
             return
 
-        if not rs.in_data_mode:
+        if not self._radio_matches_target_data_mode():
             self._invoke_worker_engage_data_for_live()
             return
 
+        self._live_data_session_active = True
         self._request_live_cat_tx_on()
         self._schedule_live_engine_after_radio_settled(fresh_data_engaged=False)
 
@@ -2117,22 +2383,38 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             super().closeEvent(event)
             return
 
+        cat_ok = self._cat is not None and self._cat.is_connected()
+        self._live_data_session_active = False
+        self._pending_open_window_data_engage = False
+        self._engage_data_session_only = False
+        self._resume_live_transport_after_reconnect = False
+        self._resume_live_engine_after_reconnect = False
+        self._resume_idle_monitor_after_reconnect = False
+        self._reconnect_engine_resume_pending = False
+
         if self._audio_radio_session is not None:
             self._audio_radio_session.on_window_hidden(self)
 
         if self._engine.is_running() or self._cat_live_start_busy:
-            self._stop_live_via_ptt(clear_ptt_wants=True)
+            self._stop_live_via_ptt(
+                clear_ptt_wants=True,
+                invoke_release_voice_after_live=cat_ok,
+            )
         else:
             self._clear_live_transport_pending_flags()
             self._clear_live_ptt_wants()
             self._safe_live_cat_tx_off()
 
         if self._audio_radio_session is not None:
-            self._audio_radio_session.request_restore_if_no_windows()
+            if cat_ok:
+                self._audio_radio_session.request_restore_if_no_windows()
+            else:
+                self._audio_radio_session.discard_state_if_disconnected()
 
-        # Live-Fenster endgültig — DATA/Sprache wie vor Live wiederherstellen,
-        # auch wenn „Mithören“ beim Stop die Umschaltung unterdrückt hat.
-        self._release_live_voice_mode_plain()
+        if cat_ok:
+            # Live-Fenster endgültig — DATA/Sprache wie vor Live wiederherstellen,
+            # auch wenn „Mithören“ beim Stop die Umschaltung unterdrückt hat.
+            self._release_live_voice_mode_plain()
         self._sync_live_eq_profile_for_session(entering=False)
         self._shutdown_sr_preview_thread()
         self._shutdown_ptt_thread()
@@ -2155,6 +2437,9 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._pending_live_after_pc_then_engage = False
         self._live_cat_waiting_engage_finish = False
         self._mic_ptt_interrupted_live = False
+        self._live_data_session_active = False
+        self._pending_open_window_data_engage = False
+        self._engage_data_session_only = False
         if self._engine.is_running():
             self._engine.stop()
         self._safe_live_cat_tx_off()

@@ -50,26 +50,32 @@ class AudioRadioSessionHost(QObject):
         self._thread.start(QThread.Priority.HighestPriority)
         self._open_ids: set[int] = set()
 
-    def _on_pc_menus_finished_warn(self, ok: bool, message: str) -> None:
-        if ok or not message:
+    def _warn_cat_failure(self, message: str) -> None:
+        if not message.strip() or not self._cat.is_connected():
             return
         parent = self.parent()
         if isinstance(parent, QWidget):
             QMessageBox.warning(parent, "Audio / CAT", message)
+
+    def _on_pc_menus_finished_warn(self, ok: bool, message: str) -> None:
+        if ok:
+            return
+        self._warn_cat_failure(message)
 
     def _on_apply_finished_warn(self, ok: bool, message: str) -> None:
-        if ok or not message:
+        if ok:
             return
-        parent = self.parent()
-        if isinstance(parent, QWidget):
-            QMessageBox.warning(parent, "Audio / CAT", message)
+        self._warn_cat_failure(message)
 
     def _on_restore_finished_warn(self, ok: bool, message: str) -> None:
-        if ok or not message:
+        if ok:
             return
-        parent = self.parent()
-        if isinstance(parent, QWidget):
-            QMessageBox.warning(parent, "Audio / CAT", message)
+        self._warn_cat_failure(message)
+
+    def discard_state_if_disconnected(self) -> None:
+        """Session lokal beenden, wenn CAT offline ist (kein Restore am Funkgerät)."""
+        if not self._cat.is_connected():
+            self.setup.discard_snapshot()
 
     @property
     def setup_thread(self) -> QThread:

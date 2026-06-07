@@ -67,6 +67,10 @@ class LogBridge(QObject):
     Der :class:`CatLog`-Observer wird *im jeweiligen Producer-Thread*
     aufgerufen. Wir feuern daraus ein Qt-Signal, das per Standard-
     AutoConnection in den GUI-Thread queued wird.
+
+    Die Anbindung an :class:`CatLog` erfolgt erst über :meth:`attach` —
+    :meth:`detach` beim Ausblenden des Fensters, damit Polling-Einträge
+    nicht weiter in die GUI gepuffert werden.
     """
 
     entry = Signal(object)  # LogEntry
@@ -75,8 +79,21 @@ class LogBridge(QObject):
     def __init__(self, log: CatLog, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._log = log
-        log.add_observer(self._on_entry)
-        log.add_cleared_observer(self._on_cleared)
+        self._attached = False
+
+    def attach(self) -> None:
+        if self._attached:
+            return
+        self._log.add_observer(self._on_entry)
+        self._log.add_cleared_observer(self._on_cleared)
+        self._attached = True
+
+    def detach(self) -> None:
+        if not self._attached:
+            return
+        self._log.remove_observer(self._on_entry)
+        self._log.remove_cleared_observer(self._on_cleared)
+        self._attached = False
 
     def _on_entry(self, entry: LogEntry) -> None:
         # Achtung: kann aus Worker-Thread kommen.
@@ -162,20 +179,42 @@ class LogPanel(RetranslatableMixin, QWidget):
         self._flush_timer = QTimer(self)
         self._flush_timer.setInterval(self._FLUSH_INTERVAL_MS)
         self._flush_timer.timeout.connect(self._flush_pending)
-        self._flush_timer.start()
 
-        # --- Brücke ---
+        # --- Brücke (Anbindung erst bei activate()) ---
+        self._observing = False
         self._bridge = LogBridge(log, parent=self)
         self._bridge.entry.connect(self._on_entry)
         self._bridge.cleared.connect(self._clear_view)
 
-        # Vorhandene Einträge nachholen
-        snapshot = log.snapshot()
-        for entry in snapshot:
-            self._pending.append(entry)
-        self._flush_pending()
         self.retranslate_ui()
         self._register_retranslate()
+
+    def activate(self) -> None:
+        """Live-Anzeige starten — beim Einblenden des Log-Fensters."""
+        if self._observing:
+            return
+        self._bridge.attach()
+        self._flush_timer.start()
+        self._observing = True
+        self._reload_snapshot()
+
+    def deactivate(self) -> None:
+        """Live-Anzeige stoppen — beim Ausblenden des Log-Fensters."""
+        if not self._observing:
+            return
+        self._flush_timer.stop()
+        self._bridge.detach()
+        self._pending.clear()
+        self.view.clear()
+        self._observing = False
+
+    def _reload_snapshot(self) -> None:
+        self._pending.clear()
+        for entry in self._log.snapshot():
+            if self._hide_polling and self._is_polling_entry(entry):
+                continue
+            self._pending.append(entry)
+        self._flush_pending()
 
     def retranslate_ui(self) -> None:
         self._heading_label.setText(tr("log.heading"))
@@ -314,6 +353,7 @@ class LogDockWidget(RetranslatableMixin, QDockWidget):
 
         self.panel = LogPanel(log)
         self.setWidget(self.panel)
+        self.panel.activate()
         self.retranslate_ui()
         self._register_retranslate()
 
@@ -330,9 +370,10 @@ class LogDockWidget(RetranslatableMixin, QDockWidget):
 class LogWindow(RetranslatableMixin, QWidget):
     """Eigenständiges Toplevel-Fenster für das CAT-Log.
 
-    Wird über das Ansicht-Menü ein-/ausgeblendet. Schließen des Fensters
-    blendet es lediglich aus (es bleibt im Hintergrund erhalten); das
-    MainWindow hört auf ``closed`` und persistiert den Sichtbarkeits-Zustand.
+    Wird über das Ansicht-Menü ein-/ausgeblendet. Beim Schließen oder
+    Ausblenden wird die Live-Anzeige gestoppt (kein weiteres Puffern
+    im Hintergrund). Das MainWindow hört auf ``closed`` und persistiert
+    den Sichtbarkeits-Zustand.
 
     Geometrie wird in den App-Settings als Base64-encodiertes
     ``QByteArray`` gespeichert.
@@ -367,6 +408,14 @@ class LogWindow(RetranslatableMixin, QWidget):
     def set_dark_mode(self, dark: bool) -> None:
         self.panel.set_dark_mode(dark)
 
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self.panel.activate()
+
+    def hideEvent(self, event) -> None:  # type: ignore[override]
+        self.panel.deactivate()
+        super().hideEvent(event)
+
     # ------------------------------------------------------------------
     # Geometrie-Persistenz
     # ------------------------------------------------------------------
@@ -398,7 +447,5 @@ class LogWindow(RetranslatableMixin, QWidget):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
-        # Wir blenden das Fenster nur aus, statt es zu zerstören. So bleiben
-        # der LogPanel-Puffer und die Bridge-Verbindung erhalten.
         self.closed.emit()
         event.accept()

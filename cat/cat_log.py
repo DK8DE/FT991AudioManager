@@ -77,6 +77,11 @@ class CatLog:
             if observer not in self._cleared_observers:
                 self._cleared_observers.append(observer)
 
+    def remove_cleared_observer(self, observer: Callable[[], None]) -> None:
+        with self._lock:
+            if observer in self._cleared_observers:
+                self._cleared_observers.remove(observer)
+
     # ------------------------------------------------------------------
     # Einträge hinzufügen
     # ------------------------------------------------------------------

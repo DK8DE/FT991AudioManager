@@ -1580,13 +1580,23 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
             if self._player.is_busy():
                 self._player.stop()
             if self._radio_setup.in_data_mode:
-                voice = self._radio_setup.voice_mode.value
-                self.lbl_status.setText(
-                    tr("recorder.status.mic_ptt", voice=voice)
-                )
-                _invoke_worker_slot(self._setup_worker, "run_engage_plain_forced")
+                from gui.live_window import live_session_holds_data_mode
+
+                if not live_session_holds_data_mode():
+                    voice = self._radio_setup.voice_mode.value
+                    self.lbl_status.setText(
+                        tr("recorder.status.mic_ptt", voice=voice)
+                    )
+                    _invoke_worker_slot(
+                        self._setup_worker, "run_engage_plain_forced"
+                    )
             return
         if state == TX_STATE_RX and self._mic_ptt_interrupted:
+            self._mic_ptt_interrupted = False
+            from gui.live_window import live_session_holds_data_mode
+
+            if live_session_holds_data_mode():
+                return
             if self._radio_setup.needs_plain_verify:
                 _invoke_worker_slot(self._setup_worker, "run_verify_plain")
             elif self._radio_setup.in_data_mode:

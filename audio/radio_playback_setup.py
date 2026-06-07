@@ -387,13 +387,18 @@ class RadioPlaybackSetup:
         except CatError as exc:
             return False, str(exc)
 
+    def discard_snapshot(self) -> None:
+        """Lokalen Session-Zustand löschen — ohne CAT (z. B. Live zu bei Offline)."""
+        self._snapshot = None
+        self._in_data_mode = False
+        self._needs_plain_verify = False
+
     def restore(self) -> tuple[bool, str]:
         if self._snapshot is None:
             return True, ""
         if not self._cat.is_connected():
-            self._snapshot = None
-            self._in_data_mode = False
-            return False, tr("radio_playback.error.cat_disconnected_restore")
+            self.discard_snapshot()
+            return True, ""
 
         snap = self._snapshot
         self._snapshot = None

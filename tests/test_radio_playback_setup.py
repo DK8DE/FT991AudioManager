@@ -116,6 +116,23 @@ class RadioPlaybackSetupTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("nicht verbunden", msg.lower())
 
+    def test_restore_without_cat_clears_snapshot_silently(self) -> None:
+        cat = MagicMock()
+        cat.is_connected.return_value = False
+        setup = RadioPlaybackSetup(cat)
+        setup._snapshot = RadioAudioSnapshot(
+            rx_mode=RxMode.USB,
+            am_port_raw="0",
+            data_in_select_raw="0",
+            data_port_raw="0",
+            fm_pkt_port_raw="0",
+            ssb_port_raw="0",
+        )
+        ok, msg = setup.restore()
+        self.assertTrue(ok)
+        self.assertEqual(msg, "")
+        self.assertFalse(setup.is_applied)
+
     def test_pc_menus_only_then_apply_engages_data(self) -> None:
         cat = MagicMock()
         cat.is_connected.return_value = True
