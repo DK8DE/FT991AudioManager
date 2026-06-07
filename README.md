@@ -1,6 +1,6 @@
 # FT-991/A Audiomanager
 
-**Version 1.7** — Desktop-Tool zur komfortablen Steuerung des Yaesu **FT-991 / FT-991A**
+**Version 1.9.6** — Desktop-Tool zur komfortablen Steuerung des Yaesu **FT-991 / FT-991A**
 über die CAT-Schnittstelle. Die Anwendung deckt alle audiobezogenen TX-Parameter
 (MIC Gain, Speech Processor, parametrischer Equalizer pro Modus,
 SSB-Bandbreite, Cut-Filter, Mic-Quelle …) ab und zeigt parallel die
@@ -26,6 +26,24 @@ geschrieben.
 
 <!-- Screenshot folgt — wer Lust hat: gerne als PR hinzufügen. -->
 
+## Dokumentation
+
+Ausführliche Bedienungsanleitungen (Installation, CAT, Sound, alle Menüs,
+Tastenkürzel, Fehlerbehebung):
+
+| Sprache | Markdown (Quelle) | PDF (GitHub Release) |
+|---------|-------------------|----------------------|
+| Deutsch | [`Bedienungsanleitung.md`](Bedienungsanleitung.md) | `FT991AudioManager-Bedienungsanleitung-<Version>.pdf` |
+| Englisch | [`UserManual_EN.md`](UserManual_EN.md) | `FT991AudioManager-UserManual-<Version>.pdf` |
+
+- **In der App:** **Hilfe → Anleitung** öffnet das passende PDF im Browser
+  (Sprache wie unter **Ansicht → Sprache** eingestellt).
+- **Screenshots** für die Handbücher: [`docs/screenshots/`](docs/screenshots/)
+  (getrennte Ordner `de/` und `en/`).
+- **PDFs lokal erzeugen** (Pandoc + wkhtmltopdf):  
+  `.\scripts\build_manual_pdfs.ps1 -Version <APP_VERSION>`
+
+Die aktuelle Versionsnummer steht in [`version.py`](version.py) (`APP_VERSION`).
 
 ## Features
 
@@ -70,6 +88,9 @@ geschrieben.
 - Beim Öffnen (mit CAT): automatisch **DATA-FM** + Menü **072 → USB** für
   saubere Audio-Zuleitung; beim Schließen **Wiederherstellung** des
   vorherigen Modus
+- **Live‑PC Funk** hält den **DATA-Modus** für die Sitzung aktiv (auch bei
+  PTT); Wechsel im Hauptfenster wird übernommen, bis das Live-Fenster
+  geschlossen wird
 - Schnellzugriff-Button **Audioplayer** in der Funksteuerungsleiste
 
 *Abhängigkeit:* `PySide6-Addons` (in `requirements.txt`) für Qt-Multimedia.
@@ -180,7 +201,8 @@ Radio parallel nutzen (über FLRig), während der Audiomanager läuft.
   aus, geht die App ohne Fehler-Popup auf „offline" (rote LED) und
   versucht im Hintergrund regelmäßig wieder Kontakt aufzunehmen. Sobald
   das Radio wieder da ist, geht die LED auf grün und die Werte werden
-  einmal gelesen.
+  einmal gelesen — auch **Audio-Player**, **Recorder** und **Live‑PC Funk**
+  stellen Verbindung und Ton nach erneutem Einstecken wieder her.
 - **TX-Lock für Profile/EQ**: Während das Radio sendet, werden **keine**
   EQ-Profile oder erweiterten Menüs auf das Gerät geschrieben. Geänderte
   Werte werden nach TX→RX nachgeholt.
@@ -189,6 +211,9 @@ Radio parallel nutzen (über FLRig), während der Audiomanager läuft.
 
 ### UI / Komfort
 
+- **Zweisprachige Oberfläche** (**Ansicht → Sprache**: Deutsch / English) —
+  Menüs, Dialoge und Meldungen in der gewählten Sprache; Einstellung wird in
+  `settings.json` gespeichert.
 - **Dark Mode** als Standard (eigenes Theme, optional Light Mode),
   persistiert in `settings.json` im User-Datenordner.
 - **Soundeinstellung** (**Funktionen → Soundeinstellung…**, `Ctrl+Shift+S`):
@@ -204,6 +229,9 @@ Radio parallel nutzen (über FLRig), während der Audiomanager läuft.
   `Ctrl+Shift+K` Speicherkanäle, `Ctrl+Shift+S` Soundeinstellung,
   `Ctrl+L` CAT-Log, `Ctrl+D` Dark Mode
 - **Hilfe → Version**: About-Fenster mit Versionsnummer und Lizenz
+- **Hilfe → Anleitung**: Handbuch-PDF des installierten Releases auf
+  [GitHub](https://github.com/DK8DE/FT991AudioManager/releases) im Browser
+  (Deutsch oder Englisch je nach UI-Sprache)
 - **Hilfe → Update prüfen**: Vergleich mit dem neuesten Release auf
   [GitHub Releases](https://github.com/DK8DE/FT991AudioManager/releases)
   (ein Klick zur Download-Seite, wenn eine neuere Version existiert)
@@ -335,6 +363,8 @@ dann automatisch:
 
 - `FT991AudioManager-Setup-<Version>.exe` (Inno Setup)
 - `FT991AudioManager-v<Version>-Windows.zip` (portable)
+- `FT991AudioManager-Bedienungsanleitung-<Version>.pdf` (Handbuch DE)
+- `FT991AudioManager-UserManual-<Version>.pdf` (Handbuch EN)
 
 Vorher Version in `version.py` erhöhen, committen und `main` pushen, damit der
 Tag auf dem aktuellen Stand liegt. Fortschritt unter **Actions**, Assets unter
@@ -349,9 +379,14 @@ ft991_audio_manager/
 ├── build.ps1                # PyInstaller-Build (Windows, onedir)
 ├── installer.ps1            # Inno-Setup-Installer
 ├── release.ps1              # Git-Tag v<Version> für Releases
+├── Bedienungsanleitung.md   # Handbuch (DE, Markdown)
+├── UserManual_EN.md         # Handbuch (EN, Markdown)
 ├── Installer.iss            # Inno-Setup-Skript (Deutsch)
 ├── FT991AudioManager.spec   # PyInstaller + Windows-Versionsinfo
 ├── requirements.txt
+├── docs/                    # Handbuch-Screenshots, PDF-CSS
+├── scripts/                 # Hilfsskripte (z. B. build_manual_pdfs.ps1)
+├── i18n/                    # UI-Übersetzungen (de / en)
 ├── cat/                     # Serielle CAT-Schicht (Threadsafe, Log)
 ├── audio/                   # Player, Recorder, PTT, T-Call, Funk-Umschaltung
 ├── live/                    # Live-DSP und PortAudio-Engine (sounddevice)
@@ -360,7 +395,7 @@ ft991_audio_manager/
 ├── model/                   # Settings, Profile, Favoriten, Persistierung
 ├── gui/                     # PySide6-Widgets (Main, Meter, Live, Player, …)
 ├── data/                    # User-Daten (Dev); nur .gitkeep im Repo
-└── tests/                   # 340+ Unit-Tests (unittest)
+└── tests/                   # 540+ Unit-Tests (pytest / unittest)
 ```
 
 Die `mapping/`-Schicht ist bewusst frei von PySide6/Qt-Abhängigkeiten,
@@ -381,7 +416,7 @@ Alternativ mit pytest:
 python -m pytest tests/ -q
 ```
 
-Aktuell **340+** Tests. Die meisten brauchen weder serielle Hardware noch
+Aktuell **540+** Tests. Die meisten brauchen weder serielle Hardware noch
 eine Qt-Display-Verbindung; einige GUI-Tests werden ohne Display
 übersprungen.
 

@@ -74,13 +74,11 @@ $manuals = @(
     @{
         Input  = "Bedienungsanleitung.md"
         Output = "FT991AudioManager-Bedienungsanleitung-$Version.pdf"
-        Title  = "FT-991/A Audiomanager - Bedienungsanleitung"
         Lang   = "de"
     },
     @{
         Input  = "UserManual_EN.md"
         Output = "FT991AudioManager-UserManual-$Version.pdf"
-        Title  = "FT-991/A Audiomanager - User Manual"
         Lang   = "en"
     }
 )
@@ -108,7 +106,6 @@ foreach ($manual in $manuals) {
         --pdf-engine-opt=--enable-local-file-access `
         --resource-path=$ProjectRoot `
         --css=$css `
-        --metadata=title:$($manual.Title) `
         -V lang:$($manual.Lang)
 
     if ($LASTEXITCODE -ne 0) {

@@ -431,6 +431,7 @@ The application always uses the **dark theme**.
 | Item | Function |
 |------|----------|
 | **Version** | About window: version, author, date, license (Apache 2.0), GitHub link |
+| **Manual** | Opens the user-manual PDF for the installed release on GitHub in your browser (German or English per *View → Language*) |
 | **Check for updates…** | Compare with latest GitHub release; download link if newer version exists |
 
 ![Fig. 16 — About](docs/screenshots/en/16-about.png)

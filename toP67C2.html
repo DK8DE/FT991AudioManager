@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="de" xml:lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc 3.10" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Bedienungsanleitung</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: 1.5em;}
+    div.column{flex: auto;}
+    @media screen {
+    div.columns{gap: min(4vw, 1.5em);}
+    div.column{overflow-x: auto;}
+    }
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <link rel="stylesheet" href="D:\Yaesu Audio\ft991_audio_manager\docs\manual-pdf.css" />
+</head>
+<body>
+<h1 id="ft-991a-audiomanager--bedienungsanleitung">FT-991/A Audiomanager
+— Bedienungsanleitung</h1>
+<p><strong>Version:</strong> siehe <em>Hilfe → Version</em> in der
+Anwendung<br />
+<strong>Autor:</strong> Jörg Körner, DK8DE<br />
+<strong>Download &amp; Updates:</strong> <a
+href="https://github.com/DK8DE/FT991AudioManager/releases">GitHub
+Releases</a><br />
+<strong>Englische Version:</strong> <a
+href="UserManual_EN.md">UserManual_EN.md</a><br />
+<strong>Screenshots:</strong> Ordner <a
+href="docs/screenshots/de/"><code>docs/screenshots/de/</code></a> —
+siehe <a href="docs/screenshots/README.md">README dort</a></p>
+<hr />
+<h2 id="inhaltsverzeichnis">Inhaltsverzeichnis</h2>
+<ol type="1">
+<li><a href="#1-installation">Installation</a></li>
+<li><a href="#2-einrichtung-am-funkgerät-cat">Einrichtung am Funkgerät
+(CAT)</a></li>
+<li><a href="#3-soundeinstellungen--grundeinrichtung">Soundeinstellungen
+— Grundeinrichtung</a></li>
+<li><a href="#4-verbindung-herstellen-und-trennen">Verbindung herstellen
+und trennen</a></li>
+<li><a href="#5-hauptfenster">Hauptfenster</a></li>
+<li><a href="#6-menü-datei">Menü <em>Datei</em></a></li>
+<li><a href="#7-menü-funktionen">Menü <em>Funktionen</em></a></li>
+<li><a href="#8-menü-ansicht">Menü <em>Ansicht</em></a></li>
+<li><a href="#9-menü-hilfe">Menü <em>Hilfe</em></a></li>
+<li><a href="#10-einstellungsdialog-im-detail">Einstellungsdialog im
+Detail</a></li>
+<li><a href="#11-tastenkürzel">Tastenkürzel</a></li>
+<li><a href="#12-fehlerbehebung">Fehlerbehebung</a></li>
+<li><a href="#13-anhang-wichtige-ft-991-menüs">Anhang: Wichtige
+FT-991-Menüs</a></li>
+</ol>
+<hr />
+<h2 id="1-installation">1. Installation</h2>
+<h3 id="11-download-von-github">1.1 Download von GitHub</h3>
+<ol type="1">
+<li>Öffne die Release-Seite:<br />
+<strong><a
+href="https://github.com/DK8DE/FT991AudioManager/releases">https://github.com/DK8DE/FT991AudioManager/releases</a></strong></li>
+<li>Lade die aktuelle Version herunter:
+<ul>
+<li><strong>Windows-Installer</strong> (empfohlen), oder</li>
+<li><strong>ZIP/Portable-Version</strong> aus dem Release-Asset</li>
+</ul></li>
+<li>Führe die Installation aus bzw. entpacke das Archiv in einen Ordner
+deiner Wahl.</li>
+</ol>
+<p><img src="docs/screenshots/de/01-github-releases.png"
+alt="Abb. 1 — GitHub Releases" /></p>
+<p><em>Abb. 1: GitHub Releases-Seite — aktuelles Release und
+Download-Asset auswählen. (Screenshot-Platzhalter)</em></p>
+<h3 id="12-hinweis-zu-windows-sicherheit-smartscreen--antivirus">1.2
+Hinweis zu Windows-Sicherheit (SmartScreen &amp; Antivirus)</h3>
+<p>Da das Programm von einem privaten Entwickler stammt und nicht über
+den Microsoft Store verteilt wird, kann Windows das Programm als
+<strong>unbekannt</strong> einstufen:</p>
+<table>
+<thead>
+<tr>
+<th>Meldung</th>
+<th>Was tun?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Windows SmartScreen</strong> („Windows hat den PC geschützt
+… Unbekannter Herausgeber“)</td>
+<td>Auf <strong>Weitere Informationen</strong> klicken →
+<strong>Trotzdem ausführen</strong> wählen</td>
+</tr>
+<tr>
+<td><strong>Antivirus / Defender</strong> beim Download</td>
+<td>Datei als <strong>vertrauenswürdig</strong> bestätigen oder Ausnahme
+hinzufügen</td>
+</tr>
+<tr>
+<td><strong>Blockade bei der Installation</strong></td>
+<td>Installer mit Rechtsklick → <strong>Als Administrator
+ausführen</strong> (falls nötig) und erneut bestätigen</td>
+</tr>
+</tbody>
+</table>
+<p>Das ist bei selbst gebauten Amateurfunks-Programmen normal und
+bedeutet nicht automatisch, dass die Software schädlich ist. Lade das
+Programm <strong>nur</strong> von der offiziellen GitHub-Seite oben
+herunter.</p>
+<h3 id="13-erster-start">1.3 Erster Start</h3>
+<p>Nach der Installation starte <strong>FT-991/A Audiomanager</strong>
+über das Startmenü oder die Desktop-Verknüpfung. Beim ersten Start sind
+noch keine CAT-Einstellungen gespeichert — das ist erwartet.</p>
+<p><img src="docs/screenshots/de/02-main-disconnected.png"
+alt="Abb. 2 — Erster Start" /></p>
+<p><em>Abb. 2: Hauptfenster ohne CAT-Verbindung.
+(Screenshot-Platzhalter)</em></p>
+<hr />
+<h2 id="2-einrichtung-am-funkgerät-cat">2. Einrichtung am Funkgerät
+(CAT)</h2>
+<h3 id="21-usb-verbindung">2.1 USB-Verbindung</h3>
+<ol type="1">
+<li>Verbinde den <strong>FT-991</strong> oder <strong>FT-991A</strong>
+per <strong>USB</strong> mit dem PC (eingebauter USB-Anschluss oder
+<strong>SCU-17</strong>).</li>
+<li>Schalte das Funkgerät <strong>ein</strong>.</li>
+<li>Windows installiert ggf. automatisch den USB-Treiber; warte, bis der
+COM-Port im Geräte-Manager sichtbar ist.</li>
+</ol>
+<h3 id="22-com-port-in-der-software-wählen">2.2 COM-Port in der Software
+wählen</h3>
+<ol type="1">
+<li>Öffne in der App: <strong>Datei → Einstellungen…</strong>
+(<code>Strg+E</code>)</li>
+<li>Wähle im Bereich <strong>CAT-Verbindung</strong> den richtigen
+<strong>COM-Port</strong> aus.</li>
+<li>Klicke bei Bedarf auf <strong>Aktualisieren</strong>, um die
+Portliste zu erneuern.</li>
+</ol>
+<p><img src="docs/screenshots/de/03-settings-cat.png"
+alt="Abb. 3 — CAT-Einstellungen" /></p>
+<p><em>Abb. 3: Einstellungen → CAT-Verbindung — Port, Baudrate,
+Verbindung testen. (Screenshot-Platzhalter)</em></p>
+<blockquote>
+<p><strong>Wichtig — zwei gleich aussehende COM-Ports</strong><br />
+Am FT-991(A) erscheinen unter Windows typischerweise
+<strong>zwei</strong> COM-Ports:</p>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Enhanced COM Port</strong></td>
+<td>✅ <strong>CAT-Schnittstelle</strong> — diesen Port verwenden!</td>
+</tr>
+<tr>
+<td><strong>Standard COM Port</strong></td>
+<td>❌ CAT TIMING / TX-Trigger — <strong>nicht</strong> für diese
+Software</td>
+</tr>
+</tbody>
+</table>
+<p>Wenn du unsicher bist: Port wählen → <strong>Verbindung
+testen</strong> (siehe unten). Reagiert das Funkgerät nicht, den
+<strong>anderen</strong> Port probieren.</p>
+</blockquote>
+<h3 id="23-baudrate-am-funkgerät-einstellen">2.3 Baudrate am Funkgerät
+einstellen</h3>
+<p>Die <strong>Werks-Baudrate</strong> für CAT ist
+<strong>38400</strong>.</p>
+<p><strong>Am FT-991 / FT-991A:</strong></p>
+<ol type="1">
+<li><strong>[MENU]</strong> drücken</li>
+<li>Menüpunkt <strong>031</strong> aufrufen — Beschriftung:
+<strong><code>CAT RATE</code></strong></li>
+<li>Wert auf <strong>38400</strong> setzen (alternativ 4800 / 9600 /
+19200 — dann <strong>dieselbe</strong> Rate in der App wählen)</li>
+<li>Einstellung bestätigen / Menü verlassen</li>
+</ol>
+<p>In der App (<strong>Datei → Einstellungen… → CAT-Verbindung</strong>)
+muss die <strong>Baudrate identisch</strong> sein (Standard:
+<strong>38400</strong>).</p>
+<p><img src="docs/screenshots/de/04-ft991-menu-031.png"
+alt="Abb. 4 — FT-991 Menü 031" /></p>
+<p><em>Abb. 4: Funkgerät — Menü 031 „CAT RATE“ auf 38400.
+(Screenshot-Platzhalter)</em></p>
+<h3 id="24-verbindung-testen">2.4 Verbindung testen</h3>
+<p>In den Einstellungen unter <strong>CAT-Verbindung</strong>:</p>
+<ol type="1">
+<li>Port und Baudrate setzen</li>
+<li><strong>Verbindung testen</strong> klicken</li>
+<li>Bei Erfolg erscheint eine Bestätigung mit der Geräte-ID (FT-991 /
+FT-991A)</li>
+</ol>
+<h3 id="25-erfolgskontrolle">2.5 Erfolgskontrolle</h3>
+<p>Wenn alles richtig eingestellt ist, sollte nach <strong>Datei →
+Verbinden</strong> (<code>Strg+V</code>):</p>
+<ul>
+<li>die <strong>Frequenz</strong> (VFO-A und ggf. VFO-B) in der Software
+angezeigt werden,</li>
+<li>die <strong>Betriebsart</strong> (LSB, USB, FM, …) stimmen,</li>
+<li><strong>S-Meter</strong>, SQL, AGC und weitere Werte live
+aktualisiert werden,</li>
+<li>in der <strong>Statusleiste</strong> unten „Verbunden“ mit Port und
+Baudrate erscheinen.</li>
+</ul>
+<p><img src="docs/screenshots/de/05-main-connected.png"
+alt="Abb. 5 — Verbunden" /></p>
+<p><em>Abb. 5: Hauptfenster mit aktiver CAT-Verbindung — Frequenz, Mode,
+Meter, Statusleiste. (Screenshot-Platzhalter)</em></p>
+<hr />
+<h2 id="3-soundeinstellungen--grundeinrichtung">3. Soundeinstellungen —
+Grundeinrichtung</h2>
+<p>Die Audio-Zuordnung ist entscheidend für
+<strong>Audio-Player</strong>, <strong>Audio-Recorder</strong> und
+<strong>Live‑PC Funk</strong>.</p>
+<p>Öffne: <strong>Funktionen → Soundeinstellung…</strong>
+(<code>Strg+Shift+S</code>)<br />
+oder klicke im Hauptfenster in der Funksteuerungsleiste auf
+<strong>Sound</strong>.</p>
+<h3 id="31-geräte--lautstärke-player--recorder">3.1 Geräte &amp;
+Lautstärke (Player / Recorder)</h3>
+<p>Typische Zuordnung bei Nutzung des <strong>USB Audio CODEC</strong>
+des Funkgeräts:</p>
+<table>
+<thead>
+<tr>
+<th>Nr.</th>
+<th>Einstellung</th>
+<th>Gerät (Beispiel)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>Aufnahme-Gerät</strong></td>
+<td><code>Microfon (USB Audio CODEC)</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Sende-Ausgabe</strong></td>
+<td><code>Lautsprecher (USB Audio CODEC)</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>PC-Ausgabe</strong></td>
+<td>Deine <strong>PC-Soundkarte / Lautsprecher</strong> (zum Vorhören am
+PC)</td>
+</tr>
+</tbody>
+</table>
+<p>Stelle für jedes Gerät die gewünschte <strong>Lautstärke</strong>
+ein.</p>
+<p>Optional: <strong>Ausgabe Mithören</strong> — während einer
+CAT-Sendung (Player/Recorder) wird der Ton zusätzlich auf die PC-Ausgabe
+geschaltet.</p>
+<h3 id="32-zuordnung-für-livepc-funk">3.2 Zuordnung für Live‑PC
+Funk</h3>
+<table>
+<thead>
+<tr>
+<th>Nr.</th>
+<th>Einstellung</th>
+<th>Gerät (Beispiel)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>PC-Mikrofon für Live</strong></td>
+<td>Dein <strong>PC-Mikrofon</strong>, mit dem du sprechen willst</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Monitor</strong></td>
+<td>Deine <strong>PC-Lautsprecher oder Kopfhörer</strong>
+(Mithören)</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Funk-Eingabe</strong></td>
+<td><code>Lautsprecher (USB Audio CODEC)</code> (Empfang vom Funk →
+PC)</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Funk-Ausgabe / Sende-Ausgabe Live</strong></td>
+<td><code>Microfon (USB Audio CODEC)</code> (deine Stimme → Funk)</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p><strong>Hinweis:</strong> Die exakten Gerätenamen können je nach
+Windows-Treiber leicht abweichen (z. B. „Yaesu USB Audio“). Wähle
+jeweils das Gerät, das zum <strong>USB Audio CODEC</strong> des
+Funkgeräts gehört.</p>
+</blockquote>
+<p><img src="docs/screenshots/de/06-sound-settings.png"
+alt="Abb. 6 — Soundeinstellungen" /></p>
+<p><em>Abb. 6: Soundeinstellungen — Geräte &amp; Lautstärke sowie
+Zuordnung für Live‑PC Funk (ein Fenster).
+(Screenshot-Platzhalter)</em></p>
+<h3 id="33-grundeinstellung-abgeschlossen">3.3 Grundeinstellung
+abgeschlossen</h3>
+<p>Mit korrekter CAT-Verbindung und Sound-Zuordnung ist die
+<strong>Grundkonfiguration</strong> fertig. Die folgenden Kapitel
+beschreiben alle Fenster und Funktionen im Detail.</p>
+<hr />
+<h2 id="4-verbindung-herstellen-und-trennen">4. Verbindung herstellen
+und trennen</h2>
+<table>
+<thead>
+<tr>
+<th>Aktion</th>
+<th>Menü / Tastenkürzel</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Verbinden</td>
+<td><strong>Datei → Verbinden</strong> — <code>Strg+V</code></td>
+</tr>
+<tr>
+<td>Trennen</td>
+<td><strong>Datei → Trennen</strong> — <code>Strg+T</code></td>
+</tr>
+<tr>
+<td>Einstellungen</td>
+<td><strong>Datei → Einstellungen…</strong> — <code>Strg+E</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Auto-Connect:</strong> In den Einstellungen kann <em>Beim
+Programmstart automatisch verbinden</em> aktiviert werden. Bei
+Verbindungsabbruch versucht die App im Hintergrund alle 2 Sekunden,
+still wieder zu verbinden — bis du manuell <strong>Trennen</strong>
+wählst.</p>
+<p><strong>Nach dem Verbinden</strong> schreibt die App das gewählte
+<strong>EQ-Profil</strong> ins Funkgerät, lädt Speicherkanäle (oder
+nutzt einen Cache) und startet das <strong>Meter-Polling</strong>.</p>
+<hr />
+<h2 id="5-hauptfenster">5. Hauptfenster</h2>
+<p>Das Hauptfenster ist die zentrale Steuerzentrale — VFO, Pegel,
+Profile und Schnellzugriffe.</p>
+<p><img src="docs/screenshots/de/07-main-window-overview.png"
+alt="Abb. 7 — Hauptfenster Übersicht" /></p>
+<p><em>Abb. 7: Hauptfenster — Gesamtansicht mit VFO, Band-Streifen,
+Meter, Funkleiste, Favoriten. (Screenshot-Platzhalter)</em></p>
+<h3 id="51-vfo-anzeige-oben">5.1 VFO-Anzeige (oben)</h3>
+<ul>
+<li><strong>VFO-A</strong> und <strong>VFO-B</strong>: große
+Frequenzanzeige (MHz · kHz · Hz)</li>
+<li>Per <strong>Mausrad</strong> oder <strong>Tastatureingabe</strong>
+einstellbar (10-Hz-Raster)</li>
+<li><strong>A/B-Taste</strong>: VFO-A und VFO-B am Funkgerät
+tauschen</li>
+<li><strong>Farbige Beschriftung:</strong>
+<ul>
+<li><strong>Grün</strong> — Frequenz in einem Amateurband</li>
+<li><strong>Gelb</strong> — CB oder Freenet</li>
+<li><strong>Rot</strong> — außerhalb bekannter Bänder</li>
+<li><strong>Grau</strong> — nicht verbunden</li>
+</ul></li>
+</ul>
+<h3 id="52-band-streifen">5.2 Band-Streifen</h3>
+<p>Unter der VFO-Anzeige:</p>
+<ul>
+<li><strong>Band:</strong> zeigt aktuelles Band bzw. bei CB/Freenet die
+<strong>Kanalnummer</strong> (z. B. „CB 19“, „Freenet 3“)</li>
+<li><strong>Horizontaler Streifen:</strong> Position der Frequenz im
+Band; per <strong>Klicken/Ziehen</strong> die QRG ändern</li>
+<li>Bei <strong>CB</strong> (80 Kanäle) und <strong>Freenet</strong> (6
+Kanäle) <strong>rastet</strong> der Schieber auf die Kanalfrequenzen
+ein</li>
+</ul>
+<h3 id="53-meter-bereich-mitte">5.3 Meter-Bereich (Mitte)</h3>
+<p><strong>Empfang (links):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Anzeige</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>S-Meter</strong></td>
+<td>Signalstärke</td>
+</tr>
+<tr>
+<td><strong>SQL</strong></td>
+<td>Squelch</td>
+</tr>
+<tr>
+<td><strong>NB</strong></td>
+<td>Noise Blanker</td>
+</tr>
+<tr>
+<td><strong>DNR</strong></td>
+<td>DSP-Rauschunterdrückung</td>
+</tr>
+<tr>
+<td><strong>AGC</strong></td>
+<td>Automatische Verstärkungsregelung (AUTO / FAST / MID / SLOW)</td>
+</tr>
+<tr>
+<td><strong>MIC</strong></td>
+<td>Mikrofonpegel (Anzeige)</td>
+</tr>
+<tr>
+<td><strong>DNF</strong></td>
+<td>DSP-Notch-Filter</td>
+</tr>
+<tr>
+<td><strong>AF / RF</strong></td>
+<td>Audio- und RF-Verstärkung (schiebbar, schreibt ans Funkgerät)</td>
+</tr>
+<tr>
+<td><strong>Sendebandbreite TX</strong></td>
+<td>SSB/CW/DATA-Bandbreite (nur in passenden Modi)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Sendung (rechts):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Anzeige</th>
+<th>Bedeutung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>POWER</strong></td>
+<td>Sendeleistung (PC) — auch unter TX änderbar</td>
+</tr>
+<tr>
+<td><strong>ALC, COMP, POWER, SWR</strong></td>
+<td>TX-Meter (SWR auf 2 m/70 cm im Programm ausgeblendet — Front-Panel
+des Funkgeräts ist maßgeblich)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="54-funksteuerungsleiste">5.4 Funksteuerungsleiste</h3>
+<table>
+<thead>
+<tr>
+<th>Taste</th>
+<th>Funktion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tune</strong></td>
+<td>Antennentuner starten</td>
+</tr>
+<tr>
+<td><strong>Simp / RPT+ / RPT−</strong></td>
+<td>Repeater-Shift (FM/C4FM)</td>
+</tr>
+<tr>
+<td><strong>REV</strong></td>
+<td>Relais-QRG tauschen (Eingang ↔︎ Ausgang)</td>
+</tr>
+<tr>
+<td><strong>T.CALL</strong></td>
+<td>1750-Hz-Rufton — <strong>Taste gedrückt halten</strong></td>
+</tr>
+<tr>
+<td><strong>Audioplayer</strong></td>
+<td>Audio-Player-Fenster öffnen</td>
+</tr>
+<tr>
+<td><strong>Audiorecorder</strong></td>
+<td>Audio-Recorder-Fenster öffnen</td>
+</tr>
+<tr>
+<td><strong>Live</strong></td>
+<td>Live‑PC Funk-Fenster öffnen</td>
+</tr>
+<tr>
+<td><strong>Sound</strong></td>
+<td>Soundeinstellungen öffnen</td>
+</tr>
+<tr>
+<td><strong>FLRig</strong> (LED)</td>
+<td>Status der Rig-Bridge (grün = Server aktiv)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="55-untere-steuerzeile">5.5 Untere Steuerzeile</h3>
+<ul>
+<li><strong>Betriebsart (Mode):</strong> LSB, USB, FM, DATA-USB, CW, … —
+steuert auch die EQ-Anzeige</li>
+<li><strong>EQ-Profil:</strong> Auswahl des Audioprofils; wird beim
+Verbinden ins Gerät geschrieben</li>
+<li><strong>Speicherkanal:</strong> VFO oder Kanal 001–100</li>
+<li><strong>Band:</strong> VFO oder Amateurband (setzt Mittenfrequenz
+auf VFO-A)</li>
+</ul>
+<h3 id="56-favoriten">5.6 Favoriten</h3>
+<ul>
+<li><strong>Favoriten-Combo</strong> mit <strong>Speichern…</strong>,
+<strong>Löschen</strong>, <strong>Ändern</strong></li>
+<li>Speichert: Frequenz, Mode, EQ-Profil, SQL, AF, RF,
+Sendeleistung</li>
+<li>Schneller Wechsel zwischen häufig genutzten Funk- und
+Audio-Konfigurationen</li>
+</ul>
+<h3 id="57-statusleiste">5.7 Statusleiste</h3>
+<ul>
+<li><strong>Links:</strong> Verbindungsstatus, COM-Port, Baudrate, ggf.
+Reconnect-Hinweis</li>
+<li><strong>Rechts:</strong> aktuelle Betriebsart, TX-Status</li>
+</ul>
+<hr />
+<h2 id="6-menü-datei">6. Menü <em>Datei</em></h2>
+<table>
+<thead>
+<tr>
+<th>Eintrag</th>
+<th>Funktion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Einstellungen…</strong></td>
+<td>CAT, Rig-Bridge, Kalibrierung (siehe Kapitel 10)</td>
+</tr>
+<tr>
+<td><strong>Verbinden</strong></td>
+<td>CAT-Verbindung öffnen</td>
+</tr>
+<tr>
+<td><strong>Trennen</strong></td>
+<td>CAT trennen, UI zurücksetzen</td>
+</tr>
+<tr>
+<td><strong>Beenden</strong></td>
+<td>Programm beenden</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-menü-funktionen">7. Menü <em>Funktionen</em></h2>
+<h3 id="71-equalizer-strgshifte">7.1 Equalizer…
+(<code>Strg+Shift+E</code>)</h3>
+<p>Zentrale <strong>TX-Audio-Konfiguration</strong> für das
+Funkgerät.</p>
+<p><strong>Kopfzeile:</strong> EQ-Profil wählen, Betriebsart,
+Live-Sync-Status</p>
+<p><strong>Profil-Verwaltung:</strong> Speichern, Speichern unter…,
+Umbenennen, Löschen, Export/Import (JSON)</p>
+<p><strong>Bereiche (je nach Modus):</strong></p>
+<ol type="1">
+<li><p><strong>Grundwerte</strong></p>
+<ul>
+<li>MIC Gain (0–100)</li>
+<li>Normal-EQ ein/aus (Menü PR1)</li>
+<li>Speech Processor + Pegel (nur SSB; schließt Normal-EQ aus)</li>
+<li>SSB TX-Bandbreite</li>
+</ul></li>
+<li><p><strong>Parametric MIC EQ — Normal</strong> (EX119–127)<br />
+Interaktive Kurve: Punkt ziehen = Frequenz/Level, hellblauer Rand =
+Bandbreite, Rechtsklick = Band ein/aus</p></li>
+<li><p><strong>Parametric MIC EQ — Processor</strong> (EX128–136)<br />
+Aktiv wenn Speech Processor eingeschaltet ist</p></li>
+<li><p><strong>Erweiterte Einstellungen</strong><br />
+SSB Low/High Cut, AM/FM Carrier-Level, Mic-Quelle (Front/Rear), DATA
+TX-Level</p></li>
+</ol>
+<blockquote>
+<p>Änderungen werden <strong>automatisch</strong> (debounced) ans
+Funkgerät geschrieben. Während <strong>TX</strong> pausiert der
+Sync.</p>
+</blockquote>
+<p><img src="docs/screenshots/de/08-equalizer.png"
+alt="Abb. 8 — Equalizer" /></p>
+<p><em>Abb. 8: Equalizer-Fenster — Grundwerte und EQ-Kurve.
+(Screenshot-Platzhalter)</em></p>
+<hr />
+<h3 id="72-soundeinstellung-strgshifts">7.2 Soundeinstellung…
+(<code>Strg+Shift+S</code>)</h3>
+<p>Siehe <a href="#3-soundeinstellungen--grundeinrichtung">Kapitel
+3</a>.<br />
+Zusätzlich: Lautstärkeregler pro Gerät und <strong>Ausgabe
+Mithören</strong>.</p>
+<hr />
+<h3 id="73-audio-player-strgshifta">7.3 Audio-Player…
+(<code>Strg+Shift+A</code>)</h3>
+<p>Wiedergabe von <strong>MP3</strong> und <strong>WAV</strong> über die
+CAT-Schnittstelle mit automatischem <strong>PTT</strong>.</p>
+<table>
+<thead>
+<tr>
+<th>Bereich</th>
+<th>Funktion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Ordner</strong></td>
+<td>Verzeichnis mit Audiodateien wählen</td>
+</tr>
+<tr>
+<td><strong>Dateiliste</strong></td>
+<td>Reihenfolge per Drag &amp; Drop ändern</td>
+</tr>
+<tr>
+<td><strong>Play PC</strong></td>
+<td>Lokales Vorhören am PC <strong>ohne</strong> Sendung</td>
+</tr>
+<tr>
+<td><strong>Wiedergabe</strong></td>
+<td>Start / Pause / Stopp — sendet über Funk (DATA-FM + passende
+Menüs)</td>
+</tr>
+<tr>
+<td><strong>Pausen</strong></td>
+<td>Wartezeit zwischen Dateien (1–600 s)</td>
+</tr>
+<tr>
+<td><strong>Modus</strong></td>
+<td>Nach jeder Datei stoppen / alle nacheinander</td>
+</tr>
+<tr>
+<td><strong>Kontest-Loop</strong></td>
+<td>Wiederholung der Playlist</td>
+</tr>
+<tr>
+<td><strong>Lautstärke</strong></td>
+<td>Sende- und PC-Lautstärke</td>
+</tr>
+</tbody>
+</table>
+<p>Beim Start mit CAT-Verbindung stellt die App automatisch
+<strong>DATA-FM</strong> und die Menüs <strong>048 / 070 / 072 / 077 /
+109</strong> für PC-Audio ein.</p>
+<p><img src="docs/screenshots/de/09-audio-player.png"
+alt="Abb. 9 — Audio-Player" /></p>
+<p><em>Abb. 9: Audio-Player-Fenster. (Screenshot-Platzhalter)</em></p>
+<hr />
+<h3 id="74-audio-recorder-strgshiftr">7.4 Audio-Recorder…
+(<code>Strg+Shift+R</code>)</h3>
+<table>
+<thead>
+<tr>
+<th>Bereich</th>
+<th>Funktion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Aufnahme</strong></td>
+<td>Empfang vom Funk-USB-CODEC als <strong>MP3</strong> aufzeichnen</td>
+</tr>
+<tr>
+<td><strong>Replay</strong></td>
+<td>Aufnahme einmalig per CAT-TX wieder abspielen</td>
+</tr>
+<tr>
+<td><strong>Play PC</strong></td>
+<td>Datei lokal am PC anhören</td>
+</tr>
+<tr>
+<td><strong>Format</strong></td>
+<td>MP3-Bitrate wählbar</td>
+</tr>
+<tr>
+<td><strong>Ordner</strong></td>
+<td>Aufnahme-Verzeichnis, Explorer öffnen</td>
+</tr>
+</tbody>
+</table>
+<p><img src="docs/screenshots/de/10-audio-recorder.png"
+alt="Abb. 10 — Audio-Recorder" /></p>
+<p><em>Abb. 10: Audio-Recorder-Fenster.
+(Screenshot-Platzhalter)</em></p>
+<hr />
+<h3 id="75-livepc-funk-strgshiftl">7.5 Live‑PC Funk…
+(<code>Strg+Shift+L</code>)</h3>
+<p>Sprache vom <strong>PC-Mikrofon</strong> über DSP ins Funkgerät —
+ideal für Headset-Betrieb.</p>
+<table>
+<thead>
+<tr>
+<th>Bereich</th>
+<th>Funktion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Siebenband-EQ</strong></td>
+<td>Kurven-Editor, EQ gesamt ein/aus</td>
+</tr>
+<tr>
+<td><strong>Lautstärke-Streifen</strong></td>
+<td>Mic·Send, Monitor, Funk-Eingabe, Funk-Ausgabe mit Pegelanzeige</td>
+</tr>
+<tr>
+<td><strong>TX Noise Gate</strong></td>
+<td>Rauschunterdrückung vor dem Senden (Schwellwert, Attack, Hold,
+Release)</td>
+</tr>
+<tr>
+<td><strong>Kompressor</strong></td>
+<td>Threshold, Ratio, Attack, Release, Make-up</td>
+</tr>
+<tr>
+<td><strong>RX Noise Gate</strong></td>
+<td>Rauschgate für den Funk-Mithör-Eingang</td>
+</tr>
+<tr>
+<td><strong>PTT</strong></td>
+<td>Taste gedrückt halten — <code>Strg+Y</code></td>
+</tr>
+<tr>
+<td><strong>PTT halten</strong></td>
+<td>Einrasten — <code>Strg+X</code></td>
+</tr>
+<tr>
+<td><strong>Live-Profil</strong></td>
+<td>Konfiguration speichern, laden, löschen</td>
+</tr>
+<tr>
+<td><strong>AFL</strong></td>
+<td>Eigene NF abhören — bearbeitetes Mikro auf Monitor</td>
+</tr>
+<tr>
+<td><strong>Audio Zuordnung</strong></td>
+<td>Öffnet die Soundeinstellungen</td>
+</tr>
+</tbody>
+</table>
+<blockquote>
+<p>Live startet nicht, wenn gleichzeitig Player oder Recorder
+senden/aufnehmen.</p>
+</blockquote>
+<p><strong>Sicherheitshinweis:</strong> Bei geschlossenen
+Audio-Leitungen zwischen PC und Funk wird eine <strong>galvanische
+Trennung</strong> im Audio-Pfad empfohlen (siehe README).</p>
+<p><img src="docs/screenshots/de/11-live-window.png"
+alt="Abb. 11 — Live‑PC Funk" /></p>
+<p><em>Abb. 11: Live‑PC Funk — EQ, Gates, Kompressor, PTT.
+(Screenshot-Platzhalter)</em></p>
+<hr />
+<h3 id="76-speicherkanäle-strgshiftk">7.6 Speicherkanäle…
+(<code>Strg+Shift+K</code>)</h3>
+<p>Editor für alle <strong>100 Speicherkanäle</strong> des FT-991.</p>
+<table>
+<thead>
+<tr>
+<th>Funktion</th>
+<th>Beschreibung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Tabelle</strong></td>
+<td>Nr., Name, RX MHz, Mode, Offset, Ton, CTCSS/DCS, Power/SQL (lokal),
+Notiz</td>
+</tr>
+<tr>
+<td><strong>Filter</strong></td>
+<td>Suche, Band (2 m, 70 cm, HF, leer, belegt)</td>
+</tr>
+<tr>
+<td><strong>Neu laden / Speichern</strong></td>
+<td>Kanäle vom Funkgerät lesen bzw. schreiben</td>
+</tr>
+<tr>
+<td><strong>Export / Import</strong></td>
+<td>JSON oder CSV</td>
+</tr>
+<tr>
+<td><strong>Kanal → VFO / VFO → Kanal</strong></td>
+<td>Inhalt zwischen VFO und Speicherplatz tauschen</td>
+</tr>
+<tr>
+<td><strong>Reihenfolge</strong></td>
+<td>Kanäle verschieben, duplizieren, Lücken schließen</td>
+</tr>
+</tbody>
+</table>
+<p>CAT-Verbindung erforderlich. Vor Schreibvorgängen wird automatisch
+eine Sicherung erstellt.</p>
+<p><img src="docs/screenshots/de/12-memory-editor.png"
+alt="Abb. 12 — Speicherkanäle" /></p>
+<p><em>Abb. 12: Speicherkanal-Editor. (Screenshot-Platzhalter)</em></p>
+<hr />
+<h2 id="8-menü-ansicht">8. Menü <em>Ansicht</em></h2>
+<table>
+<thead>
+<tr>
+<th>Eintrag</th>
+<th>Funktion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>CAT-Log anzeigen</strong></td>
+<td>CAT-Protokoll-Fenster ein-/ausblenden (<code>Strg+L</code>)</td>
+</tr>
+<tr>
+<td><strong>Sprache → Deutsch / English</strong></td>
+<td>Oberflächensprache umschalten</td>
+</tr>
+</tbody>
+</table>
+<p>Die Anwendung verwendet dauerhaft das <strong>Dark
+Theme</strong>.</p>
+<p><img src="docs/screenshots/de/13-cat-log.png"
+alt="Abb. 13 — CAT-Log" /></p>
+<p><em>Abb. 13: CAT-Log-Fenster mit TX/RX-Einträgen.
+(Screenshot-Platzhalter)</em></p>
+<hr />
+<h2 id="9-menü-hilfe">9. Menü <em>Hilfe</em></h2>
+<table>
+<thead>
+<tr>
+<th>Eintrag</th>
+<th>Funktion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Version</strong></td>
+<td>About-Fenster: Version, Autor, Datum, Lizenz (Apache 2.0),
+GitHub-Link</td>
+</tr>
+<tr>
+<td><strong>Anleitung</strong></td>
+<td>Öffnet das Handbuch-PDF des aktuellen Releases auf GitHub im Browser
+(Deutsch oder Englisch je nach <em>Ansicht → Sprache</em>)</td>
+</tr>
+<tr>
+<td><strong>Update prüfen…</strong></td>
+<td>Vergleich mit dem neuesten GitHub-Release; Link zum Download bei
+neuer Version</td>
+</tr>
+</tbody>
+</table>
+<p><img src="docs/screenshots/de/16-about.png"
+alt="Abb. 16 — About" /></p>
+<p><em>Abb. 16: Hilfe → Version (About-Fenster).
+(Screenshot-Platzhalter)</em></p>
+<hr />
+<h2 id="10-einstellungsdialog-im-detail">10. Einstellungsdialog im
+Detail</h2>
+<p><strong>Datei → Einstellungen…</strong> — drei Bereiche in der linken
+Navigation:</p>
+<h3 id="101-cat-verbindung">10.1 CAT-Verbindung</h3>
+<ul>
+<li>COM-Port, Baudrate (38400 Standard), Timeout</li>
+<li><strong>Verbindung testen</strong></li>
+<li><strong>Auto-Connect</strong> beim Start + automatischer
+Reconnect</li>
+<li><strong>Live-Meter Polling:</strong> Intervalle für TX und RX</li>
+<li><strong>TX-Polling:</strong> welche Werte auch während Sendung
+gelesen werden</li>
+<li><strong>EQ:</strong> Erweiterte SSB-Einstellungen im Equalizer
+ausblenden</li>
+</ul>
+<p><em>(Siehe Abb. 3 für den CAT-Bereich.)</em></p>
+<h3 id="102-rig-bridge">10.2 Rig-Bridge</h3>
+<p>Ermöglicht die Nutzung von <strong>WSJT-X</strong>,
+<strong>FLRig</strong> und anderen CAT-Clients parallel zur App.</p>
+<ul>
+<li>Rig-Bridge aktivieren</li>
+<li>FLRig-Server: Host (Standard <code>127.0.0.1</code>), Port (Standard
+<code>12345</code>)</li>
+<li>Auto-Start bei CAT-Verbindung</li>
+<li>Status-LED in der Funksteuerungsleiste zeigt Server-Aktivität</li>
+</ul>
+<p><strong>Empfohlene Reihenfolge:</strong> Zuerst in der App verbinden
+→ dann Rig-Bridge starten → in WSJT-X <em>Radio → FLRig</em> mit
+gleichem Host/Port.</p>
+<p><img src="docs/screenshots/de/14-settings-rig-bridge.png"
+alt="Abb. 14 — Rig-Bridge" /></p>
+<p><em>Abb. 14: Einstellungen → Rig-Bridge.
+(Screenshot-Platzhalter)</em></p>
+<h3 id="103-kalibrierung">10.3 Kalibrierung</h3>
+<p><strong>S-Meter:</strong> Eigene Kurven für Kurzwelle und 2 m/70
+cm</p>
+<p><strong>PO-Meter (10 m KW):</strong> Automatische Kalibrieration der
+Sendeleistungsanzeige — nur mit geeigneter KW-Antenne am KW-Anschluss
+und nach Bestätigung des Sicherheitshinweises.</p>
+<p><img src="docs/screenshots/de/15-settings-calibration.png"
+alt="Abb. 15 — Kalibrierung" /></p>
+<p><em>Abb. 15: Einstellungen → Kalibrierung (S-Meter / PO).
+(Screenshot-Platzhalter)</em></p>
+<hr />
+<h2 id="11-tastenkürzel">11. Tastenkürzel</h2>
+<table>
+<thead>
+<tr>
+<th>Kürzel</th>
+<th>Aktion</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Strg+E</code></td>
+<td>Einstellungen</td>
+</tr>
+<tr>
+<td><code>Strg+V</code></td>
+<td>Verbinden</td>
+</tr>
+<tr>
+<td><code>Strg+T</code></td>
+<td>Trennen</td>
+</tr>
+<tr>
+<td><code>Strg+Q</code></td>
+<td>Beenden</td>
+</tr>
+<tr>
+<td><code>Strg+L</code></td>
+<td>CAT-Log</td>
+</tr>
+<tr>
+<td><code>Strg+Shift+E</code></td>
+<td>Equalizer</td>
+</tr>
+<tr>
+<td><code>Strg+Shift+S</code></td>
+<td>Soundeinstellung</td>
+</tr>
+<tr>
+<td><code>Strg+Shift+A</code></td>
+<td>Audio-Player</td>
+</tr>
+<tr>
+<td><code>Strg+Shift+R</code></td>
+<td>Audio-Recorder</td>
+</tr>
+<tr>
+<td><code>Strg+Shift+L</code></td>
+<td>Live‑PC Funk</td>
+</tr>
+<tr>
+<td><code>Strg+Shift+K</code></td>
+<td>Speicherkanäle</td>
+</tr>
+<tr>
+<td><code>Strg+Y</code></td>
+<td>Live: PTT halten</td>
+</tr>
+<tr>
+<td><code>Strg+X</code></td>
+<td>Live: PTT einrasten</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="12-fehlerbehebung">12. Fehlerbehebung</h2>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Lösung</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Keine CAT-Antwort</td>
+<td>Richtigen <strong>Enhanced COM Port</strong> wählen; <strong>Menü
+031</strong> = 38400; USB-Kabel; Funkgerät eingeschaltet</td>
+</tr>
+<tr>
+<td>Zwei COM-Ports — welcher?</td>
+<td><strong>Verbindung testen</strong> in den Einstellungen; bei
+Fehlschlag anderen Port probieren</td>
+</tr>
+<tr>
+<td>Frequenz/Mode werden nicht angezeigt</td>
+<td><strong>Verbinden</strong> (<code>Strg+V</code>); Statusleiste
+prüfen</td>
+</tr>
+<tr>
+<td>Kein Ton beim Player/Recorder</td>
+<td>Soundeinstellungen prüfen (Kapitel 3); Menüs 048/070/072/077/109;
+DATA-FM</td>
+</tr>
+<tr>
+<td>Live ohne Audio</td>
+<td>Live-Gerätezuordnung prüfen; PTT gedrückt halten; Blockierung durch
+Player/Recorder beenden</td>
+</tr>
+<tr>
+<td>SmartScreen blockiert</td>
+<td>Siehe <a
+href="#12-hinweis-zu-windows-sicherheit-smartscreen--antivirus">Kapitel
+1.2</a></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="13-anhang-wichtige-ft-991-menüs">13. Anhang: Wichtige
+FT-991-Menüs</h2>
+<table>
+<thead>
+<tr>
+<th>Menü</th>
+<th>Bezeichnung</th>
+<th>Bedeutung für die App</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>031</strong></td>
+<td>CAT RATE</td>
+<td>Baudrate CAT (38400 Werkstandard)</td>
+</tr>
+<tr>
+<td><strong>048</strong></td>
+<td>USB Audio Routing</td>
+<td>PC-Audio-Pfad</td>
+</tr>
+<tr>
+<td><strong>070</strong></td>
+<td>Mic Input</td>
+<td>Mikrofonquelle (REAR/USB)</td>
+</tr>
+<tr>
+<td><strong>072</strong></td>
+<td>USB Audio Codec</td>
+<td>USB-Codec-Auswahl</td>
+</tr>
+<tr>
+<td><strong>077</strong></td>
+<td>USB Audio Destination</td>
+<td>Ziel der USB-Audio-Ausgabe</td>
+</tr>
+<tr>
+<td><strong>109</strong></td>
+<td>USB Audio Source</td>
+<td>Quelle der USB-Audio-Eingabe</td>
+</tr>
+<tr>
+<td><strong>PR1</strong></td>
+<td>Parametric MIC EQ</td>
+<td>Normal-EQ ein/aus</td>
+</tr>
+<tr>
+<td><strong>EX119–127</strong></td>
+<td>Normal-EQ Bänder</td>
+<td>Parametric EQ (Speech Processor aus)</td>
+</tr>
+<tr>
+<td><strong>EX128–136</strong></td>
+<td>Processor-EQ Bänder</td>
+<td>Parametric EQ (Speech Processor an)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<p><em>Ende der Bedienungsanleitung — FT-991/A Audiomanager</em></p>
+</body>
+</html>

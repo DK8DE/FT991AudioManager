@@ -431,6 +431,7 @@ Die Anwendung verwendet dauerhaft das **Dark Theme**.
 | Eintrag | Funktion |
 |---------|----------|
 | **Version** | About-Fenster: Version, Autor, Datum, Lizenz (Apache 2.0), GitHub-Link |
+| **Anleitung** | Öffnet das Handbuch-PDF des aktuellen Releases auf GitHub im Browser (Deutsch oder Englisch je nach *Ansicht → Sprache*) |
 | **Update prüfen…** | Vergleich mit dem neuesten GitHub-Release; Link zum Download bei neuer Version |
 
 ![Abb. 16 — About](docs/screenshots/de/16-about.png)
