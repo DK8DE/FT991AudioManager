@@ -115,7 +115,7 @@ try {
             Write-Host ""
         }
         elseif (-not $DryRun) {
-            Write-Host "Pandoc lokal nicht installiert — PDFs werden in GitHub Actions erzeugt." -ForegroundColor Yellow
+            Write-Host "Pandoc lokal nicht installiert - PDFs werden in GitHub Actions erzeugt." -ForegroundColor Yellow
             Write-Host ""
         }
     }
