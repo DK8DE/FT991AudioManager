@@ -1,6 +1,6 @@
 # FT-991/A Audiomanager
 
-**Version 1.9.6** — Desktop-Tool zur komfortablen Steuerung des Yaesu **FT-991 / FT-991A**
+**Version 1.9.7** — Desktop-Tool zur komfortablen Steuerung des Yaesu **FT-991 / FT-991A**
 über die CAT-Schnittstelle. Die Anwendung deckt alle audiobezogenen TX-Parameter
 (MIC Gain, Speech Processor, parametrischer Equalizer pro Modus,
 SSB-Bandbreite, Cut-Filter, Mic-Quelle …) ab und zeigt parallel die
