@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QMainWindow, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QVBoxLayout, QWidget
 
 from i18n import tr
 from i18n.retranslatable import RetranslatableMixin
+from mapping.rx_mapping import coarse_mode_group_for, eq_profile_supported_for_mode_group
 
 from .app_icon import app_icon
 from .profile_widget import ProfileWidget
@@ -46,8 +47,33 @@ class EqualizerWindow(RetranslatableMixin, QMainWindow):
         self.retranslate_ui()
         self._register_retranslate()
 
+        profile_widget.eq_mode_locked.connect(self._on_eq_mode_locked)
+
     def retranslate_ui(self) -> None:
         self.setWindowTitle(tr("equalizer.window.title"))
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        self._profile_widget._refresh_mode_combo_eq_colors()
+        # Beim Öffnen des Fensters: wenn der aktuelle Modus EQ nicht
+        # unterstützt, direkt einen Hinweis anzeigen.
+        mode_text = self._profile_widget.mode_combo_eq.currentText()
+        mg = coarse_mode_group_for(mode_text)
+        if not eq_profile_supported_for_mode_group(mg):
+            self._show_eq_locked_dialog(mode_text)
+
+    def _on_eq_mode_locked(self, mode_text: str) -> None:
+        """Slot: ProfileWidget meldet, dass ein User-Moduswechsel den EQ gesperrt hat."""
+        if self.isVisible():
+            self._show_eq_locked_dialog(mode_text)
+
+    def _show_eq_locked_dialog(self, mode_text: str) -> None:
+        """Zeigt einen Hinweis-Dialog, dass der EQ in diesem Modus nicht wirkt."""
+        QMessageBox.information(
+            self,
+            tr("equalizer.eq_locked.title"),
+            tr("equalizer.eq_locked.text", mode=mode_text),
+        )
 
     def force_close(self) -> None:
         """Beendet das Fenster endgültig (z. B. beim App-Beenden)."""

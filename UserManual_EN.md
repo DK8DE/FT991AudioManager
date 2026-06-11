@@ -254,7 +254,8 @@ Below the VFO display:
 ### 5.5 Bottom control row
 
 - **Mode:** LSB, USB, FM, DATA-USB, CW, … — also controls EQ display
-- **EQ profile:** audio profile selection; written to radio on connect
+- **EQ profile:** audio profile selection; written to radio on connect  
+  > **Note:** The parametric MIC equalizer only works in **SSB (LSB/USB)** and **AM** on the FT-991/A. In FM, FM-N, DATA-\*, C4FM, CW and RTTY modes the profile selector and EQ editor are locked (greyed out). Switching back to SSB or AM re-enables them immediately.
 - **Memory channel:** VFO or channel 001–100
 - **Band:** VFO or amateur band (sets centre frequency on VFO-A)
 
@@ -288,26 +289,29 @@ Below the VFO display:
 
 Central **TX audio configuration** for the radio.
 
+> **Important — mode restriction:** According to the Yaesu manual, the parametric MIC equalizer on the FT-991/A only works in **SSB (LSB/USB) and AM**. In FM, FM-N, DATA-\*, C4FM, CW and RTTY modes the EQ has no effect. When you switch to one of these modes, the profile selector and Normal EQ editor are automatically locked (greyed out); the sync status shows "EQ not available in this mode". Switching back to SSB or AM removes the lock immediately.
+
 **Header:** EQ profile, operating mode, live sync status
 
 **Profile management:** Save, Save as…, Rename, Delete, Export/Import (JSON)
 
 **Sections (mode-dependent):**
 
-1. **Basic values**
+1. **Basic values** *(SSB/AM only)*
    - MIC gain (0–100)
    - Normal EQ on/off (menu PR1)
    - Speech processor + level (SSB only; disables Normal EQ)
    - SSB TX bandwidth
 
-2. **Parametric MIC EQ — Normal** (EX119–127)  
+2. **Parametric MIC EQ — Normal** (EX119–127) *(SSB/AM only)*  
    Interactive curve: drag point = frequency/level, light-blue edge = bandwidth, right-click = band on/off
 
-3. **Parametric MIC EQ — Processor** (EX128–136)  
+3. **Parametric MIC EQ — Processor** (EX128–136) *(SSB only)*  
    Active when speech processor is on
 
 4. **Advanced settings**  
-   SSB low/high cut, AM/FM carrier level, mic source (Front/Rear), DATA TX level
+   SSB low/high cut, AM/FM carrier level, mic source (Front/Rear), DATA TX level  
+   *(fields shown/hidden depending on mode)*
 
 > Changes are **automatically** (debounced) written to the radio. Sync **pauses during TX**.
 

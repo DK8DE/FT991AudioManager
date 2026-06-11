@@ -406,6 +406,46 @@ def is_dark_mode() -> bool:
     return _current_dark
 
 
+def eq_mode_supported_color() -> QColor:
+    """Grün fuer EQ-kompatible Betriebsarten (LSB/USB/AM) im Modus-Dropdown."""
+    hex_color = ACCENT_GREEN if _current_dark else LOG_COLORS_LIGHT["RX"]
+    return QColor(hex_color)
+
+
+def eq_mode_default_text_color() -> QColor:
+    """Standard-Textfarbe fuer nicht EQ-kompatible Modi im Modus-Dropdown."""
+    hex_color = DARK_COLORS["Text"] if _current_dark else "#1A1A1A"
+    return QColor(hex_color)
+
+
+def eq_mode_combo_popup_stylesheet() -> str:
+    """Basis-Stylesheet fuer ``mode_combo_eq`` — nur Popup-Hintergrund.
+
+    Keine ``color``-Regel am Combo oder Popup, damit ``ForegroundRole`` pro
+    Eintrag (gruen/weiss) nicht vom Theme ueberschrieben wird.
+    """
+    if _current_dark:
+        bg = DARK_COLORS["Base"]
+        highlight = DARK_COLORS["Highlight"]
+        border = SIDEBAR_SEPARATOR
+    else:
+        bg = "#FFFFFF"
+        highlight = "#CDE8FF"
+        border = "#CCCCCC"
+    return (
+        "QComboBox#eqModeCombo QAbstractItemView {"
+        f" background: {bg};"
+        f" selection-background-color: {highlight};"
+        f" selection-color: {DARK_COLORS['HighlightedText'] if _current_dark else '#000000'};"
+        f" border: 1px solid {border};"
+        " }"
+        "QComboBox#eqModeCombo QAbstractItemView::item {"
+        " min-height: 20px;"
+        " padding: 1px 8px;"
+        " }"
+    )
+
+
 def current_log_colors() -> Dict[str, str]:
     """Liefert das passende Log-Farbschema für den aktuellen Modus."""
     return LOG_COLORS_DARK if _current_dark else LOG_COLORS_LIGHT

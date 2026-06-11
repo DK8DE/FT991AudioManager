@@ -254,7 +254,8 @@ Unter der VFO-Anzeige:
 ### 5.5 Untere Steuerzeile
 
 - **Betriebsart (Mode):** LSB, USB, FM, DATA-USB, CW, … — steuert auch die EQ-Anzeige
-- **EQ-Profil:** Auswahl des Audioprofils; wird beim Verbinden ins Gerät geschrieben
+- **EQ-Profil:** Auswahl des Audioprofils; wird beim Verbinden ins Gerät geschrieben  
+  > **Hinweis:** Der parametrische MIC-Equalizer des FT-991/A wirkt nur in **SSB (LSB/USB)** und **AM**. In den Modi FM, FM-N, DATA-\*, C4FM, CW und RTTY sind Profil-Dropdown und EQ-Editor gesperrt (ausgegraut). Ein Moduswechsel zu SSB oder AM gibt sie sofort wieder frei.
 - **Speicherkanal:** VFO oder Kanal 001–100
 - **Band:** VFO oder Amateurband (setzt Mittenfrequenz auf VFO-A)
 
@@ -288,26 +289,29 @@ Unter der VFO-Anzeige:
 
 Zentrale **TX-Audio-Konfiguration** für das Funkgerät.
 
+> **Wichtig — Modus-Einschränkung:** Der parametrische MIC-Equalizer des FT-991/A wirkt laut Yaesu-Handbuch **nur in SSB (LSB/USB) und AM**. In den Modi FM, FM-N, DATA-\*, C4FM, CW und RTTY hat der EQ keine Auswirkung. Beim Wechsel in einen dieser Modi werden Profil-Dropdown und Normal-EQ-Editor automatisch gesperrt (ausgegraut); der Sync-Status zeigt „EQ nicht verfügbar in diesem Modus". Ein Wechsel zurück zu SSB oder AM hebt die Sperre sofort auf.
+
 **Kopfzeile:** EQ-Profil wählen, Betriebsart, Live-Sync-Status
 
 **Profil-Verwaltung:** Speichern, Speichern unter…, Umbenennen, Löschen, Export/Import (JSON)
 
 **Bereiche (je nach Modus):**
 
-1. **Grundwerte**
+1. **Grundwerte** *(nur SSB/AM)*
    - MIC Gain (0–100)
    - Normal-EQ ein/aus (Menü PR1)
    - Speech Processor + Pegel (nur SSB; schließt Normal-EQ aus)
    - SSB TX-Bandbreite
 
-2. **Parametric MIC EQ — Normal** (EX119–127)  
+2. **Parametric MIC EQ — Normal** (EX119–127) *(nur SSB/AM)*  
    Interaktive Kurve: Punkt ziehen = Frequenz/Level, hellblauer Rand = Bandbreite, Rechtsklick = Band ein/aus
 
-3. **Parametric MIC EQ — Processor** (EX128–136)  
+3. **Parametric MIC EQ — Processor** (EX128–136) *(nur SSB)*  
    Aktiv wenn Speech Processor eingeschaltet ist
 
 4. **Erweiterte Einstellungen**  
-   SSB Low/High Cut, AM/FM Carrier-Level, Mic-Quelle (Front/Rear), DATA TX-Level
+   SSB Low/High Cut, AM/FM Carrier-Level, Mic-Quelle (Front/Rear), DATA TX-Level  
+   *(Felder werden je nach Modus ein-/ausgeblendet)*
 
 > Änderungen werden **automatisch** (debounced) ans Funkgerät geschrieben. Während **TX** pausiert der Sync.
 

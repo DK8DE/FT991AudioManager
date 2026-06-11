@@ -20,8 +20,10 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -35,6 +37,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStyle,
+    QStyleOptionViewItem,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
@@ -54,7 +59,14 @@ from mapping.rx_mapping import (
     ALL_OPERATING_MODES,
     RxMode,
     coarse_mode_group_for,
+    eq_profile_supported_for_mode_group,
+    mode_group_for,
     rx_mode_from_selection,
+)
+from .theme import (
+    eq_mode_combo_popup_stylesheet,
+    eq_mode_default_text_color,
+    eq_mode_supported_color,
 )
 from model import (
     AudioProfile,
@@ -73,6 +85,56 @@ from .extended_widget import ExtendedSettingsWidget
 
 
 _ProfilePendingPayload = AudioProfile | RxMode | None
+_EQ_MODE_COMBO_OBJECT_NAME = "eqModeCombo"
+
+
+class _EqModeComboDelegate(QStyledItemDelegate):
+    """Faerbt nur EQ-kompatible Modi (LSB/USB/AM) gruen im EQ-Modus-Dropdown."""
+
+    def paint(self, painter, option, index) -> None:  # type: ignore[no-untyped-def]
+        painter.save()
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+
+        row = index.row()
+        supported = False
+        if 0 <= row < len(ALL_OPERATING_MODES):
+            supported = eq_profile_supported_for_mode_group(
+                mode_group_for(ALL_OPERATING_MODES[row])
+            )
+
+        selected = bool(opt.state & QStyle.StateFlag.State_Selected)
+        style = opt.widget.style() if opt.widget else QApplication.style()
+        style.drawPrimitive(
+            QStyle.PrimitiveElement.PE_PanelItemViewItem,
+            opt,
+            painter,
+            opt.widget,
+        )
+
+        if selected:
+            painter.setPen(QColor("#FFFFFF"))
+        elif supported:
+            painter.setPen(eq_mode_supported_color())
+        else:
+            painter.setPen(eq_mode_default_text_color())
+
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        text_rect = opt.rect.adjusted(10, 1, -10, -1)
+        painter.drawText(
+            text_rect,
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+            text,
+        )
+        painter.restore()
+
+    def sizeHint(self, option, index) -> QSize:  # type: ignore[no-untyped-def]
+        base = super().sizeHint(option, index)
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        fm = QFontMetrics(option.font)
+        row_h = fm.lineSpacing() + 6
+        row_w = fm.horizontalAdvance(text) + 28
+        return QSize(max(base.width(), row_w), max(base.height(), row_h))
 
 
 # ---------------------------------------------------------------------
@@ -417,6 +479,10 @@ class ProfileWidget(QWidget, RetranslatableMixin):
     active_profile_changed = Signal(str)
     #: Stiller Read/Write-Worker beendet (Erfolg oder Fehler) — z. B. Connect-Init.
     silent_worker_finished = Signal()
+    #: Wird emittiert, wenn ein vom User initiierter Moduswechsel den EQ sperrt.
+    #: Parameter: Modus-Name (str). Wird nur bei echten User-Wechseln emittiert,
+    #: nicht bei Radio-Polling oder programmatischen Updates.
+    eq_mode_locked = Signal(str)
 
     def __init__(
         self,
@@ -492,6 +558,9 @@ class ProfileWidget(QWidget, RetranslatableMixin):
         #: Poll nachzieht — dann kein :meth:`_mark_dirty` (verhindert stille
         #: Auto-Writes und Flackern der Profil-Combos / des Sync-Labels).
         self._follow_radio_mode_combo: bool = False
+        #: True, wenn der aktuell gewählte Modus EQ-Profile unterstützt
+        #: (SSB / AM). In FM, DATA, C4FM, CW, RTTY werden Profile gesperrt.
+        self._eq_mode_supported: bool = True
 
         self._build_ui()
         self._reload_profile_list()
@@ -512,6 +581,7 @@ class ProfileWidget(QWidget, RetranslatableMixin):
         self._processor_hint.setText(tr("profile.hint.processor_eq"))
         self._refresh_status()
         self._update_eq_active_path()
+        self._refresh_mode_combo_eq_colors()
 
     def _sync_label_text(self) -> None:
         """Aktualisiert Sync-Label je nach Verbindungsstatus (nach Retranslate)."""
@@ -591,11 +661,15 @@ class ProfileWidget(QWidget, RetranslatableMixin):
         self._lbl_mode_group = QLabel(tr("profile.label.mode_group"))
         eq_header_layout.addWidget(self._lbl_mode_group)
         self.mode_combo_eq = QComboBox()
+        self.mode_combo_eq.setObjectName(_EQ_MODE_COMBO_OBJECT_NAME)
         self.mode_combo_eq.setSizePolicy(
             QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred
         )
         for mode in ALL_OPERATING_MODES:
             self.mode_combo_eq.addItem(mode.value)
+        self.mode_combo_eq.setItemDelegate(_EqModeComboDelegate(self.mode_combo_eq))
+        self._configure_mode_combo_eq_width()
+        self._refresh_mode_combo_eq_colors()
         self.mode_combo_eq.currentIndexChanged.connect(self._on_mode_combo_eq_changed)
         eq_header_layout.addWidget(self.mode_combo_eq)
 
@@ -728,12 +802,44 @@ class ProfileWidget(QWidget, RetranslatableMixin):
         self.profile_combo.blockSignals(False)
         self._on_profile_selected()
 
+    def _configure_mode_combo_eq_width(self) -> None:
+        """Dropdown breit genug fuer vollstaendige Modusnamen (z. B. RTTY-LSB)."""
+        if not hasattr(self, "mode_combo_eq"):
+            return
+        fm = QFontMetrics(self.mode_combo_eq.font())
+        padding = 44
+        max_text = max(
+            (fm.horizontalAdvance(mode.value) for mode in ALL_OPERATING_MODES),
+            default=0,
+        )
+        width = max_text + padding
+        self.mode_combo_eq.setMinimumWidth(width)
+        view = self.mode_combo_eq.view()
+        if view is not None:
+            view.setMinimumWidth(width)
+
+    def _refresh_mode_combo_eq_colors(self) -> None:
+        """EQ-Fenster: nur LSB/USB/AM gruen im Modus-Dropdown markieren."""
+        if not hasattr(self, "mode_combo_eq"):
+            return
+        self._configure_mode_combo_eq_width()
+        # Popup-Hintergrund ohne erzwungene Textfarbe — Farben setzt der Delegate.
+        self.mode_combo_eq.setStyleSheet(eq_mode_combo_popup_stylesheet())
+        view = self.mode_combo_eq.view()
+        if view is not None:
+            view.viewport().update()
+
     def _on_mode_combo_eq_changed(self, idx: int) -> None:
         """Equalizer-Kopie der Moduswahl."""
         self.mode_combo.blockSignals(True)
         self.mode_combo.setCurrentIndex(idx)
         self.mode_combo.blockSignals(False)
         self._on_mode_changed(idx)
+        # Signal nur bei echten User-Wechseln (nicht während Radio-Polling).
+        if self._suppress_dirty_depth == 0 and not self._follow_radio_mode_combo:
+            mode_text = self.mode_combo_eq.currentText()
+            if not eq_profile_supported_for_mode_group(coarse_mode_group_for(mode_text)):
+                self.eq_mode_locked.emit(mode_text)
 
     # ------------------------------------------------------------------
     # CAT-Verfügbarkeit
@@ -762,8 +868,10 @@ class ProfileWidget(QWidget, RetranslatableMixin):
             self._last_synced_profile = None
             self._last_radio_mode = None
             self._tx_block_pending = False
-            self.profile_combo.setEnabled(True)
-            self.profile_combo_eq.setEnabled(True)
+            # Im Offline-Zustand Profil-Combos nur freigeben, wenn der Modus
+            # EQ unterstützt — sonst bleibt die Sperre sichtbar.
+            self.profile_combo.setEnabled(self._eq_mode_supported)
+            self.profile_combo_eq.setEnabled(self._eq_mode_supported)
 
     # ------------------------------------------------------------------
     # Profilauswahl
@@ -793,8 +901,8 @@ class ProfileWidget(QWidget, RetranslatableMixin):
         self._live_eq_session_saved_profile = None
         self.set_cat_blocked(False)
         connected = self._cat.is_connected()
-        self.profile_combo.setEnabled(connected)
-        self.profile_combo_eq.setEnabled(connected)
+        self.profile_combo.setEnabled(connected and self._eq_mode_supported)
+        self.profile_combo_eq.setEnabled(connected and self._eq_mode_supported)
         if saved:
             self._push_profile_to_radio(saved)
             self._set_profile_combo_display(saved)
@@ -954,6 +1062,33 @@ class ProfileWidget(QWidget, RetranslatableMixin):
         show_extended = not (is_ssb and self._hide_extended_in_ssb)
         self.extended_editor.setVisible(show_extended)
         self._update_eq_active_path()
+        # EQ-Profile sperren, wenn der Modus den EQ nicht unterstützt
+        eq_supported = eq_profile_supported_for_mode_group(mode_group)
+        self._set_eq_profile_controls_enabled(eq_supported)
+
+    def _set_eq_profile_controls_enabled(self, enabled: bool) -> None:
+        """Sperrt oder gibt EQ-Profil-Controls frei (modusabhängig).
+
+        Der Equalizer des FT-991/A wirkt nur in SSB (LSB/USB) und AM.
+        In FM, DATA-*, C4FM, CW und RTTY werden Normal-EQ-Editor,
+        Profil-Dropdown und alle Profil-Buttons deaktiviert.
+        """
+        self._eq_mode_supported = enabled
+        connected = self._cat.is_connected()
+        self.normal_eq_editor.setEnabled(enabled)
+        self.profile_combo.setEnabled(enabled and connected)
+        self.profile_combo_eq.setEnabled(enabled and connected)
+        for btn in (
+            self.save_button,
+            self.save_as_button,
+            self.rename_button,
+            self.delete_button,
+            self.export_button,
+        ):
+            btn.setEnabled(enabled)
+        if not enabled:
+            self._sync_label.setText(tr("profile.sync.eq_not_supported"))
+            self._sync_label.setStyleSheet("color: gray;")
 
     def set_hide_extended_in_ssb(self, hide: bool) -> None:
         """Wird vom Hauptfenster aufgerufen, wenn die User-Einstellung
@@ -1674,10 +1809,11 @@ class ProfileWidget(QWidget, RetranslatableMixin):
         self._writing_profile = None
         if was_silent:
             self.silent_worker_finished.emit()
-        # Profil-Combo wieder freigeben (nur wenn weiter verbunden).
+        # Profil-Combo wieder freigeben (nur wenn weiter verbunden UND EQ im
+        # aktuellen Modus unterstützt wird).
         connected = self._cat.is_connected()
-        self.profile_combo.setEnabled(connected)
-        self.profile_combo_eq.setEnabled(connected)
+        self.profile_combo.setEnabled(connected and self._eq_mode_supported)
+        self.profile_combo_eq.setEnabled(connected and self._eq_mode_supported)
         if not was_silent:
             self._set_buttons_busy(False)
         else:
@@ -1697,7 +1833,10 @@ class ProfileWidget(QWidget, RetranslatableMixin):
     def _reset_sync_label_if_idle(self) -> None:
         if self._worker_thread is not None:
             return
-        if self._cat.is_connected():
+        if not self._eq_mode_supported:
+            self._sync_label.setText(tr("profile.sync.eq_not_supported"))
+            self._sync_label.setStyleSheet("color: gray;")
+        elif self._cat.is_connected():
             self._sync_label.setText(tr("profile.sync.on"))
             self._sync_label.setStyleSheet("color: #2ea043;")
         else:
@@ -1705,15 +1844,22 @@ class ProfileWidget(QWidget, RetranslatableMixin):
             self._sync_label.setStyleSheet("color: gray;")
 
     def _set_buttons_busy(self, busy: bool) -> None:
-        enabled = not busy
+        # Bei busy=True immer sperren; bei busy=False nur freigeben wenn auch
+        # der Modus EQ-Profile unterstützt.
+        enabled = not busy and self._eq_mode_supported
         for btn in (
             self.save_button,
             self.save_as_button,
             self.rename_button,
             self.delete_button,
             self.export_button,
-            self.import_button,
-            self.profile_combo,
-            self.profile_combo_eq,
         ):
             btn.setEnabled(enabled)
+        # import_button ist nicht modusabhängig (JSON-Import ändert nur den Store)
+        if not busy:
+            self.import_button.setEnabled(True)
+        else:
+            self.import_button.setEnabled(False)
+        connected = self._cat.is_connected()
+        self.profile_combo.setEnabled(enabled and connected)
+        self.profile_combo_eq.setEnabled(enabled and connected)

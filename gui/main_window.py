@@ -1694,7 +1694,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
 
     def _resume_live_window_after_connect(self) -> None:
         """Live-Fenster nach abgeschlossener Connect-Init wieder anbinden."""
-        win = self._live_window
+        win = getattr(self, "_live_window", None)
         if win is None or not win.isVisible():
             return
         if not self._cat.is_connected():

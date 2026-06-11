@@ -341,6 +341,22 @@ def mic_gain_slider_visible_for_mode_group(mode_group: str) -> bool:
     return mode_group.strip().upper() != "DATA"
 
 
+#: Modusgruppen, in denen der parametrische MIC-EQ am FT-991/A wirkt.
+#: Laut Bedienungsanleitung Yaesu: EQ nur in SSB (LSB/USB) und AM nutzbar;
+#: in FM, FM-N, DATA-*, C4FM, CW und RTTY hat der EQ keine Wirkung.
+_EQ_PROFILE_MODE_GROUPS: frozenset[str] = frozenset({"SSB", "AM"})
+
+
+def eq_profile_supported_for_mode_group(mode_group: str) -> bool:
+    """True, wenn Equalizer-Profile am FT-991/A in dieser Modusgruppe wirken.
+
+    Gibt ``True`` nur fuer SSB (LSB/USB) und AM zurueck.
+    In FM, FM-N, DATA-*, C4FM, CW und RTTY hat der parametrische MIC-EQ
+    laut Yaesu-Handbuch keine Auswirkung.
+    """
+    return mode_group.strip().upper() in _EQ_PROFILE_MODE_GROUPS
+
+
 def is_valid_profile_mode_group(text: str) -> bool:
     """Prüft, ob ``text`` ein bekannter Modus oder eine Legacy-Gruppe ist."""
     key = text.strip().upper()
