@@ -65,6 +65,7 @@ from i18n.retranslatable import RetranslatableMixin
 
 from .po_calibration_widget import PoCalibrationWidget
 from .rig_bridge_settings_widget import RigBridgeSettingsWidget
+from .settings_shortcuts_widget import ShortcutsSettingsWidget
 from .settings_wheel_filter import install_settings_no_wheel_filter
 from .smeter_calibration_widget import SmeterCalibrationSettingsWidget
 
@@ -73,6 +74,8 @@ COMMON_BAUDRATES = [4800, 9600, 19200, 38400]
 
 _TAB_CAT = 0
 _TAB_RIG_BRIDGE = 1
+_TAB_SHORTCUTS = 2
+_TAB_CALIBRATION = 3
 
 _TX_POLL_I18N: dict[str, str] = {
     "comp": "settings.tx_poll.comp",
@@ -142,7 +145,12 @@ class ConnectionSettingsDialog(RetranslatableMixin, QDialog):
     def retranslate_ui(self) -> None:
         self.setWindowTitle(tr("settings.title"))
         for row, key in enumerate(
-            ("settings.nav.cat", "settings.nav.rig_bridge", "settings.nav.calibration")
+            (
+                "settings.nav.cat",
+                "settings.nav.rig_bridge",
+                "settings.nav.shortcuts",
+                "settings.nav.calibration",
+            )
         ):
             item = self._settings_nav.item(row)
             if item is not None:
@@ -192,6 +200,7 @@ class ConnectionSettingsDialog(RetranslatableMixin, QDialog):
         )
         self._smeter_box.setTitle(tr("settings.group.smeter_calibration"))
         self._po_box.setTitle(tr("settings.group.po_calibration"))
+        self._shortcuts_widget.retranslate_ui()
         if not self._current_port_device() and self.port_combo.count() == 1:
             self.port_combo.setItemText(0, tr("settings.no_ports_found"))
 
@@ -229,6 +238,7 @@ class ConnectionSettingsDialog(RetranslatableMixin, QDialog):
             QSizePolicy.Policy.Expanding,
         )
         self._settings_nav.setUniformItemSizes(True)
+        self._settings_nav.addItem("")
         self._settings_nav.addItem("")
         self._settings_nav.addItem("")
         self._settings_nav.addItem("")
@@ -271,6 +281,20 @@ class ConnectionSettingsDialog(RetranslatableMixin, QDialog):
         rig_layout.addWidget(self._rig_bridge_widget)
         rig_layout.addStretch(1)
 
+        self._shortcuts_widget = ShortcutsSettingsWidget(
+            self._settings.ui.global_shortcuts,
+            parent=self,
+        )
+        page_shortcuts = QWidget()
+        page_shortcuts.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Minimum,
+        )
+        shortcuts_layout = QVBoxLayout(page_shortcuts)
+        shortcuts_layout.setContentsMargins(0, 0, 0, 0)
+        shortcuts_layout.addWidget(self._shortcuts_widget)
+        shortcuts_layout.addStretch(1)
+
         self._smeter_cal_widget = SmeterCalibrationSettingsWidget(
             self._settings.smeter_calibration,
             parent=self,
@@ -306,6 +330,7 @@ class ConnectionSettingsDialog(RetranslatableMixin, QDialog):
 
         self._settings_stack.addWidget(_scroll_page(page_cat))
         self._settings_stack.addWidget(_scroll_page(page_rig))
+        self._settings_stack.addWidget(_scroll_page(page_shortcuts))
         self._settings_stack.addWidget(_scroll_page(page_cal))
 
         self._settings_nav.currentRowChanged.connect(self._on_settings_nav_changed)
@@ -734,6 +759,7 @@ class ConnectionSettingsDialog(RetranslatableMixin, QDialog):
         ) < 2:
             sc.use_custom = False
         self._rig_bridge_widget.apply_to_settings()
+        self._shortcuts_widget.apply_to_settings(self._settings.ui.global_shortcuts)
 
         self.settings_changed.emit()
         super().accept()

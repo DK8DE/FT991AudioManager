@@ -1259,8 +1259,8 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
         if idx is not None:
             self._controller.load_track(idx)
         seek_ms = self._pending_play_seek_ms
-        if seek_ms is not None and seek_ms > 0:
-            self._controller.seek_position_ms(seek_ms)
+        if seek_ms is not None:
+            self._controller.seek_position_ms(max(0, int(seek_ms)))
         self._pending_play_seek_ms = None
 
     def _on_pc_gap_timer_done(self) -> None:
@@ -1597,15 +1597,29 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
         self._cat_radio_settle_play_index = None
         self._cat_radio_settle_timer.start(_CAT_PLAY_RADIO_SETTLE_MS)
 
+    def trigger_contest_hotkey_play(self) -> bool:
+        """Globaler Hotkey: Play-Button — nur bei aktivem Kontest-Loop."""
+        if not self.check_contest.isChecked():
+            return False
+        self._on_play()
+        return True
+
     def _on_stop_clicked(self) -> None:
         self._cancel_pending_cat_play_defer()
+        self._controller.disarm_contest_auto_continue()
         self._controller.stop()
 
     def _on_play(self) -> None:
         self._pc_list_click_stopped = False
         self.sync_data_mode_from_main()
+        contest_restart = (
+            self.check_contest.isChecked()
+            and not self._controller.contest_auto_continue
+        )
         if self._controller.state != PlayerState.PAUSED_RX:
-            if self._is_pc_playing():
+            if contest_restart:
+                self._pending_play_seek_ms = 0
+            elif self._is_pc_playing():
                 self._pending_play_seek_ms = self._read_pc_position_ms()
                 self._stop_pc_playback_only()
             elif self._is_pc_paused():
@@ -2074,10 +2088,12 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
         if state == TX_STATE_MIC_PTT:
             if not self._controller.is_busy() and not self._radio_setup.in_data_mode:
                 return
+            if not self._controller.is_busy():
+                return
             self._mic_ptt_interrupted = True
+            self._controller.disarm_contest_auto_continue()
             self._cancel_pending_cat_play_defer()
-            if self._controller.is_busy():
-                self._controller.stop()
+            self._controller.stop()
             if self._radio_setup.in_data_mode:
                 from gui.live_window import live_session_holds_data_mode
 

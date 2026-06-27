@@ -27,6 +27,7 @@ from ._app_paths import app_data_dir
 from .audio_player_settings import AudioPlayerSettings
 from .audio_recorder_settings import AudioRecorderSettings
 from .global_audio_settings import GlobalAudioSettings, sync_global_to_legacy
+from .global_shortcuts_settings import GlobalShortcutsSettings
 from .live_settings import LiveSettings
 from .rig_bridge_settings import RigBridgeSettings
 from .smeter_calibration_settings import SmeterCalibrationSettings
@@ -132,6 +133,9 @@ class UiSettings:
     #: Es liegt eine lokale Kopie der 100 Kanäle vom Speicherkanal-Editor vor
     #: (Öffnen ohne Funkgerät-Burst möglich, bis „Neu laden").
     memory_editor_disk_cache_ready: bool = False
+    global_shortcuts: GlobalShortcutsSettings = field(
+        default_factory=GlobalShortcutsSettings
+    )
 
 
 @dataclass
@@ -222,6 +226,9 @@ class AppSettings:
             ),
             memory_editor_disk_cache_ready=bool(
                 ui_raw.get("memory_editor_disk_cache_ready", False)
+            ),
+            global_shortcuts=GlobalShortcutsSettings.from_dict(
+                ui_raw.get("global_shortcuts")
             ),
         )
         rig_bridge = RigBridgeSettings.from_dict(rig_bridge_raw)

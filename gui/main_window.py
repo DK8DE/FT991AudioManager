@@ -19,7 +19,9 @@ Neuer schlanker Aufbau (ab 0.5.1):
 
 from __future__ import annotations
 
+import sys
 import time
+from functools import partial
 from typing import Any, Optional, cast, cast
 
 import serial
@@ -388,6 +390,104 @@ class MainWindow(QMainWindow, RetranslatableMixin):
 
         self._register_retranslate()
         self.retranslate_ui()
+
+        self._global_hotkey_controller = None
+        if sys.platform == "win32":
+            from .global_hotkeys_win import GlobalHotkeyController
+
+            self._global_hotkey_controller = GlobalHotkeyController(
+                lambda: int(self.winId()),
+                lambda a: QTimer.singleShot(
+                    0, partial(self._apply_global_shortcut_action, a)
+                ),
+            )
+        QTimer.singleShot(0, self._refresh_global_hotkeys)
+
+        self._live_momentary_ptt_poll_timer = QTimer(self)
+        self._live_momentary_ptt_poll_timer.setInterval(45)
+        self._live_momentary_ptt_poll_timer.timeout.connect(
+            self._poll_live_momentary_ptt_release
+        )
+
+    def _refresh_global_hotkeys(self) -> None:
+        hc = getattr(self, "_global_hotkey_controller", None)
+        if hc is None:
+            return
+        try:
+            hc.apply_config(self._settings.ui.global_shortcuts.to_dict())
+        except Exception:
+            pass
+
+    def _apply_global_shortcut_action(self, action: str) -> None:
+        gs = self._settings.ui.global_shortcuts
+        if not gs.enabled:
+            return
+        if action == "contest_play":
+            self._trigger_contest_hotkey_play()
+        elif action == "live_ptt_latch":
+            self._trigger_live_ptt_latch_hotkey()
+        elif action == "live_ptt_momentary":
+            self._trigger_live_momentary_ptt_hotkey()
+
+    def _find_active_live_window(self) -> Optional[QWidget]:
+        from gui.live_window import LiveWindow, _live_window_accepts_background_audio
+
+        app = QApplication.instance()
+        if not isinstance(app, QApplication):
+            return None
+        for w in app.topLevelWidgets():
+            if isinstance(w, LiveWindow) and _live_window_accepts_background_audio(w):
+                return w
+        return None
+
+    def _trigger_live_ptt_latch_hotkey(self) -> None:
+        lw = self._find_active_live_window()
+        if lw is None:
+            return
+        fn = getattr(lw, "trigger_global_ptt_latch_hotkey", None)
+        if callable(fn):
+            fn()
+
+    def _trigger_live_momentary_ptt_hotkey(self) -> None:
+        lw = self._find_active_live_window()
+        if lw is None:
+            return
+        start = getattr(lw, "_kbd_native_apply_momentary_start", None)
+        if callable(start):
+            start()
+        if getattr(lw, "_kbd_ptt_momentary_engaged", False):
+            self._live_momentary_ptt_poll_timer.start()
+
+    def _poll_live_momentary_ptt_release(self) -> None:
+        lw = self._find_active_live_window()
+        if lw is None or not getattr(lw, "_kbd_ptt_momentary_engaged", False):
+            self._live_momentary_ptt_poll_timer.stop()
+            return
+        from gui.global_hotkeys_win import hotkey_binding_physically_held
+
+        gs = self._settings.ui.global_shortcuts.to_dict()
+        if hotkey_binding_physically_held(gs, "key_live_ptt_momentary", "Y"):
+            return
+        end = getattr(lw, "_kbd_native_apply_momentary_end", None)
+        if callable(end):
+            end()
+        self._live_momentary_ptt_poll_timer.stop()
+
+    def _trigger_contest_hotkey_play(self) -> None:
+        win = self._audio_player_window
+        if win is None:
+            return
+        trigger = getattr(win, "trigger_contest_hotkey_play", None)
+        if callable(trigger):
+            trigger()
+
+    def nativeEvent(self, eventType, message):  # noqa: N802
+        hc = getattr(self, "_global_hotkey_controller", None)
+        if hc is not None:
+            r = hc.process_native_event(eventType, message)
+            if r is not None:
+                return r
+        return super().nativeEvent(eventType, message)
 
     def _mouse_global_inside_any_vfo_triplet(self, global_pos) -> bool:
         for triplet in (self._vfo_a_triplet, self._vfo_b_triplet):
@@ -3458,6 +3558,12 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         self.profile_widget.set_hide_extended_in_ssb(
             self._settings.ui.hide_extended_in_ssb
         )
+        self._refresh_global_hotkeys()
+        lw = self._live_window
+        if lw is not None:
+            refresh = getattr(lw, "refresh_keyboard_shortcuts_from_settings", None)
+            if callable(refresh):
+                refresh()
         apply_smeter_calibration_from_settings(self._settings.smeter_calibration)
         smeter_set_calibration_frequency_hz(
             int(getattr(self.meter_widget, "_last_vfo_a_hz", 0) or 0)
@@ -3514,6 +3620,12 @@ class MainWindow(QMainWindow, RetranslatableMixin):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._application_shutting_down = True
+        hc = getattr(self, "_global_hotkey_controller", None)
+        if hc is not None:
+            try:
+                hc.unregister_all()
+            except Exception:
+                pass
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)

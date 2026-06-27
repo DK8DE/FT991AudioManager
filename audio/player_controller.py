@@ -181,6 +181,10 @@ class PlayerController(QObject):
         #: Kontest-Loop: dieselbe Datei wiederholen mit langer Hörpause.
         self._contest_mode = False
         self._contest_listen_pause_ms = 5000
+        #: Nach MIC-PTT-Unterbrechung kein Auto-Loop bis erneuter Play/Hotkey.
+        self._contest_auto_continue = True
+        #: Position auf 0 setzen, sobald Wiedergabe sicher gestoppt ist (nicht während PLAY).
+        self._contest_pending_position_reset = False
 
         self._gap_timer = QTimer(self)
         self._gap_timer.setSingleShot(True)
@@ -376,6 +380,43 @@ class PlayerController(QObject):
         """Kontest-Loop ein/aus + Hörpause-Dauer (ms)."""
         self._contest_mode = bool(enabled)
         self._contest_listen_pause_ms = max(0, int(listen_pause_ms))
+        if self._contest_mode:
+            self._contest_auto_continue = True
+
+    def arm_contest_auto_continue(self) -> None:
+        """Kontest-Loop nach manuellem Start wieder automatisch fortsetzen."""
+        if self._contest_mode:
+            self._contest_auto_continue = True
+
+    def disarm_contest_auto_continue(self) -> None:
+        """MIC-PTT oder Stopp: kein automatischer Kontest-Neustart bis Play."""
+        self._contest_auto_continue = False
+        if self._state in (PlayerState.IDLE, PlayerState.PAUSED_RX):
+            self._reset_track_position_to_start()
+        else:
+            self._contest_pending_position_reset = True
+
+    def _apply_contest_position_reset_if_pending(self) -> None:
+        if not self._contest_pending_position_reset:
+            return
+        self._contest_pending_position_reset = False
+        self._reset_track_position_to_start()
+
+    def _reset_track_position_to_start(self) -> None:
+        """Sende-Player auf Dateianfang (nur im Ruhezustand — nie während PLAY)."""
+        if self._player is None or not self._media_ok:
+            return
+        if self._state not in (PlayerState.IDLE, PlayerState.PAUSED_RX):
+            return
+        try:
+            self._player.setPosition(0)
+        except Exception:  # noqa: BLE001
+            pass
+        self._emit_position()
+
+    @property
+    def contest_auto_continue(self) -> bool:
+        return self._contest_auto_continue
 
     @property
     def contest_mode(self) -> bool:
@@ -629,11 +670,15 @@ class PlayerController(QObject):
             return
         if self._state == PlayerState.PAUSED_RX:
             self._resume_after_pause = True
+            if self._contest_mode:
+                self.arm_contest_auto_continue()
             self._begin_transmit_for_current_file()
             return
         if self.is_busy():
             return
         self._resume_after_pause = False
+        if self._contest_mode:
+            self.arm_contest_auto_continue()
         self._begin_transmit_for_current_file()
 
     def seek_position_ms(self, pos_ms: int) -> None:
@@ -730,6 +775,7 @@ class PlayerController(QObject):
     def _finish_stop_idle(self) -> None:
         """Stopp abgeschlossen → IDLE und Sprach-Mode anfordern."""
         self._set_state(PlayerState.IDLE)
+        self._apply_contest_position_reset_if_pending()
         self.status_message.emit(tr("player.status.stopped"))
         self.voice_mode_requested.emit()
 
@@ -782,6 +828,7 @@ class PlayerController(QObject):
             self._player.stop()
         self._stop_monitor_playback()
         self._set_state(PlayerState.IDLE)
+        self._apply_contest_position_reset_if_pending()
         self.status_message.emit(tr("common.error"))
 
     def _on_tx_ready(self) -> None:
@@ -954,6 +1001,11 @@ class PlayerController(QObject):
             QMP.MediaStatus.EndOfMedia,
         ):
             return False
+        if self._player.mediaStatus() == QMP.MediaStatus.EndOfMedia:
+            try:
+                self._player.setPosition(0)
+            except Exception:  # noqa: BLE001
+                pass
         self._pending_media_play = False
         self._player.play()
         self._tick_timer.start()
@@ -1009,7 +1061,7 @@ class PlayerController(QObject):
         self._stop_monitor_playback()
         self._player.stop()
         self._resume_after_pause = False
-        if self._contest_mode:
+        if self._contest_mode and self._contest_auto_continue:
             self._after_rx = "contest_pause"
         elif self._mode == "playlist" and self._index + 1 < len(self._entries):
             self._index += 1

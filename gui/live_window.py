@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import ctypes
 import sys
 from typing import TYPE_CHECKING, Any, Callable, List, Optional, cast
 
@@ -141,21 +140,74 @@ def effective_live_tx_display_state(
         return TX_STATE_CAT_TX
     return int(polled_state)
 
-_VK_CONTROL = 0x11
-_VK_Y = 0x59
+
+def _maybe_end_momentary_ptt(lw: "LiveWindow") -> None:
+    if not lw._kbd_ptt_momentary_engaged:
+        return
+    from gui.global_hotkeys_win import hotkey_binding_physically_held
+
+    gs = lw._settings.ui.global_shortcuts.to_dict()
+    if hotkey_binding_physically_held(gs, "key_live_ptt_momentary", "Y"):
+        return
+    lw._kbd_native_apply_momentary_end()
 
 
-def _ctrl_y_physically_held() -> bool:
-    """True solange Strg und Y hardwareseitig gedrückt sind (Windows)."""
-    if sys.platform != "win32":
+class _LiveMomentaryPttKeyFilter(QObject):
+    """Momentary-PTT per Tastatur: KeyPress startet, KeyRelease beendet."""
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: ARG002
+        if not isinstance(event, QKeyEvent):
+            return False
+        if event.type() == QEvent.Type.KeyPress:
+            return self._on_key_press(event)
+        if event.type() == QEvent.Type.KeyRelease:
+            self._on_key_release(event)
+            return False
         return False
-    try:
-        u = ctypes.windll.user32
-        ctrl = (u.GetAsyncKeyState(_VK_CONTROL) & 0x8000) != 0
-        y_down = (u.GetAsyncKeyState(_VK_Y) & 0x8000) != 0
-        return bool(ctrl and y_down)
-    except Exception:
-        return False
+
+    @staticmethod
+    def _on_key_press(event: QKeyEvent) -> bool:
+        if event.isAutoRepeat():
+            return False
+        lw = _focused_live_window()
+        if lw is None:
+            return False
+        from gui.hotkey_combo_utils import qt_key_from_token, qt_modifiers_match_settings
+
+        gs = lw._settings.ui.global_shortcuts
+        qk = qt_key_from_token(gs.key_live_ptt_momentary)
+        if qk is None or event.key() != qk:
+            return False
+        km = event.modifiers() | QApplication.keyboardModifiers()
+        if not qt_modifiers_match_settings(gs, km):
+            return False
+        QTimer.singleShot(0, lw._kbd_native_apply_momentary_start)
+        event.accept()
+        return True
+
+    @staticmethod
+    def _on_key_release(event: QKeyEvent) -> None:
+        lw = _live_window_with_kbd_ptt_engaged()
+        if lw is None:
+            return
+        from gui.hotkey_combo_utils import qt_key_from_token
+
+        gs = lw._settings.ui.global_shortcuts
+        qk = qt_key_from_token(gs.key_live_ptt_momentary)
+        watch = {
+            Qt.Key.Key_Control,
+            Qt.Key.Key_Meta,
+            Qt.Key.Key_Shift,
+        }
+        if qk is not None:
+            watch.add(qk)
+        if event.key() not in watch:
+            return
+        QTimer.singleShot(0, lambda lw=lw: _maybe_end_momentary_ptt(lw))
+
+
+_live_ctrl_y_filter: Optional[_LiveMomentaryPttKeyFilter] = None
+_live_ctrl_y_filter_refcount = 0
 
 
 def _live_window_accepts_background_audio(w: "LiveWindow") -> bool:
@@ -210,64 +262,6 @@ def _focused_live_window() -> Optional["LiveWindow"]:
     return None
 
 
-def _maybe_end_ctrl_y_ptt(lw: "LiveWindow") -> None:
-    if not lw._kbd_ptt_momentary_engaged:
-        return
-    if sys.platform == "win32" and _ctrl_y_physically_held():
-        return
-    lw._kbd_native_apply_momentary_end()
-
-
-class _LiveCtrlYKeyFilter(QObject):
-    """Strg+Y Push-to-talk: KeyPress startet, KeyRelease nur bei echt losgelassenen Tasten."""
-
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: ARG002
-        if not isinstance(event, QKeyEvent):
-            return False
-        if event.type() == QEvent.Type.KeyPress:
-            return self._on_key_press(event)
-        if event.type() == QEvent.Type.KeyRelease:
-            self._on_key_release(event)
-            return False
-        return False
-
-    @staticmethod
-    def _on_key_press(event: QKeyEvent) -> bool:
-        if event.key() != Qt.Key.Key_Y or event.isAutoRepeat():
-            return False
-        km = event.modifiers() | QApplication.keyboardModifiers()
-        blocked = (
-            Qt.KeyboardModifier.AltModifier
-            | Qt.KeyboardModifier.ShiftModifier
-            | Qt.KeyboardModifier.MetaModifier
-        )
-        if not bool(km & Qt.KeyboardModifier.ControlModifier) or bool(km & blocked):
-            return False
-        lw = _focused_live_window()
-        if lw is None:
-            return False
-        QTimer.singleShot(0, lw._kbd_native_apply_momentary_start)
-        event.accept()
-        return True
-
-    @staticmethod
-    def _on_key_release(event: QKeyEvent) -> None:
-        if event.key() not in (
-            Qt.Key.Key_Y,
-            Qt.Key.Key_Control,
-            Qt.Key.Key_Meta,
-        ):
-            return
-        lw = _live_window_with_kbd_ptt_engaged()
-        if lw is None:
-            return
-        QTimer.singleShot(0, lambda lw=lw: _maybe_end_ctrl_y_ptt(lw))
-
-
-_live_ctrl_y_filter: Optional[_LiveCtrlYKeyFilter] = None
-_live_ctrl_y_filter_refcount = 0
-
-
 def _live_window_with_kbd_ptt_engaged() -> Optional["LiveWindow"]:
     app = QApplication.instance()
     if not isinstance(app, QApplication):
@@ -289,7 +283,7 @@ def _live_ctrl_y_filter_acquire() -> None:
     if _live_ctrl_y_filter_refcount == 0:
         app = QApplication.instance()
         if isinstance(app, QApplication):
-            _live_ctrl_y_filter = _LiveCtrlYKeyFilter(app)
+            _live_ctrl_y_filter = _LiveMomentaryPttKeyFilter(app)
             app.installEventFilter(_live_ctrl_y_filter)
     _live_ctrl_y_filter_refcount += 1
 
@@ -464,6 +458,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._live_data_session_active = False
         self._pending_open_window_data_engage = False
         self._engage_data_session_only = False
+        self._sc_live_ptt_latch: Optional[QShortcut] = None
         self._refresh_ptt_button_appearance()
         self._refresh_ptt_controls_enabled()
         self._install_live_keyboard_shortcuts()
@@ -711,16 +706,41 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             return
         btn.toggle()
 
+    def _uses_global_live_hotkeys(self) -> bool:
+        return (
+            sys.platform == "win32"
+            and self._settings.ui.global_shortcuts.enabled
+        )
+
+    def refresh_keyboard_shortcuts_from_settings(self) -> None:
+        """Nach Einstellungs-OK: lokale Shortcuts neu, global über MainWindow."""
+        if self._sc_live_ptt_latch is not None:
+            self._sc_live_ptt_latch.setParent(None)
+            self._sc_live_ptt_latch.deleteLater()
+            self._sc_live_ptt_latch = None
+        self._install_live_keyboard_shortcuts()
+        if self._uses_global_live_hotkeys():
+            self._ensure_live_ctrl_y_filter_released()
+        else:
+            self._ensure_live_ctrl_y_filter_acquired()
+
     def _install_live_keyboard_shortcuts(self) -> None:
-        """Strg+Y: EventFilter (halten/loslassen); Strg+X: Shortcut PTT halten."""
-        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
-        latch = QShortcut(QKeySequence("Ctrl+X"), self)
-        latch.setContext(ctx)
+        """Latch per Shortcut (ohne Windows-Global); Momentary per Event-Filter."""
+        if self._uses_global_live_hotkeys():
+            return
+        from gui.hotkey_combo_utils import key_sequence_from_settings
+
+        gs = self._settings.ui.global_shortcuts
+        seq = key_sequence_from_settings(gs, gs.key_live_ptt_latch)
+        latch = QShortcut(QKeySequence(seq), self)
+        latch.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         latch.setAutoRepeat(False)
         latch.activated.connect(self._shortcut_ctrl_x_ptt_latch)
         self._sc_live_ptt_latch = latch
 
     def _ensure_live_ctrl_y_filter_acquired(self) -> None:
+        if self._uses_global_live_hotkeys():
+            return
         if self._live_ctrl_y_filter_acquired:
             return
         _live_ctrl_y_filter_acquire()
@@ -736,6 +756,10 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         if not _live_window_accepts_background_audio(self):
             return
         self._toggle_ptt_latch_from_keyboard()
+
+    def trigger_global_ptt_latch_hotkey(self) -> None:
+        """Globaler Hotkey (RegisterHotKey) — PTT-Latch umschalten."""
+        self._shortcut_ctrl_x_ptt_latch()
 
     def _kbd_native_apply_momentary_start(self) -> None:
         if not _live_window_accepts_background_audio(self):

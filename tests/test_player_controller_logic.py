@@ -136,6 +136,45 @@ class PlayerControllerLogicTest(unittest.TestCase):
             finally:
                 ctrl.shutdown()
 
+    def test_contest_auto_continue_armed_on_play(self) -> None:
+        with patch("audio.player_controller.qt_multimedia_types", return_value=None):
+            cat = _FakeCat()
+            mock_player = MagicMock()
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                _disable_multimedia(ctrl)
+                ctrl._player = mock_player
+                ctrl._media_ok = True
+                ctrl._state = PlayerState.IDLE
+                ctrl.set_contest_mode(True, 5000)
+                ctrl.disarm_contest_auto_continue()
+                self.assertFalse(ctrl.contest_auto_continue)
+                mock_player.setPosition.assert_called_with(0)
+                ctrl.arm_contest_auto_continue()
+                self.assertTrue(ctrl.contest_auto_continue)
+                ctrl.set_contest_mode(True, 5000)
+                self.assertTrue(ctrl.contest_auto_continue)
+            finally:
+                ctrl.shutdown()
+
+    def test_disarm_during_play_defers_position_reset(self) -> None:
+        with patch("audio.player_controller.qt_multimedia_types", return_value=None):
+            cat = _FakeCat()
+            mock_player = MagicMock()
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                _disable_multimedia(ctrl)
+                ctrl._player = mock_player
+                ctrl._media_ok = True
+                ctrl._state = PlayerState.PLAYING
+                ctrl.set_contest_mode(True, 5000)
+                ctrl.disarm_contest_auto_continue()
+                mock_player.setPosition.assert_not_called()
+                ctrl._finish_stop_idle()
+                mock_player.setPosition.assert_called_with(0)
+            finally:
+                ctrl.shutdown()
+
     def test_contest_pause_done_emits_signal_without_beginning_pre_roll(self) -> None:
         cat = _FakeCat()
         mock_player = MagicMock()
