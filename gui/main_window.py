@@ -109,11 +109,12 @@ from .update_check import UpdateCheckOutcome, UpdateCheckThread
 from .user_manual import manual_pdf_download_url
 from mapping.amateur_bands import (
     BandKind,
-    amateur_band_at_hz,
+    band_at_center_hz,
+    band_combo_target_frequency_hz,
     display_band_at_hz,
     display_band_label_at_hz,
     combo_entries_high_to_low,
-    preferred_voice_rx_mode_for_amateur_hz,
+    preferred_voice_rx_mode_for_hz,
     VFO_BAND_CHOICE,
 )
 from mapping.meter_mapping import (
@@ -259,6 +260,8 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         self._tcall_restore_data_mode: Optional[RxMode] = None
         #: Betriebsart vor T.CALL (für Wiederherstellung statt engage_plain→FM).
         self._tcall_saved_rx_mode: Optional[RxMode] = None
+        #: Speicherkanal vor T.CALL (wie REV) — ``set_rx_mode`` allein würde VFO erzwingen.
+        self._tcall_saved_memory_channel: Optional[int] = None
         #: Während T.CALL keine Mode-/Band-UI vom Poller nachziehen.
         self._tcall_suppress_radio_ui: bool = False
         self._tcall_async_restore_pending: bool = False
@@ -1213,19 +1216,44 @@ class MainWindow(QMainWindow, RetranslatableMixin):
         self._tcall_suppress_radio_ui = True
         self._tcall_async_restore_pending = False
         self._tcall_saved_rx_mode = None
+        self._tcall_saved_memory_channel = None
         if self._cat.is_connected():
             try:
-                self._tcall_saved_rx_mode = FT991CAT(self._cat).read_rx_mode()
+                ft = FT991CAT(self._cat)
+                self._tcall_saved_rx_mode = ft.read_rx_mode()
+                active = ft.read_active_memory_channel()
+                fa = ft.read_frequency()
+                self._tcall_saved_memory_channel = _restore_memory_channel_if_fa_matches_slot(
+                    ft, active, fa
+                )
             except CatError:
                 pass
         if self._tcall_saved_rx_mode is None:
             self._tcall_saved_rx_mode = self._main_operating_mode()
 
+    def _tcall_restore_saved_memory_channel(self) -> None:
+        """Speicherkanal nach T.CALL wieder aktivieren (``MC``/``VM`` — nicht nur ``MD``)."""
+        ch = self._tcall_saved_memory_channel
+        if ch is None or not self._cat.is_connected():
+            return
+        try:
+            ft = FT991CAT(self._cat)
+            ft.select_memory_channel(int(ch))
+            self._select_memory_combo_by_channel(int(ch))
+            restored_hz = ft.read_frequency()
+            if restored_hz > 0:
+                self._apply_vfo_a_display_hz(restored_hz)
+            self._sync_mode_combo_to_saved_rx_mode(ft.read_rx_mode())
+        except CatError as exc:
+            self._on_t_call_error(str(exc))
+
     def _finish_tcall_session(self) -> None:
         if self._tcall_async_restore_pending:
             return
+        self._tcall_restore_saved_memory_channel()
         self._tcall_suppress_radio_ui = False
         self._tcall_saved_rx_mode = None
+        self._tcall_saved_memory_channel = None
         self.meter_widget.ensure_polling()
         self.meter_widget.request_immediate_poll()
         self._sync_meter_dsp_mode_visibility()
@@ -1533,12 +1561,12 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             self.band_combo.blockSignals(False)
 
     def _sync_band_combo_to_frequency(self, hz: int) -> None:
-        """Band-Dropdown = aktuelles Amateurband oder „VFO“ (außerhalb)."""
+        """Band-Dropdown = aktuelles Band (Amateur/CB/Freenet) oder „VFO“."""
         f = int(hz)
         if f <= 0:
             self._select_band_combo_vfo()
             return
-        band = amateur_band_at_hz(f)
+        band = display_band_at_hz(f)
         if band is None:
             self._select_band_combo_vfo()
             return
@@ -1562,7 +1590,12 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             else:
                 if not ft.switch_to_vfo_mode():
                     raise CatError(tr("error.vfo_mode_failed"))
-                hz = int(choice)
+                band = band_at_center_hz(int(choice))
+                hz = (
+                    band_combo_target_frequency_hz(band)
+                    if band is not None
+                    else int(choice)
+                )
                 ft.write_frequency(hz)
                 self._notify_meter_app_frequency_write(hz)
                 self._relay_output_hz = hz
@@ -1575,7 +1608,12 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             if choice == VFO_BAND_CHOICE:
                 self._maybe_apply_band_voice_mode_for_hz(self._vfo_a_display_hz)
             else:
-                self._maybe_apply_band_voice_mode_for_hz(int(choice))
+                target_hz = (
+                    band_combo_target_frequency_hz(band)
+                    if band is not None
+                    else int(choice)
+                )
+                self._maybe_apply_band_voice_mode_for_hz(target_hz)
         except CatConnectionLostError:
             self._on_connection_lost()
         except CatError as exc:
@@ -1589,11 +1627,11 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             return
         if self._audio_tx_busy():
             return
-        band = amateur_band_at_hz(int(hz))
+        band = display_band_at_hz(int(hz))
         if band is None:
             self._last_applied_band_voice_mode = None
             return
-        mode = preferred_voice_rx_mode_for_amateur_hz(int(hz))
+        mode = preferred_voice_rx_mode_for_hz(int(hz))
         if mode is None:
             return
         if mode == self._last_applied_band_voice_mode:

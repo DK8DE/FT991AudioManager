@@ -107,6 +107,7 @@ from mapping.rx_mapping import (
     mic_gain_slider_visible_for_mode,
     mic_gain_slider_visible_for_mode_group,
     format_frequency_hz,
+    dnr_dnf_sliders_visible_for_mode,
     mode_group_supports_dnr_dnf,
     should_apply_data_rtty_dsp_preset,
 )
@@ -2767,7 +2768,10 @@ class MeterWidget(RetranslatableMixin, QWidget):
         self, mode_group: str, *, operating_mode: Optional[RxMode] = None
     ) -> None:
         """Blendet DSP-Slider aus, wenn die Betriebsart sie am FT-991 nicht nutzt."""
-        show = mode_group_supports_dnr_dnf(mode_group)
+        if operating_mode is not None:
+            show = dnr_dnf_sliders_visible_for_mode(operating_mode)
+        else:
+            show = mode_group_supports_dnr_dnf(mode_group)
         self.nb_slider.setVisible(show)
         self.nr_slider.setVisible(show)
         self.an_slider.setVisible(show)
@@ -3171,6 +3175,15 @@ class MeterWidget(RetranslatableMixin, QWidget):
         mode_group: Optional[str] = None,
     ) -> None:
         effective = mode if mode is not None else self._last_mode_for_bw
+        if effective is not None:
+            show_dnr = dnr_dnf_sliders_visible_for_mode(effective)
+        elif mode_group is not None:
+            show_dnr = mode_group_supports_dnr_dnf(mode_group)
+        else:
+            show_dnr = True
+        self.nb_slider.setVisible(show_dnr)
+        self.nr_slider.setVisible(show_dnr)
+        self.an_slider.setVisible(show_dnr)
         self.agc_slider.setVisible(agc_slider_visible_for_mode(effective))
         if effective is not None:
             show_mic = mic_gain_slider_visible_for_mode(effective)

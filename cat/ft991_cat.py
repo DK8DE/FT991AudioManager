@@ -276,6 +276,13 @@ class FT991CAT:
     # TX-Status
     # ------------------------------------------------------------------
 
+    def _query_tx_response(self) -> str:
+        """``TX;`` lesen — bei transientem ``?;`` (z. B. nach TX0/Mode-Umschalt) als RX."""
+        try:
+            return self._cat.send_command("TX;")
+        except CatCommandUnsupportedError:
+            return "TX0;"
+
     def is_transmitting(self) -> bool:
         """Liefert ``True``, wenn das Gerät gerade sendet (``TX;`` != 0).
 
@@ -283,7 +290,7 @@ class FT991CAT:
         zurückgegeben, damit wir nicht versehentlich während TX schreiben.
         """
         try:
-            response = self._cat.send_command("TX;")
+            response = self._query_tx_response()
         except CatTimeoutError:
             return True
         match = _TX_PATTERN.match(response)
@@ -767,7 +774,7 @@ class FT991CAT:
 
     def get_tx_status(self) -> bool:
         """Liest den TX-Status. ``True`` wenn das Gerät sendet."""
-        response = self._cat.send_command("TX;")
+        response = self._query_tx_response()
         try:
             return parse_tx_response(response)
         except ValueError as exc:
@@ -775,7 +782,7 @@ class FT991CAT:
 
     def read_tx_state(self) -> int:
         """Liest den TX-Status detailliert (0 RX / 1 CAT-TX / 2 MIC-PTT)."""
-        response = self._cat.send_command("TX;")
+        response = self._query_tx_response()
         try:
             return parse_tx_state(response)
         except ValueError as exc:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import unittest
 
 from mapping.amateur_bands import (
-    AMATEUR_BANDS_HIGH_TO_LOW,
     VFO_BAND_CHOICE,
     amateur_band_for_hz,
     cb_all_channel_frequencies_hz,
@@ -42,8 +41,8 @@ class AmateurBandsTest(unittest.TestCase):
         band = display_band_at_hz(27_000_000)
         self.assertIsNotNone(band)
         assert band is not None
-        self.assertEqual(band.name, "CB")
-        self.assertEqual(display_band_for_hz(26_965_000), "CB")
+        self.assertEqual(band.name, "11 m (CB)")
+        self.assertEqual(display_band_for_hz(26_965_000), "11 m (CB)")
         self.assertIsNone(amateur_band_for_hz(27_000_000))
 
     def test_cb_80_channel_block(self) -> None:
@@ -52,7 +51,7 @@ class AmateurBandsTest(unittest.TestCase):
         band = display_band_at_hz(26_855_000)
         self.assertIsNotNone(band)
         assert band is not None
-        self.assertEqual(band.name, "CB")
+        self.assertEqual(band.name, "11 m (CB)")
         self.assertEqual(cb_channel_at_hz(26_565_000), 41)
         self.assertEqual(cb_channel_at_hz(26_955_000), 80)
         self.assertEqual(display_band_label_at_hz(26_865_000), "CB 71")
@@ -89,16 +88,41 @@ class AmateurBandsTest(unittest.TestCase):
 
     def test_special_band_without_channel_shows_name_only(self) -> None:
         self.assertIsNone(cb_channel_at_hz(27_000_005))
-        self.assertEqual(display_band_label_at_hz(27_000_005), "CB")
+        self.assertEqual(display_band_label_at_hz(27_000_005), "11 m (CB)")
 
     def test_combo_order_high_to_low(self) -> None:
         entries = combo_entries_high_to_low()
-        self.assertEqual(entries[0], ("VFO", VFO_BAND_CHOICE))
-        self.assertEqual(entries[1][1], AMATEUR_BANDS_HIGH_TO_LOW[0].center_hz)
-        self.assertIn("70 cm", entries[1][0])
-        self.assertIn("160 m", entries[-1][0])
+        self.assertEqual(entries[0][1], VFO_BAND_CHOICE)
+        centers = [e[1] for e in entries[1:]]
+        self.assertEqual(centers, sorted(centers, reverse=True))
+        labels = [e[0] for e in entries]
+        self.assertIn("70 cm", labels[1])
+        self.assertIn("160 m", labels[-1])
+        self.assertTrue(any("11 m" in lbl or "CB" in lbl for lbl in labels))
+        self.assertTrue(any("Freenet" in lbl for lbl in labels))
+
+    def test_band_combo_target_cb_snaps_to_channel(self) -> None:
+        from mapping.amateur_bands import (
+            band_at_center_hz,
+            band_combo_target_frequency_hz,
+            cb_channel_at_hz,
+        )
+
+        cb = display_band_at_hz(27_000_000)
+        assert cb is not None
+        hz = band_combo_target_frequency_hz(cb)
+        self.assertIsNotNone(cb_channel_at_hz(hz))
+        self.assertEqual(band_at_center_hz(cb.center_hz), cb)
+
+    def test_preferred_voice_mode_cb_freenet_fm(self) -> None:
+        from mapping.amateur_bands import preferred_voice_rx_mode_for_hz
+
+        self.assertEqual(preferred_voice_rx_mode_for_hz(27_185_000), RxMode.FM)
+        self.assertEqual(preferred_voice_rx_mode_for_hz(149_025_000), RxMode.FM)
 
     def test_combo_label_format(self) -> None:
+        from mapping.amateur_bands import AMATEUR_BANDS_HIGH_TO_LOW
+
         label = AMATEUR_BANDS_HIGH_TO_LOW[0].combo_label()
         self.assertIn("430.000", label)
         self.assertIn("440.000", label)

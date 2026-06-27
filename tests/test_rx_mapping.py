@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from typing import Dict, List
 
-from cat.cat_errors import CatProtocolError
+from cat.cat_errors import CatProtocolError, CatCommandUnsupportedError
 from cat.ft991_cat import FT991CAT
 from cat.serial_cat import SerialCAT
 from mapping.rx_mapping import (
@@ -132,12 +132,17 @@ class ModeMappingTest(unittest.TestCase):
         self.assertFalse(should_apply_data_rtty_dsp_preset("FM", RxMode.FM))
 
     def test_dnr_dnf_mode_groups(self) -> None:
-        # Steuert auch Sichtbarkeit des NB-Sliders (mit DNR/DNF gleich FM/C4FM).
+        from mapping.rx_mapping import dnr_dnf_sliders_visible_for_mode
+
+        # Modusgruppe DATA enthält DATA-FM — Sichtbarkeit hängt vom konkreten Modus ab.
         self.assertFalse(mode_group_supports_dnr_dnf("FM"))
         self.assertFalse(mode_group_supports_dnr_dnf("C4FM"))
         self.assertTrue(mode_group_supports_dnr_dnf("SSB"))
         self.assertTrue(mode_group_supports_dnr_dnf("AM"))
         self.assertTrue(mode_group_supports_dnr_dnf("DATA"))
+        self.assertFalse(dnr_dnf_sliders_visible_for_mode(RxMode.FM))
+        self.assertFalse(dnr_dnf_sliders_visible_for_mode(RxMode.DATA_FM))
+        self.assertTrue(dnr_dnf_sliders_visible_for_mode(RxMode.DATA_USB))
 
     def test_agc_slider_only_lsb_usb_data_lsb(self) -> None:
         from mapping.rx_mapping import (
@@ -412,6 +417,23 @@ class FT991CatRxTest(unittest.TestCase):
         ft = FT991CAT(radio)
         with self.assertRaises(CatProtocolError):
             ft.read_smeter()
+
+    def test_tx_query_unsupported_treated_as_rx(self) -> None:
+        """Transientes ``?;`` auf ``TX;`` (z. B. beim Live-Schließen) — kein Fehler."""
+        radio = _RxFakeRadio()
+        def send_command(command: str, **kwargs: object) -> str:
+            if command == "TX;":
+                raise CatCommandUnsupportedError(
+                    f"Funkgeraet kennt Befehl {command!r} nicht (Antwort '?;')"
+                )
+            return _RxFakeRadio.send_command(radio, command, **kwargs)
+
+        radio.send_command = send_command  # type: ignore[method-assign]
+        ft = FT991CAT(radio)
+        self.assertFalse(ft.is_transmitting())
+        self.assertFalse(ft.get_tx_status())
+        self.assertEqual(ft.read_tx_state(), 0)
+        ft.ensure_rx()
 
 
 if __name__ == "__main__":  # pragma: no cover

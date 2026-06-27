@@ -1779,6 +1779,22 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             except Exception:
                 pass
 
+    def _ensure_live_cat_tx_off_blocking(self, timeout_s: float = 2.5) -> None:
+        """CAT-TX vor Funk-Restore synchron beenden (Schließen des Live-Fensters)."""
+        self._live_cat_tx_armed = False
+        self._suppress_funk_listen_while_live_tx_active = False
+        if self._cat is None or not self._cat.is_connected():
+            return
+        tw = getattr(self, "_ptt_worker", None)
+        if tw is not None:
+            tw.blockSignals(True)
+        try:
+            FT991CAT(self._cat).set_cat_transmit(
+                False, wait=True, timeout_s=timeout_s
+            )
+        except Exception:
+            pass
+
     def _release_live_voice_mode_plain(self) -> None:
         if (
             self._radio_setup is not None
@@ -2405,6 +2421,11 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             self._clear_live_ptt_wants()
             self._safe_live_cat_tx_off()
 
+        if cat_ok:
+            self._ensure_live_cat_tx_off_blocking()
+        self._shutdown_sr_preview_thread()
+        self._shutdown_ptt_thread()
+
         if self._audio_radio_session is not None:
             if cat_ok:
                 self._audio_radio_session.request_restore_if_no_windows()
@@ -2416,8 +2437,6 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             # auch wenn „Mithören“ beim Stop die Umschaltung unterdrückt hat.
             self._release_live_voice_mode_plain()
         self._sync_live_eq_profile_for_session(entering=False)
-        self._shutdown_sr_preview_thread()
-        self._shutdown_ptt_thread()
         super().closeEvent(event)
 
     def _save_geo_to_settings(self) -> None:
@@ -2443,9 +2462,11 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         if self._engine.is_running():
             self._engine.stop()
         self._safe_live_cat_tx_off()
+        if self._cat is not None and self._cat.is_connected():
+            self._ensure_live_cat_tx_off_blocking()
+        self._shutdown_sr_preview_thread()
+        self._shutdown_ptt_thread()
         self._release_live_voice_mode_plain()
         if self._audio_radio_session is not None:
             self._audio_radio_session.detach_for_force_close(self)
         self._sync_live_eq_profile_for_session(entering=False)
-        self._shutdown_sr_preview_thread()
-        self._shutdown_ptt_thread()

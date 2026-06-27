@@ -22,10 +22,25 @@ class RadioStateCache:
     active_rig_name: str = ""
     #: 0 = noch keine Frequenz aus Software/CAT bekannt (kein erzwungenes 2-m-Band).
     frequency_hz: int = 0
+    frequency_hz_b: int = 0
     mode: str = "USB"
     ptt: bool = False
     vfo: str = "A"
     split: bool = False
+    #: FLRig-Skalen (0..100) bzw. Anzeige-Rohwerte — aus CAT gelesen.
+    volume: int = 0
+    rfgain: int = 0
+    micgain: int = 0
+    power_pc: int = 0
+    agc: int = 0
+    smeter_raw: int = 0
+    swr_raw: int = 0
+    po_raw: int = 0
+    notch_hz: int = 0
+    bandwidth_hz: int = 3000
+    sideband: str = "U"
+    cw_wpm: int = 20
+    cat_string_response: str = ""
     last_error: str = ""
     last_success_ts: float = 0.0
     protocol_active: dict[str, bool] = field(
@@ -48,10 +63,24 @@ class RadioStateCache:
                 "active_rig_id": str(self.active_rig_id),
                 "active_rig_name": str(self.active_rig_name),
                 "frequency_hz": int(self.frequency_hz),
+                "frequency_hz_b": int(self.frequency_hz_b),
                 "mode": str(self.mode),
                 "ptt": bool(self.ptt),
                 "vfo": str(self.vfo),
                 "split": bool(self.split),
+                "volume": int(self.volume),
+                "rfgain": int(self.rfgain),
+                "micgain": int(self.micgain),
+                "power_pc": int(self.power_pc),
+                "agc": int(self.agc),
+                "smeter_raw": int(self.smeter_raw),
+                "swr_raw": int(self.swr_raw),
+                "po_raw": int(self.po_raw),
+                "notch_hz": int(self.notch_hz),
+                "bandwidth_hz": int(self.bandwidth_hz),
+                "sideband": str(self.sideband),
+                "cw_wpm": int(self.cw_wpm),
+                "cat_string_response": str(self.cat_string_response),
                 "last_error": str(self.last_error),
                 "last_success_ts": float(self.last_success_ts),
                 "protocol_active": dict(self.protocol_active),

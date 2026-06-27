@@ -26,7 +26,7 @@ STRINGS: dict[str, str] = {
     'amateur_bands.6m': '6 m',
     'amateur_bands.70cm': '70 cm',
     'amateur_bands.80m': '80 m',
-    'amateur_bands.cb': 'CB',
+    'amateur_bands.cb': '11 m (CB)',
     'amateur_bands.cb_channel': 'CB {channel}',
     'amateur_bands.freenet': 'Freenet',
     'amateur_bands.freenet_channel': 'Freenet {channel}',

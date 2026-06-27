@@ -389,9 +389,36 @@ def preferred_voice_rx_mode_for_amateur_hz(hz: int) -> Optional[RxMode]:
 def combo_entries_high_to_low() -> List[Tuple[str, int]]:
     """``[(Anzeigetext, Nutzdaten), …]`` — Nutzdaten = ``VFO_BAND_CHOICE`` oder ``center_hz``."""
     out: List[Tuple[str, int]] = [(tr("amateur_bands.vfo"), VFO_BAND_CHOICE)]
-    for band in AMATEUR_BANDS_HIGH_TO_LOW:
+    bands_high_to_low = sorted(DISPLAY_BANDS, key=lambda b: b.center_hz, reverse=True)
+    for band in bands_high_to_low:
         out.append((band.combo_label(), band.center_hz))
     return out
+
+
+def band_at_center_hz(center_hz: int) -> Optional[AmateurBand]:
+    """Band aus Combo-Nutzdaten (``center_hz``) — Amateurband, CB oder Freenet."""
+    c = int(center_hz)
+    for band in DISPLAY_BANDS:
+        if band.center_hz == c:
+            return band
+    return None
+
+
+def band_combo_target_frequency_hz(band: AmateurBand) -> int:
+    """Zielfrequenz bei Bandwahl — CB/Freenet auf Kanal rasten, sonst Bandmitte."""
+    if band_strip_snap_frequencies_hz(band):
+        return snap_band_strip_frequency_hz(band.center_hz, band)
+    return band.center_hz
+
+
+def preferred_voice_rx_mode_for_hz(hz: int) -> Optional[RxMode]:
+    """Phone-typische Betriebsart für Amateurband, CB oder Freenet."""
+    band = display_band_at_hz(int(hz))
+    if band is None:
+        return None
+    if band.kind in (BandKind.CB, BandKind.FREENET):
+        return RxMode.FM
+    return preferred_voice_rx_mode_for_amateur_hz(int(hz))
 
 
 # „Schöne“ Raster für Band-Streifen-Ticks (Hz, aufsteigend).

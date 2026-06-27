@@ -66,7 +66,7 @@ class RigBridgeManager:
             log_client_traffic=bool(self._cfg["flrig"].get("log_tcp_traffic", True)),
             on_state_patch=self._state_patch,
             on_tcp_activity=self._notify_flrig_tcp_activity,
-            refresh_frequency_before_read=self.request_cat_refresh_async,
+            refresh_before_read=self.refresh_flrig_before_read,
         )
 
     def set_on_frequency_written(
@@ -154,6 +154,13 @@ class RigBridgeManager:
                 self._flrig_cat_yield_until_mono = until
         self._backend.write_command(command, log_ctx=log_ctx)
 
+    def refresh_flrig_before_read(self, method: str) -> None:
+        """Synchroner CAT-Lesezyklus für FLRig-Abfragen (XML-RPC-Thread)."""
+        if not self._backend.is_serial_connected():
+            return
+        self._notify_flrig_tcp_activity()
+        self._backend.sync_refresh_for_flrig(method)
+
     def request_cat_refresh_async(self) -> bool:
         """Nicht blockierend — READFREQ in die Bridge-Warteschlange (FLRig-TCP-Thread)."""
         if not self._backend.is_serial_connected():
@@ -163,7 +170,8 @@ class RigBridgeManager:
         return True
 
     def flrig_refresh_frequency_before_read(self) -> bool:
-        return self.request_cat_refresh_async()
+        self.refresh_flrig_before_read("main.get_frequency")
+        return True
 
     def on_app_connected(self) -> None:
         self._backend.start()

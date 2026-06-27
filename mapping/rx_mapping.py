@@ -294,6 +294,15 @@ def mode_group_supports_dnr_dnf(mode_group: str) -> bool:
     return mode_group.strip().upper() not in _MODE_GROUPS_WITHOUT_DNR_DNF
 
 
+def dnr_dnf_sliders_visible_for_mode(mode: Optional[RxMode]) -> bool:
+    """NB/DNR/DNF-Slider — am FT-991 wie FM nicht nutzbar in FM/C4FM und DATA-FM."""
+    if mode is None or mode is RxMode.UNKNOWN:
+        return True
+    if mode in (RxMode.FM, RxMode.FM_N, RxMode.C4FM, RxMode.DATA_FM):
+        return False
+    return mode_group_supports_dnr_dnf(mode_group_for(mode))
+
+
 def mode_group_uses_data_rtty_dsp_preset(mode_group: str) -> bool:
     """True, wenn die Modusgruppe grundsätzlich DATA/RTTY-DSP-Defaults kennt."""
     return mode_group.strip().upper() in ("DATA", "RTTY")
