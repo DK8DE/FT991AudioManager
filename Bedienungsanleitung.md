@@ -77,9 +77,9 @@ Nach der Installation starte **FT-991/A Audiomanager** über das Startmenü oder
 2. Wähle im Bereich **CAT-Verbindung** den richtigen **COM-Port** aus.
 3. Klicke bei Bedarf auf **Aktualisieren**, um die Portliste zu erneuern.
 
-![Abb. 3 — CAT-Einstellungen](docs/screenshots/de/03-settings-cat.png)
+![Abb. 3 — CAT-Einstellungen](docs/screenshots/de/03-settings-cat-full.png)
 
-*Abb. 3: Einstellungen → CAT-Verbindung — Port, Baudrate, Verbindung testen.*
+*Abb. 3: Einstellungen — linke Navigation (CAT, Rig-Bridge, Tastenkürzel, Kalibrierung) und Bereich CAT-Verbindung.*
 
 > **Wichtig — zwei gleich aussehende COM-Ports**  
 > Am FT-991(A) erscheinen unter Windows typischerweise **zwei** COM-Ports:
@@ -476,9 +476,9 @@ Ermöglicht die Nutzung von **WSJT-X**, **FLRig** und anderen CAT-Clients parall
 
 **Empfohlene Reihenfolge:** Zuerst in der App verbinden → dann Rig-Bridge starten → in WSJT-X *Radio → FLRig* mit gleichem Host/Port.
 
-![Abb. 14 — Rig-Bridge](docs/screenshots/de/14-settings-rig-bridge.png)
+![Abb. 14 — Rig-Bridge](docs/screenshots/de/14-settings-rig-bridge-full.png)
 
-*Abb. 14: Einstellungen → Rig-Bridge.*
+*Abb. 14: Einstellungen → Rig-Bridge (FLRig-Server, Host/Port, Start/Stop).*
 
 ### 10.3 Tastenkürzel
 
@@ -504,7 +504,7 @@ Die Tasten und Modifikatoren sind frei kombinierbar. Mindestens ein Modifikator 
 
 **PO-Meter (10 m KW):** Automatische Kalibrieration der Sendeleistungsanzeige — nur mit geeigneter KW-Antenne am KW-Anschluss und nach Bestätigung des Sicherheitshinweises.
 
-![Abb. 15 — Kalibrierung](docs/screenshots/de/15-settings-calibration.png)
+![Abb. 15 — Kalibrierung](docs/screenshots/de/15-settings-calibration-full.png)
 
 *Abb. 15: Einstellungen → Kalibrierung (S-Meter / PO).*
 

@@ -13,7 +13,7 @@ Lege PNG-Dateien in den **sprachspezifischen Unterordnern** ab:
 |-------|--------|
 | `01-github-releases.png` | GitHub Releases-Seite mit Download |
 | `02-main-disconnected.png` | Hauptfenster vor der ersten Verbindung |
-| `03-settings-cat.png` | Einstellungen → CAT-Verbindung (Port, Baudrate, Test) |
+| `03-settings-cat-full.png` | Einstellungen — Navigation + CAT-Verbindung (Port, Baudrate, Test) |
 | `04-ft991-menu-031.png` | FT-991 Display: Menü 031 CAT RATE = 38400 |
 | `05-main-connected.png` | Hauptfenster verbunden (Frequenz, Meter, Statusleiste) |
 | `06-sound-settings.png` | Soundeinstellungen — Geräte & Lautstärke und Live-Zuordnung (ein Fenster) |
@@ -24,9 +24,11 @@ Lege PNG-Dateien in den **sprachspezifischen Unterordnern** ab:
 | `11-live-window.png` | Live‑PC Funk / Live PC Radio |
 | `12-memory-editor.png` | Speicherkanal- / Memory-Editor |
 | `13-cat-log.png` | CAT-Log-Fenster |
-| `14-settings-rig-bridge.png` | Einstellungen → Rig-Bridge |
+| `14-settings-rig-bridge-full.png` | Einstellungen → Rig-Bridge |
 | `14.1-settings-hotkey.png` | Einstellungen → Tastenkürzel / Shortcuts |
-| `15-settings-calibration.png` | Einstellungen → Kalibrierung |
+| `15-settings-calibration-full.png` | Einstellungen → Kalibrierung |
 | `16-about.png` | Hilfe → Version (About) |
 
 Empfohlene Auflösung: mindestens 1280 px Breite, PNG oder WebP.
+
+**GitHub-Vorschau:** Wenn du eine PNG unter gleichem Dateinamen austauschst, zeigt die Markdown-Ansicht auf github.com oft noch das alte Bild (CDN-Cache). Abhilfe: **neuen Dateinamen** verwenden (z. B. `03-settings-cat-full.png`, `14-settings-rig-bridge-full.png`, `15-settings-calibration-full.png`) und die Handbücher entsprechend anpassen.
