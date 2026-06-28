@@ -3,8 +3,8 @@
 **Version:** see *Help → Version* in the application  
 **Author:** Jörg Körner, DK8DE  
 **Download & updates:** [GitHub Releases](https://github.com/DK8DE/FT991AudioManager/releases)  
-**German version:** [Bedienungsanleitung.md](Bedienungsanleitung.md)  
-**Screenshots:** folder [`docs/screenshots/en/`](docs/screenshots/en/) — see [README there](docs/screenshots/README.md)
+**German version:** German manual as PDF (*FT991AudioManager-Bedienungsanleitung-&lt;Version&gt;.pdf*) in the same [GitHub release](https://github.com/DK8DE/FT991AudioManager/releases) as the English PDF.  
+**Screenshots (source tree):** [github.com/DK8DE/FT991AudioManager/tree/main/docs/screenshots/en](https://github.com/DK8DE/FT991AudioManager/tree/main/docs/screenshots/en) — file list in [docs/screenshots/README.md](https://github.com/DK8DE/FT991AudioManager/blob/main/docs/screenshots/README.md)
 
 ---
 
@@ -452,7 +452,7 @@ The application always uses the **dark theme**.
 
 ## 10. Settings dialog in detail
 
-**File → Settings…** — three sections in the left navigation:
+**File → Settings…** — four sections in the left navigation:
 
 ### 10.1 CAT connection
 
@@ -480,7 +480,25 @@ Enables **WSJT-X**, **FLRig**, and other CAT clients alongside the app.
 
 *Fig. 14: Settings → Rig bridge. (Screenshot placeholder)*
 
-### 10.3 Calibration
+### 10.3 Keyboard shortcuts
+
+**Global shortcuts** (on Windows) — system-wide, even when the app is not focused:
+
+| Setting | Default | Function |
+|---------|---------|----------|
+| **Global shortcuts enabled** | on | Registers combinations under Windows |
+| **Modifier 1 / 2** | Ctrl + Shift | Apply to all global shortcuts on this tab |
+| **Contest loop: Play** | `Ctrl+Shift+P` | Starts CAT playback like the Play button — only when the **player window** is open and **contest loop** is enabled |
+| **Live: PTT latch** | `Ctrl+Shift+X` | Toggles PTT latch in the **Live window** — only when **Live** is open |
+| **Live: PTT momentary** | `Ctrl+Shift+Y` | Momentary PTT in the **Live window** (hold) — only when **Live** is open |
+
+Keys and modifiers can be customized. At least one modifier should be set so normal typing is not blocked.
+
+![Fig. 14.1 — Shortcuts](docs/screenshots/en/14.1-settings-hotkey.png)
+
+*Fig. 14.1: Settings → Shortcuts. (Screenshot placeholder)*
+
+### 10.4 Calibration
 
 **S-meter:** Custom curves for HF and 2 m/70 cm
 
@@ -493,6 +511,10 @@ Enables **WSJT-X**, **FLRig**, and other CAT clients alongside the app.
 ---
 
 ## 11. Keyboard shortcuts
+
+### 11.1 In the application
+
+These shortcuts apply when the app (or the respective window) is focused:
 
 | Shortcut | Action |
 |----------|--------|
@@ -507,8 +529,12 @@ Enables **WSJT-X**, **FLRig**, and other CAT clients alongside the app.
 | `Ctrl+Shift+R` | Audio recorder |
 | `Ctrl+Shift+L` | Live PC Radio |
 | `Ctrl+Shift+K` | Memory channels |
-| `Ctrl+Y` | Live: PTT hold |
-| `Ctrl+X` | Live: PTT latch |
+| `Ctrl+Y` | Live: PTT hold (when global shortcuts are disabled) |
+| `Ctrl+X` | Live: PTT latch (when global shortcuts are disabled) |
+
+### 11.2 Global (Settings → Shortcuts)
+
+With **global shortcuts** enabled (Windows), the default combinations **`Ctrl+Shift+P`**, **`Ctrl+Shift+Y`**, and **`Ctrl+Shift+X`** work system-wide — details and customization in [section 10.3](#103-keyboard-shortcuts).
 
 ---
 

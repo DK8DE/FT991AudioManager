@@ -3,8 +3,8 @@
 **Version:** siehe *Hilfe → Version* in der Anwendung  
 **Autor:** Jörg Körner, DK8DE  
 **Download & Updates:** [GitHub Releases](https://github.com/DK8DE/FT991AudioManager/releases)  
-**Englische Version:** [UserManual_EN.md](UserManual_EN.md)  
-**Screenshots:** Ordner [`docs/screenshots/de/`](docs/screenshots/de/) — siehe [README dort](docs/screenshots/README.md)
+**Englische Version:** Englisches Handbuch als PDF (*FT991AudioManager-UserManual-&lt;Version&gt;.pdf*) im gleichen [GitHub Release](https://github.com/DK8DE/FT991AudioManager/releases) wie die deutsche PDF.  
+**Screenshots (Quellversion):** [github.com/DK8DE/FT991AudioManager/tree/main/docs/screenshots/de](https://github.com/DK8DE/FT991AudioManager/tree/main/docs/screenshots/de) — Dateiliste in [docs/screenshots/README.md](https://github.com/DK8DE/FT991AudioManager/blob/main/docs/screenshots/README.md)
 
 ---
 
@@ -452,7 +452,7 @@ Die Anwendung verwendet dauerhaft das **Dark Theme**.
 
 ## 10. Einstellungsdialog im Detail
 
-**Datei → Einstellungen…** — drei Bereiche in der linken Navigation:
+**Datei → Einstellungen…** — vier Bereiche in der linken Navigation:
 
 ### 10.1 CAT-Verbindung
 
@@ -480,7 +480,25 @@ Ermöglicht die Nutzung von **WSJT-X**, **FLRig** und anderen CAT-Clients parall
 
 *Abb. 14: Einstellungen → Rig-Bridge. (Screenshot-Platzhalter)*
 
-### 10.3 Kalibrierung
+### 10.3 Tastenkürzel
+
+**Globale Tastenkürzel** (unter Windows) — systemweit, auch wenn die App nicht im Fokus ist:
+
+| Einstellung | Standard | Funktion |
+|-------------|----------|----------|
+| **Globale Tastenkürzel aktiv** | ein | Registriert die Kombinationen unter Windows |
+| **Modifikator 1 / 2** | Strg + Umschalt | Gelten für alle globalen Kürzel auf diesem Tab |
+| **Kontest-Loop: Play** | `Strg+Shift+P` | Startet CAT-Wiedergabe wie der Play-Button — nur wenn das **Player-Fenster** offen ist und **Kontest-Loop** aktiv ist |
+| **Live: PTT halten (Latch)** | `Strg+Shift+X` | Schaltet PTT-Halten im **Live-Fenster** um — nur wenn **Live** geöffnet ist |
+| **Live: PTT Momentary** | `Strg+Shift+Y` | Momentary-PTT im **Live-Fenster** (gedrückt halten) — nur wenn **Live** geöffnet ist |
+
+Die Tasten und Modifikatoren sind frei kombinierbar. Mindestens ein Modifikator sollte gesetzt sein, damit normale Tasteneingaben nicht blockiert werden.
+
+![Abb. 14.1 — Tastenkürzel](docs/screenshots/de/14.1-settings-hotkey.png)
+
+*Abb. 14.1: Einstellungen → Tastenkürzel. (Screenshot-Platzhalter)*
+
+### 10.4 Kalibrierung
 
 **S-Meter:** Eigene Kurven für Kurzwelle und 2 m/70 cm
 
@@ -493,6 +511,10 @@ Ermöglicht die Nutzung von **WSJT-X**, **FLRig** und anderen CAT-Clients parall
 ---
 
 ## 11. Tastenkürzel
+
+### 11.1 In der Anwendung
+
+Diese Kürzel gelten, wenn die App (bzw. das jeweilige Fenster) im Fokus ist:
 
 | Kürzel | Aktion |
 |--------|--------|
@@ -507,8 +529,12 @@ Ermöglicht die Nutzung von **WSJT-X**, **FLRig** und anderen CAT-Clients parall
 | `Strg+Shift+R` | Audio-Recorder |
 | `Strg+Shift+L` | Live‑PC Funk |
 | `Strg+Shift+K` | Speicherkanäle |
-| `Strg+Y` | Live: PTT halten |
-| `Strg+X` | Live: PTT einrasten |
+| `Strg+Y` | Live: PTT halten (wenn globale Kürzel deaktiviert) |
+| `Strg+X` | Live: PTT einrasten (wenn globale Kürzel deaktiviert) |
+
+### 11.2 Global (Einstellungen → Tastenkürzel)
+
+Mit aktivierten **globalen Tastenkürzeln** (Windows) gelten die Standard-Kombinationen **`Strg+Shift+P`**, **`Strg+Shift+Y`** und **`Strg+Shift+X`** systemweit — Details und Anpassung siehe [Abschnitt 10.3](#103-tastenkürzel).
 
 ---
 

@@ -4,8 +4,8 @@ Lege PNG-Dateien in den **sprachspezifischen Unterordnern** ab:
 
 | Ordner | Handbuch |
 |--------|----------|
-| [`de/`](de/) | Deutsch — [`Bedienungsanleitung.md`](../../Bedienungsanleitung.md) |
-| [`en/`](en/) | English — [`UserManual_EN.md`](../../UserManual_EN.md) |
+| [`de/`](https://github.com/DK8DE/FT991AudioManager/tree/main/docs/screenshots/de) | Deutsch — [`Bedienungsanleitung.md`](https://github.com/DK8DE/FT991AudioManager/blob/main/Bedienungsanleitung.md) |
+| [`en/`](https://github.com/DK8DE/FT991AudioManager/tree/main/docs/screenshots/en) | English — [`UserManual_EN.md`](https://github.com/DK8DE/FT991AudioManager/blob/main/UserManual_EN.md) |
 
 **Dateinamen sind in beiden Ordnern identisch** — Inhalt und Beschriftung der Screenshots sollen zur jeweiligen Sprache passen (UI auf Deutsch bzw. Englisch).
 
@@ -25,6 +25,7 @@ Lege PNG-Dateien in den **sprachspezifischen Unterordnern** ab:
 | `12-memory-editor.png` | Speicherkanal- / Memory-Editor |
 | `13-cat-log.png` | CAT-Log-Fenster |
 | `14-settings-rig-bridge.png` | Einstellungen → Rig-Bridge |
+| `14.1-settings-hotkey.png` | Einstellungen → Tastenkürzel / Shortcuts |
 | `15-settings-calibration.png` | Einstellungen → Kalibrierung |
 | `16-about.png` | Hilfe → Version (About) |
 
