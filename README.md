@@ -118,6 +118,9 @@ Die aktuelle Versionsnummer steht in [`version.py`](version.py) (`APP_VERSION`).
   (Push-to-Talk) und **Strg+X** (PTT halten)
 - **RX/TX-LED** wie im Hauptfenster; während Live-TX kann der Funkeingang
   stummgeschaltet werden
+- Mit offenem Live-Fenster: Player/Replay parallel; Live-PTT unterbricht
+  Wiedergabe; Recorder nimmt Stereo (L=Senden, R=Empfang) über die
+  Live-Engine auf
 - Geräte und Mithören auch unter **Funktionen → Soundeinstellung…**
   (`Ctrl+Shift+S`, Abschnitt Live-Monitoring)
 - Schnellzugriff-Button **Live** in der Funksteuerungsleiste

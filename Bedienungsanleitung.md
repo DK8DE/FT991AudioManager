@@ -345,6 +345,8 @@ Wiedergabe von **MP3** und **WAV** über die CAT-Schnittstelle mit automatischem
 
 Beim Start mit CAT-Verbindung stellt die App automatisch **DATA-FM** und die Menüs **048 / 070 / 072 / 077 / 109** für PC-Audio ein.
 
+> **Mit offenem Live-Fenster:** Der Player kann parallel zum Live‑PC Funk genutzt werden. Live-PTT unterbricht die **Wiedergabe** (wie das Hand-Mikro am Funkgerät).
+
 ![Abb. 9 — Audio-Player](docs/screenshots/de/09-audio-player.png)
 
 *Abb. 9: Audio-Player-Fenster. (Screenshot-Platzhalter)*
@@ -355,11 +357,15 @@ Beim Start mit CAT-Verbindung stellt die App automatisch **DATA-FM** und die Men
 
 | Bereich | Funktion |
 |---------|----------|
-| **Aufnahme** | Empfang vom Funk-USB-CODEC als **MP3** aufzeichnen |
-| **Replay** | Aufnahme einmalig per CAT-TX wieder abspielen |
+| **Aufnahme** | **Ohne** offenes Live-Fenster: nur **Empfang** vom Funk-USB-CODEC als **MP3**. **Mit** offenem Live-Fenster: **Stereo** (L = über Live **gesendetes** Mikro, R = **empfangenes** Funk-Audio) |
+| **Replay** | Aufnahme einmalig per CAT-TX wieder abspielen — auch wenn das Live-Fenster offen ist |
 | **Play PC** | Datei lokal am PC anhören |
 | **Format** | MP3-Bitrate wählbar |
 | **Ordner** | Aufnahme-Verzeichnis, Explorer öffnen |
+
+> **Aufnahme-Modi:** Ist das Live-Fenster **nicht** geöffnet, zeichnet der Recorder ausschließlich das Audio auf, das über das Funkgerät **reinkommt** (USB-Empfang). Ist das Live-Fenster **geöffnet**, werden **beide Richtungen** parallel erfasst: **links** deine Live-Sendung vom PC-Mikro (nach DSP), **rechts** der Funkempfang. Die laufende Aufnahme wird **nicht** durch Live-PTT unterbrochen.
+
+> **Live + Player/Recorder:** Mit offenem Live-Fenster können **Audio-Player** und **Audio-Recorder** parallel genutzt werden — **Replay** und **Player-Wiedergabe** funktionieren ebenfalls. Live-PTT unterbricht **Wiedergabe und Replay** (wie das Hand-Mikro), **nicht** die laufende Aufnahme. Ohne Live-Fenster gilt die frühere Sperre: Live startet nicht, wenn Player oder Recorder aktiv sind.
 
 ![Abb. 10 — Audio-Recorder](docs/screenshots/de/10-audio-recorder.png)
 
@@ -384,7 +390,7 @@ Sprache vom **PC-Mikrofon** über DSP ins Funkgerät — ideal für Headset-Betr
 | **AFL** | Eigene NF abhören — bearbeitetes Mikro auf Monitor |
 | **Audio Zuordnung** | Öffnet die Soundeinstellungen |
 
-> Live startet nicht, wenn gleichzeitig Player oder Recorder senden/aufnehmen.
+> **Parallel zu Player/Recorder:** Details zur **Aufnahme** (nur Empfang vs. Stereo Senden+Empfang) und zu **Replay** mit offenem Live-Fenster: siehe Abschnitt **7.4 Audio-Recorder**. Live-PTT unterbricht **Wiedergabe und Replay**, nicht die laufende Aufnahme.
 
 **Sicherheitshinweis:** Bei geschlossenen Audio-Leitungen zwischen PC und Funk wird eine **galvanische Trennung** im Audio-Pfad empfohlen (siehe README).
 
@@ -514,7 +520,7 @@ Ermöglicht die Nutzung von **WSJT-X**, **FLRig** und anderen CAT-Clients parall
 | Zwei COM-Ports — welcher? | **Verbindung testen** in den Einstellungen; bei Fehlschlag anderen Port probieren |
 | Frequenz/Mode werden nicht angezeigt | **Verbinden** (`Strg+V`); Statusleiste prüfen |
 | Kein Ton beim Player/Recorder | Soundeinstellungen prüfen (Kapitel 3); Menüs 048/070/072/077/109; DATA-FM |
-| Live ohne Audio | Live-Gerätezuordnung prüfen; PTT gedrückt halten; Blockierung durch Player/Recorder beenden |
+| Live ohne Audio | Live-Gerätezuordnung prüfen; PTT gedrückt halten; ohne Live-Fenster: Player/Recorder beenden, wenn Live blockiert ist |
 | SmartScreen blockiert | Siehe [Kapitel 1.2](#12-hinweis-zu-windows-sicherheit-smartscreen--antivirus) |
 
 ---

@@ -217,6 +217,51 @@ def _live_window_accepts_background_audio(w: "LiveWindow") -> bool:
     return bool(w.isVisible() or w.isMinimized())
 
 
+def live_window_accepts_coexistence() -> bool:
+    """True wenn ein Live-Fenster offen ist — Player/Recorder parallel erlaubt."""
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        return False
+    for w in app.topLevelWidgets():
+        if not isinstance(w, LiveWindow):
+            continue
+        if _live_window_accepts_background_audio(w):
+            return True
+    return False
+
+
+def find_open_live_window() -> Optional["LiveWindow"]:
+    """Sichtbares oder minimiertes Live-Fenster (ohne Force-Close)."""
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        return None
+    for w in app.topLevelWidgets():
+        if not isinstance(w, LiveWindow):
+            continue
+        if _live_window_accepts_background_audio(w):
+            return w
+    return None
+
+
+def interrupt_live_tx_if_active() -> None:
+    """Live-TX/Start abbrechen — z. B. vor Player/Replay-Start."""
+    w = find_open_live_window()
+    if w is None:
+        return
+    engine = getattr(w, "_engine", None)
+    if engine is None:
+        return
+    if not (
+        engine.is_running()
+        or bool(getattr(w, "_cat_live_start_busy", False))
+        or bool(getattr(w, "_live_cat_waiting_engage_finish", False))
+    ):
+        return
+    stop_fn = getattr(w, "_stop_live_via_ptt", None)
+    if callable(stop_fn):
+        stop_fn(clear_ptt_wants=True)
+
+
 def live_session_holds_data_mode() -> bool:
     """True solange Live offen ist und der Funk im DATA-Modus bleiben soll."""
     app = QApplication.instance()
@@ -230,6 +275,32 @@ def live_session_holds_data_mode() -> bool:
         if bool(getattr(w, "_live_data_session_active", False)):
             return True
     return False
+
+
+def mic_ptt_should_stop_coexistence_recording(
+    *,
+    live_dual_recording_active: bool,
+) -> bool:
+    """MIC-PTT bricht Live-Dual-Aufnahme nicht ab, solange Live DATA hält.
+
+    Beim Loslassen der Live-PTT meldet das Funkgerät oft kurz ``TX2`` (MIC-PTT),
+    obwohl nur CAT-TX aktiv war — das darf die parallele Aufnahme nicht beenden.
+    """
+    if not live_dual_recording_active:
+        return True
+    return not live_session_holds_data_mode()
+
+
+def reconnect_coexistence_recorder_tap() -> None:
+    """Record-Tap nach Live-Engine-/Idle-Monitor-Wechsel wieder anbinden."""
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        return
+    for w in app.topLevelWidgets():
+        fn = getattr(w, "_ensure_live_record_tap_connected", None)
+        if callable(fn):
+            fn()
+            return
 
 
 def _should_release_ptt_on_window_leave(
@@ -349,6 +420,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         audio_radio_session: Optional["AudioRadioSessionHost"] = None,
         operating_mode_provider: Optional[Callable[[], RxMode]] = None,
         other_audio_blocking: Optional[Callable[[], str]] = None,
+        other_audio_interrupt: Optional[Callable[[], None]] = None,
         request_cat_tx_poll: Optional[Callable[[], None]] = None,
         profile_widget: Optional[QWidget] = None,
         parent: Optional[QWidget] = None,
@@ -366,6 +438,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         self._audio_radio_session = audio_radio_session
         self._operating_mode_provider = operating_mode_provider
         self._other_audio_blocking_fn = other_audio_blocking
+        self._other_audio_interrupt_fn = other_audio_interrupt
         self._request_cat_tx_poll_fn = request_cat_tx_poll
         self._radio_setup = (
             audio_radio_session.setup if audio_radio_session is not None else None
@@ -1528,6 +1601,17 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         if callable(fn):
             fn()
 
+    def get_engine(self) -> LiveAudioEngine:
+        """Live-Audio-Engine (PortAudio) — z. B. für Live-Dual-Aufnahme."""
+        return self._engine
+
+    def ensure_audio_for_recording(self) -> tuple[bool, str]:
+        """Idle- oder Live-Engine für bidirektionale Aufnahme vorbereiten."""
+        self._refresh_idle_listen_monitor()
+        if self._engine.is_running() or self._engine.is_idle_listen_monitor_running():
+            return True, ""
+        return False, tr("recorder.error.live_engine_not_ready")
+
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._sync_live_eq_profile_for_session(entering=True)
@@ -1592,7 +1676,14 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         if state == TX_STATE_MIC_PTT:
             if self._cat_live_start_busy or self._live_cat_waiting_engage_finish:
                 return
-            if not self._engine.is_running() and not self._radio_setup.in_data_mode:
+            # CAT-Live-PTT: Funk meldet oft TX2 statt TX1 — nicht als Hand-Mikro werten.
+            if (
+                self._desired_live_transport_on()
+                or self._live_cat_tx_armed
+                or self._engine.is_running()
+            ):
+                return
+            if not self._radio_setup.in_data_mode:
                 return
             self._stop_live_via_ptt(clear_ptt_wants=True)
             self._mic_ptt_interrupted_live = True
@@ -1603,6 +1694,10 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
             QTimer.singleShot(0, self._ensure_live_data_mode_for_session)
 
     def _on_live_ptt_failed(self, message: str) -> None:
+        self._live_cat_tx_armed = False
+        self._suppress_funk_listen_while_live_tx_active = False
+        if not self._engine.is_running():
+            self._update_tx_rx_led(TX_STATE_RX)
         if (
             message.strip()
             and self._cat is not None
@@ -1741,10 +1836,16 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         assert self._radio_setup is not None
         rs = self._radio_setup
 
+        if live_window_accepts_coexistence():
+            fn_int = getattr(self, "_other_audio_interrupt_fn", None)
+            if callable(fn_int):
+                fn_int()
+
         blocked = ""
-        fn = getattr(self, "_other_audio_blocking_fn", None)
-        if callable(fn):
-            blocked = str(fn()).strip()
+        if not live_window_accepts_coexistence():
+            fn = getattr(self, "_other_audio_blocking_fn", None)
+            if callable(fn):
+                blocked = str(fn()).strip()
         if blocked:
             self._clear_live_transport_pending_flags()
             self._clear_live_ptt_wants()
@@ -2384,6 +2485,7 @@ class LiveWindow(QMainWindow, RetranslatableMixin):
         try:
             self._refresh_idle_listen_monitor()
             self._refresh_mic_preview_monitor()
+            reconnect_coexistence_recorder_tap()
         except Exception:
             self._idle_monitor_fp_key = None
             self._mic_preview_fp_key = None

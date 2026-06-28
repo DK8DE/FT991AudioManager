@@ -272,6 +272,58 @@ def _find_audio_input_device(device_id: str, device_label: str = ""):
     return QMediaDevices.defaultAudioInput()
 
 
+def post_process_wav_to_mp3(
+    *,
+    wav_path: Path,
+    mp3_path: Path,
+    bitrate_kbps: int,
+    normalize: bool,
+) -> None:
+    """Temp-WAV normalisieren (optional) und als MP3 speichern."""
+    if not wav_path.is_file():
+        raise RuntimeError(
+            tr("recorder.error.temp_missing", name=wav_path.name)
+        )
+
+    try:
+        with wave.open(str(wav_path), "rb") as wf:
+            channels = wf.getnchannels()
+            sample_width = wf.getsampwidth()
+            sample_rate = wf.getframerate()
+            n_frames = wf.getnframes()
+            pcm = wf.readframes(n_frames)
+    except (wave.Error, EOFError) as exc:
+        raise RuntimeError(
+            tr("recorder.error.invalid_wav", exc=exc)
+        ) from exc
+
+    if sample_width != 2:
+        raise RuntimeError(
+            tr(
+                "recorder.error.unexpected_bit_depth",
+                bits=sample_width * 8,
+            )
+        )
+    if not pcm:
+        raise RuntimeError(tr("recorder.error.empty"))
+
+    if normalize:
+        pcm = soft_compress_normalize(pcm)
+
+    _encode_pcm_to_mp3(
+        pcm,
+        sample_rate=sample_rate,
+        channels=channels,
+        bitrate_kbps=bitrate_kbps,
+        target_path=mp3_path,
+    )
+
+    try:
+        wav_path.unlink()
+    except OSError:
+        pass
+
+
 class AudioRecorder(QObject):
     """Stereo-MP3-Aufnahme mit konfigurierbarer Bitrate.
 
@@ -630,10 +682,6 @@ class AudioRecorder(QObject):
             return
         # PausedState wird absichtlich nicht genutzt.
 
-    # ------------------------------------------------------------------
-    # Post-Processing: WAV -> Soft-Compressor -> MP3
-    # ------------------------------------------------------------------
-
     def _post_process_wav_to_mp3(
         self,
         *,
@@ -642,59 +690,19 @@ class AudioRecorder(QObject):
         bitrate_kbps: int,
         normalize: bool,
     ) -> None:
-        """Lädt die Tempo-WAV, normalisiert optional und schreibt MP3."""
-        if not wav_path.is_file():
-            raise RuntimeError(
-                tr("recorder.error.temp_missing", name=wav_path.name)
-            )
-
-        try:
-            with wave.open(str(wav_path), "rb") as wf:
-                channels = wf.getnchannels()
-                sample_width = wf.getsampwidth()
-                sample_rate = wf.getframerate()
-                n_frames = wf.getnframes()
-                pcm = wf.readframes(n_frames)
-        except (wave.Error, EOFError) as exc:
-            # Backend hat keine gueltige WAV/PCM-Datei geschrieben — das
-            # passiert mit dem ffmpeg-Backend, wenn WAV-Encoding nicht
-            # konfiguriert ist. Wir schlagen mit einer Hilfestellung auf,
-            # statt eine kaputte Datei in die Liste zu uebernehmen.
-            raise RuntimeError(
-                tr("recorder.error.invalid_wav", exc=exc)
-            ) from exc
-
-        if sample_width != 2:
-            raise RuntimeError(
-                tr(
-                    "recorder.error.unexpected_bit_depth",
-                    bits=sample_width * 8,
-                )
-            )
-        if not pcm:
-            raise RuntimeError(tr("recorder.error.empty"))
-
-        if normalize:
-            pcm = soft_compress_normalize(pcm)
-
-        _encode_pcm_to_mp3(
-            pcm,
-            sample_rate=sample_rate,
-            channels=channels,
+        """Legacy-Wrapper — siehe :func:`post_process_wav_to_mp3`."""
+        post_process_wav_to_mp3(
+            wav_path=wav_path,
+            mp3_path=mp3_path,
             bitrate_kbps=bitrate_kbps,
-            target_path=mp3_path,
+            normalize=normalize,
         )
-
-        self._safe_unlink(wav_path)
 
     @staticmethod
     def _safe_unlink(path: Path) -> None:
         try:
             path.unlink()
         except OSError:
-            # Kein Drama, wenn der Cleanup nicht klappt — bleibt halt
-            # als .wav.tmp liegen. Beim naechsten Start sieht der User
-            # das in der Liste nicht (Filter auf *.mp3 im Window).
             pass
 
     def _on_duration(self, ms: int) -> None:

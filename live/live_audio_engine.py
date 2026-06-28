@@ -86,6 +86,16 @@ if TYPE_CHECKING:
     from live.live_dsp import FunkListenNoiseGateState, LiveDSPChain
 
 
+class LiveRecordTap(Protocol):
+    """Optionaler Mitschnitt-Hook — TX/RX-Mono-Blöcke aus der Live-Engine."""
+
+    def on_tx_block(self, mono: Any, sample_rate: float) -> None: ...
+
+    def on_rx_block(self, mono: Any, sample_rate: float) -> None: ...
+
+    def on_pair(self, tx: Any, rx: Any, sample_rate: float) -> None: ...
+
+
 class LiveAudioEngine:
     """Start/Stop: zuerst einen Duplex-Stream, bei Bedarf getrennte I/O‑Streams."""
 
@@ -110,6 +120,46 @@ class LiveAudioEngine:
         self._mic_preview_snap = LiveSettings()
         self._funk_listen_gate: FunkListenNoiseGateState
         self._reset_funk_listen_gate()
+        self._record_tap: Optional[LiveRecordTap] = None
+
+    def set_record_tap(self, tap: Optional[LiveRecordTap]) -> None:
+        """Bidirektionale Aufnahme: Mono-TX/RX-Blöcke an ``tap`` liefern."""
+        self._record_tap = tap
+
+    def _emit_record_tx(self, mono: Any, sample_rate: float) -> None:
+        tap = self._record_tap
+        if tap is None:
+            return
+        try:
+            tap.on_tx_block(mono, float(sample_rate))
+        except Exception:
+            pass
+
+    def _emit_record_rx(self, mono: Any, sample_rate: float) -> None:
+        tap = self._record_tap
+        if tap is None:
+            return
+        try:
+            tap.on_rx_block(mono, float(sample_rate))
+        except Exception:
+            pass
+
+    def _emit_record_pair(self, tx: Any, rx: Any, sample_rate: float) -> None:
+        tap = self._record_tap
+        if tap is None:
+            return
+        try:
+            on_pair = getattr(tap, "on_pair", None)
+            if callable(on_pair):
+                on_pair(tx, rx, float(sample_rate))
+                return
+        except Exception:
+            pass
+        try:
+            tap.on_tx_block(tx, float(sample_rate))
+            tap.on_rx_block(rx, float(sample_rate))
+        except Exception:
+            pass
 
     def reset_funk_listen_noise_gate(self) -> None:
         """Gate-Zustand zurücksetzen (z. B. nach Schwellen-Änderung in der Test-UI)."""
@@ -384,6 +434,16 @@ class LiveAudioEngine:
         return pad
 
     @staticmethod
+    def _fit_record_tx_tap(y_dsp: Any, frames: int) -> Any:
+        """TX für Aufnahme: DSP-Mic ohne Funk-Sende-Gain (Monitor-Pegel, nicht TX1-Hot)."""
+        import numpy as np
+
+        return LiveAudioEngine._fit_mono_to_frames(
+            np.asarray(y_dsp, dtype=np.float32).reshape(-1),
+            int(frames),
+        )
+
+    @staticmethod
     def _stereo_fill_mono(outdata: object, mono_y: Any) -> None:
         import numpy as np
 
@@ -459,6 +519,9 @@ class LiveAudioEngine:
                 safe_in = np.asarray(indata, dtype=np.float32)
             ls = weak_self._read_snap()
             y_dsp = weak_self._dsp_mono_without_output_gain(ls, safe_in)
+            gv_f = np.float32(max(0.0, min(2.0, float(ls.funk_output_gain))))
+            yf_tap = np.asarray(y_dsp, dtype=np.float32).reshape(-1) * gv_f
+            ff_tap = LiveAudioEngine._fit_mono_to_frames(yf_tap, nf)
             gv = np.float32(max(0.0, min(2.0, float(ls.output_gain))))
             weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(
                 LiveAudioEngine._fit_mono_to_frames(
@@ -474,6 +537,10 @@ class LiveAudioEngine:
             weak_self.monitor_meter_db = LiveAudioEngine._mono_peak_dbfs(y_mono)
             weak_self.funk_meter_db = float(-120.0)
             weak_self.funk_listen_meter_db = float(-120.0)
+            if weak_self._record_tap is not None:
+                rx_z = np.zeros(nf, dtype=np.float32)
+                tx_rec = LiveAudioEngine._fit_record_tx_tap(y_dsp, nf)
+                weak_self._emit_record_pair(tx_rec, rx_z, float(sr))
             LiveAudioEngine._stereo_fill_mono(outdata, y_mono)
         stream = sd.Stream(
             samplerate=float(sr),
@@ -531,6 +598,9 @@ class LiveAudioEngine:
                 safe_in = np.asarray(indata, dtype=np.float32)
             ls = weak_self._idle_listen_snap
             y_dsp = weak_self._dsp_mono_without_output_gain(ls, safe_in)
+            gv_f = np.float32(max(0.0, min(2.0, float(ls.funk_output_gain))))
+            yf_tap = np.asarray(y_dsp, dtype=np.float32).reshape(-1) * gv_f
+            ff_tap = LiveAudioEngine._fit_mono_to_frames(yf_tap, nf)
             weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(
                 LiveAudioEngine._fit_mono_to_frames(
                     np.asarray(y_dsp, dtype=np.float32).reshape(-1), nf
@@ -546,6 +616,10 @@ class LiveAudioEngine:
             weak_self.monitor_meter_db = LiveAudioEngine._mono_peak_dbfs(y_mono)
             weak_self.funk_meter_db = float(-120.0)
             weak_self.funk_listen_meter_db = float(-120.0)
+            if weak_self._record_tap is not None:
+                rx_z = np.zeros(nf, dtype=np.float32)
+                tx_rec = LiveAudioEngine._fit_record_tx_tap(y_dsp, nf)
+                weak_self._emit_record_pair(tx_rec, rx_z, float(sr))
             LiveAudioEngine._stereo_fill_mono(outdata, y_mono)
 
         stream = sd.Stream(
@@ -599,6 +673,8 @@ class LiveAudioEngine:
         q_mon: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
         q_funk: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
         q_listen_in: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
+        q_record_tx: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
+        q_record_rx: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
 
         def input_cb_main(
             indata: object,
@@ -622,6 +698,8 @@ class LiveAudioEngine:
                 )
             )
             gv_f = np.float32(max(0.0, min(2.0, float(ls.funk_output_gain))))
+            yf_tap = np.asarray(y_dsp, dtype=np.float32).reshape(-1) * gv_f
+            ff_tap = LiveAudioEngine._fit_mono_to_frames(yf_tap, nf_f)
             # Gesamt-Lautheit auf dem Monitor-Device: später in ``output_cb_monitor``
             # (summe Mic + Funk-Eing × ``output_gain``), sonst betrifft der Regler nicht
             # den Funk‑Eing‑Anteil bzw. wirk „tot“, wenn nur dieser auf dem Pfad liegt.
@@ -640,6 +718,9 @@ class LiveAudioEngine:
                 q_mon.append(fit_m.astype(np.float32, copy=True))
                 if dual_funk and ff is not None:
                     q_funk.append(ff.astype(np.float32, copy=True))
+                if weak_self._record_tap is not None:
+                    tx_rec = LiveAudioEngine._fit_record_tx_tap(y_dsp, nf_f)
+                    q_record_tx.append(tx_rec.astype(np.float32, copy=True))
             if not dual_funk:
                 weak_self.funk_meter_db = float(-120.0)
 
@@ -654,6 +735,17 @@ class LiveAudioEngine:
                 return
             ls = weak_self._read_snap()
             nf_i = int(frames)
+            if dual_listen_in:
+                if _portaudio_cb_status_problematic(status):
+                    raw_rec = np.zeros((nf_i, listen_in_ch), dtype=np.float32)
+                else:
+                    raw_rec = np.asarray(indata, dtype=np.float32)
+                fit_r_rec = weak_self._process_funk_listen_block(
+                    raw_rec, ls, nf_i, listen_in_ch
+                )
+                if weak_self._record_tap is not None:
+                    with lock:
+                        q_record_rx.append(fit_r_rec.astype(np.float32, copy=True))
             if not bool(ls.funk_listen_enabled):
                 zeros = np.zeros(nf_i, dtype=np.float32)
                 fit_r = LiveAudioEngine._fit_mono_to_frames(zeros, nf_i)
@@ -700,8 +792,19 @@ class LiveAudioEngine:
                 else:
                     chunk_r = np.zeros(nf, dtype=np.float32)
                     weak_self.funk_listen_meter_db = float(-120.0)
+                tx_rec = np.zeros(nf, dtype=np.float32)
+                rx_rec = np.zeros(nf, dtype=np.float32)
+                if weak_self._record_tap is not None:
+                    if q_record_tx:
+                        tx_rec = q_record_tx.popleft()
+                    if q_record_rx:
+                        rx_rec = q_record_rx.popleft()
             ym = LiveAudioEngine._fit_mono_to_frames(chunk_m, nf)
             yrx = LiveAudioEngine._fit_mono_to_frames(chunk_r, nf)
+            if weak_self._record_tap is not None:
+                tx_fit = LiveAudioEngine._fit_mono_to_frames(tx_rec, nf)
+                rx_fit = LiveAudioEngine._fit_mono_to_frames(rx_rec, nf)
+                weak_self._emit_record_pair(tx_fit, rx_fit, sr)
             ls = weak_self._read_snap()
             gv_mon = np.float32(max(0.0, min(2.0, float(ls.output_gain))))
             mix = (ym + yrx) * gv_mon
@@ -932,6 +1035,8 @@ class LiveAudioEngine:
         lock = Lock()
         q_mic: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
         q_listen: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
+        q_record_tx: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
+        q_record_rx: deque[Any] = deque(maxlen=_SPLIT_QUEUE_BLOCKS)
 
         def input_cb_idle_mic(
             indata: object,
@@ -949,11 +1054,18 @@ class LiveAudioEngine:
                 safe_in = np.asarray(indata, dtype=np.float32)
             ls = weak_self._idle_listen_snap
             y_dsp = weak_self._dsp_mono_without_output_gain(ls, safe_in)
+            gv_f = np.float32(max(0.0, min(2.0, float(ls.funk_output_gain))))
+            yf_tap = np.asarray(y_dsp, dtype=np.float32).reshape(-1) * gv_f
+            ff_tap = LiveAudioEngine._fit_mono_to_frames(yf_tap, nf_i)
             weak_self.mic_meter_db = LiveAudioEngine._mono_peak_dbfs(
                 LiveAudioEngine._fit_mono_to_frames(
                     np.asarray(y_dsp, dtype=np.float32).reshape(-1), nf_i
                 )
             )
+            if weak_self._record_tap is not None:
+                tx_rec = LiveAudioEngine._fit_record_tx_tap(y_dsp, nf_i)
+                with lock:
+                    q_record_tx.append(tx_rec.astype(np.float32, copy=True))
             if not want_monitor_out or not want_mic_monitor:
                 return
             ym = np.asarray(y_dsp, dtype=np.float32).reshape(-1)
@@ -976,12 +1088,15 @@ class LiveAudioEngine:
                 raw = np.zeros((nf_i, in_ch_l), dtype=np.float32)
             else:
                 raw = np.asarray(indata, dtype=np.float32)
-            fit_r = weak_self._process_funk_listen_block(raw, ls, nf_i, in_ch_l)
-            weak_self.funk_listen_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_r)
+            fit_r_rec = weak_self._process_funk_listen_block(raw, ls, nf_i, in_ch_l)
+            weak_self.funk_listen_meter_db = LiveAudioEngine._mono_peak_dbfs(fit_r_rec)
+            if weak_self._record_tap is not None:
+                with lock:
+                    q_record_rx.append(fit_r_rec.astype(np.float32, copy=True))
             if not want_monitor_out:
                 return
             with lock:
-                q_listen.append(fit_r.astype(np.float32, copy=True))
+                q_listen.append(fit_r_rec.astype(np.float32, copy=True))
 
         def output_cb_idle(
             outdata: object,
@@ -1005,9 +1120,20 @@ class LiveAudioEngine:
                     chunk_r = q_listen.popleft()
                 else:
                     chunk_r = np.zeros(nf, dtype=np.float32)
+                tx_rec = np.zeros(nf, dtype=np.float32)
+                rx_rec = np.zeros(nf, dtype=np.float32)
+                if weak_self._record_tap is not None:
+                    if q_record_tx:
+                        tx_rec = q_record_tx.popleft()
+                    if q_record_rx:
+                        rx_rec = q_record_rx.popleft()
             ls = weak_self._idle_listen_snap
             ym = LiveAudioEngine._fit_mono_to_frames(chunk_m, nf)
             yrx = LiveAudioEngine._fit_mono_to_frames(chunk_r, nf)
+            if weak_self._record_tap is not None:
+                tx_fit = LiveAudioEngine._fit_mono_to_frames(tx_rec, nf)
+                rx_fit = LiveAudioEngine._fit_mono_to_frames(rx_rec, nf)
+                weak_self._emit_record_pair(tx_fit, rx_fit, float(sr))
             gv_mon = np.float32(max(0.0, min(2.0, float(ls.output_gain))))
             mix = (ym + yrx) * gv_mon
             np.clip(mix, -1.0, 1.0, out=mix)

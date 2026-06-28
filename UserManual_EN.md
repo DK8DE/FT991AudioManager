@@ -345,6 +345,8 @@ Playback of **MP3** and **WAV** via CAT with automatic **PTT**.
 
 With CAT connected, the app automatically sets **DATA-FM** and menus **048 / 070 / 072 / 077 / 109** for PC audio.
 
+> **With Live window open:** The player can run in parallel with Live PC Radio. Live PTT **stops playback** (like the hand microphone on the radio).
+
 ![Fig. 9 — Audio player](docs/screenshots/en/09-audio-player.png)
 
 *Fig. 9: Audio player window. (Screenshot placeholder)*
@@ -355,11 +357,15 @@ With CAT connected, the app automatically sets **DATA-FM** and menus **048 / 070
 
 | Area | Function |
 |------|----------|
-| **Recording** | Record RX from radio USB CODEC as **MP3** |
-| **Replay** | Play recording once via CAT TX |
+| **Recording** | **Without** Live window: **RX only** from the radio USB CODEC as **MP3**. **With** Live window open: **stereo** (L = **TX** via Live PC mic, R = **RX** from the radio) |
+| **Replay** | Play the recording once via CAT TX — also when the Live window is open |
 | **Play PC** | Listen locally on PC |
 | **Format** | Selectable MP3 bitrate |
 | **Folder** | Recording directory, open in Explorer |
+
+> **Recording modes:** If the Live window is **not** open, the recorder captures only the audio **coming into** the radio (USB receive path). If the Live window **is** open, **both directions** are recorded in parallel: **left** = your Live transmission from the PC microphone (after DSP), **right** = radio receive. An ongoing recording is **not** interrupted by Live PTT.
+
+> **Live + Player/Recorder:** With the Live window open, **audio player** and **audio recorder** can run in parallel — **replay** and **player playback** work as well. Live PTT interrupts **playback and replay** (like the hand microphone), **not** an ongoing recording. Without the Live window, the previous rule applies: Live will not start while the player or recorder is active.
 
 ![Fig. 10 — Audio recorder](docs/screenshots/en/10-audio-recorder.png)
 
@@ -384,7 +390,7 @@ Voice from **PC microphone** through DSP to the radio — ideal for headset oper
 | **AFL** | Monitor processed mic on monitor output |
 | **Audio routing** | Opens sound settings |
 
-> Live will not start while Player or Recorder is transmitting/recording.
+> **Parallel with player/recorder:** For **recording** (RX only vs. stereo TX+RX) and **replay** with the Live window open, see section **7.4 Audio recorder**. Live PTT interrupts **playback and replay**, not an ongoing recording.
 
 **Safety note:** When audio lines are closed between PC and radio, **galvanic isolation** on the audio path is recommended (see README).
 
@@ -514,7 +520,7 @@ Enables **WSJT-X**, **FLRig**, and other CAT clients alongside the app.
 | Two COM ports — which one? | **Test connection** in settings; try the other port on failure |
 | Frequency/mode not shown | **Connect** (`Ctrl+V`); check status bar |
 | No audio in Player/Recorder | Check sound settings (chapter 3); menus 048/070/072/077/109; DATA-FM |
-| Live has no audio | Check Live device mapping; hold PTT; stop Player/Recorder blocking |
+| Live has no audio | Check Live device mapping; hold PTT; without Live window: stop player/recorder if Live is blocked |
 | SmartScreen blocks install | See [chapter 1.2](#12-windows-security-smartscreen--antivirus) |
 
 ---

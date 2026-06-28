@@ -1610,6 +1610,9 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
         self._controller.stop()
 
     def _on_play(self) -> None:
+        from gui.live_window import interrupt_live_tx_if_active
+
+        interrupt_live_tx_if_active()
         self._pc_list_click_stopped = False
         self.sync_data_mode_from_main()
         contest_restart = (
@@ -1736,6 +1739,10 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
             return
         if not self._radio_setup.in_data_mode:
             return
+        from gui.live_window import live_session_holds_data_mode
+
+        if live_session_holds_data_mode():
+            return
         voice = self._radio_setup.voice_mode.value
         self.lbl_status.setText(tr("player.status.switch_voice", voice=voice))
         _invoke_worker_slot(self._setup_worker, "run_engage_plain")
@@ -1752,6 +1759,10 @@ class AudioPlayerWindow(QMainWindow, RetranslatableMixin):
             return
         if state == PlayerState.LISTEN_PAUSE and previous != PlayerState.LISTEN_PAUSE:
             if self._radio_setup.in_data_mode:
+                from gui.live_window import live_session_holds_data_mode
+
+                if live_session_holds_data_mode():
+                    return
                 voice = self._radio_setup.voice_mode.value
                 self.lbl_status.setText(
                     tr("player.status.contest_listen", voice=voice)

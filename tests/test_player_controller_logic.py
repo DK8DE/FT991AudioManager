@@ -203,6 +203,20 @@ class PlayerControllerLogicTest(unittest.TestCase):
             finally:
                 ctrl.shutdown()
 
+    def test_stop_for_live_handoff_skips_ptt_off(self) -> None:
+        with patch("audio.player_controller.qt_multimedia_types", return_value=None):
+            cat = _FakeCat()
+            ctrl = PlayerController(cat)  # type: ignore[arg-type]
+            try:
+                _disable_multimedia(ctrl)
+                ctrl._set_state(PlayerState.PLAYING)
+                with patch.object(ctrl, "_request_ptt") as mock_ptt:
+                    ctrl.stop_for_live_handoff()
+                    mock_ptt.assert_not_called()
+                self.assertEqual(ctrl.state, PlayerState.IDLE)
+            finally:
+                ctrl.shutdown()
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

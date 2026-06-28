@@ -40,6 +40,7 @@ from audio.audio_recorder import (
     AudioRecorder,
     RecorderState,
 )
+from audio.live_dual_recorder import LiveDualRecorder
 from audio.audio_settings_hub import AudioSettingsHub
 from audio.player_controller import (
     PlayerController,
@@ -193,6 +194,13 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         self._recorder.duration_changed.connect(self._on_record_duration)
         self._recorder.error.connect(self._on_recorder_error)
         self._recorder.file_finalized.connect(self._on_file_finalized)
+
+        self._live_dual_recorder = LiveDualRecorder(self)
+        self._live_dual_recorder.state_changed.connect(self._on_recorder_state)
+        self._live_dual_recorder.duration_changed.connect(self._on_record_duration)
+        self._live_dual_recorder.error.connect(self._on_recorder_error)
+        self._live_dual_recorder.file_finalized.connect(self._on_file_finalized)
+        self._live_engine_for_recording: Optional[Any] = None
 
         # Wiedergabe-Komponente (Replay über CAT-TX im DATA-Mode)
         self._player = PlayerController(self._cat, self)
@@ -759,7 +767,7 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
             QMessageBox.warning(self, tr("recorder.msgbox.title"), message)
 
     def _on_record_clicked(self) -> None:
-        if self._recorder.is_busy():
+        if self._recording_busy():
             return
         if self._player.is_busy():
             QMessageBox.information(
@@ -788,6 +796,9 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         self._apply_or_engage_data()
 
     def _on_stop_recording(self) -> None:
+        if self._live_dual_recorder.is_busy():
+            self._clear_live_record_tap()
+            self._live_dual_recorder.stop()
         if not self._recorder.is_busy():
             return
         self._recorder.stop()
@@ -811,7 +822,43 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
             getattr(self._settings.global_audio, "pc_output_device_label", "") or ""
         )
 
+    def _recording_busy(self) -> bool:
+        return self._recorder.is_busy() or self._live_dual_recorder.is_busy()
+
+    def _should_use_live_dual_recording(self) -> bool:
+        from gui.live_window import find_open_live_window, live_window_accepts_coexistence
+
+        return live_window_accepts_coexistence() and find_open_live_window() is not None
+
+    def _clear_live_record_tap(self) -> None:
+        engine = self._live_engine_for_recording
+        if engine is not None:
+            try:
+                engine.set_record_tap(None)
+            except Exception:
+                pass
+        self._live_engine_for_recording = None
+
+    def _ensure_live_record_tap_connected(self) -> None:
+        """Tap nach Live-PTT-/Idle-Monitor-Wechsel wieder an die Engine hängen."""
+        if not self._live_dual_recorder.is_busy():
+            return
+        from gui.live_window import find_open_live_window
+
+        live_w = find_open_live_window()
+        if live_w is None:
+            return
+        engine = live_w.get_engine()
+        self._live_engine_for_recording = engine
+        try:
+            engine.set_record_tap(self._live_dual_recorder)
+        except Exception:
+            pass
+
     def _start_recording_now(self) -> None:
+        if self._should_use_live_dual_recording():
+            self._start_live_dual_recording_now()
+            return
         device_id = self._input_device_id()
         device_label = self._input_device_label()
         bitrate = self.combo_bitrate.currentData()
@@ -829,6 +876,43 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
             return
         self.lbl_rec_file.setText(target.name)
         self.lbl_status.setText(tr("recorder.status.recording", filename=target.name))
+
+    def _start_live_dual_recording_now(self) -> None:
+        from gui.live_window import find_open_live_window
+
+        live_w = find_open_live_window()
+        if live_w is None:
+            self._request_radio_restore()
+            return
+        ok, msg = live_w.ensure_audio_for_recording()
+        if not ok:
+            QMessageBox.warning(
+                self,
+                tr("recorder.msgbox.title"),
+                msg or tr("recorder.error.live_engine_not_ready"),
+            )
+            self._request_radio_restore()
+            return
+        engine = live_w.get_engine()
+        snap = getattr(live_w, "_live_snapshot", None)
+        sr = int(getattr(snap, "samplerate", 0) or 48000)
+        bitrate = self.combo_bitrate.currentData()
+        if not isinstance(bitrate, int):
+            bitrate = DEFAULT_BITRATE_KBPS
+        target = self._live_dual_recorder.start(
+            folder=self._folder,
+            sample_rate=sr,
+            bitrate_kbps=int(bitrate),
+        )
+        if target is None:
+            self._request_radio_restore()
+            return
+        self._live_engine_for_recording = engine
+        engine.set_record_tap(self._live_dual_recorder)
+        self.lbl_rec_file.setText(target.name)
+        self.lbl_status.setText(
+            tr("recorder.status.recording_live", filename=target.name)
+        )
 
     def _on_recorder_state(self, state: RecorderState) -> None:
         if state == RecorderState.RECORDING:
@@ -856,7 +940,7 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         # Falls die Aufnahme nie startete, aber DATA-Mode schon aktiv ist,
         # auf Sprach-Mode zurück, damit kein TX hängenbleibt.
         if self._radio_setup.is_applied and self._radio_setup.in_data_mode:
-            self._request_engage_plain()
+            self._request_engage_plain_if_allowed()
 
     def _on_file_finalized(self, path) -> None:
         try:
@@ -869,9 +953,9 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
             self._settings.audio_recorder.selected_filename = saved.name
         self.lbl_rec_file.setText(tr("recorder.label.no_recording"))
         self._refresh_file_list()
-        # Nach jeder Aufnahme zurück auf Sprach-Mode.
+        # Nach jeder Aufnahme zurück auf Sprach-Mode (nicht wenn Live DATA hält).
         if self._radio_setup.is_applied:
-            self._request_engage_plain()
+            self._request_engage_plain_if_allowed()
 
     # ------------------------------------------------------------------
     # LED-Blink
@@ -901,7 +985,10 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         self._start_replay()
 
     def _start_replay(self) -> None:
-        if self._recorder.is_busy():
+        from gui.live_window import interrupt_live_tx_if_active
+
+        interrupt_live_tx_if_active()
+        if self._recording_busy():
             QMessageBox.information(
                 self,
                 tr("recorder.msgbox.title"),
@@ -1242,7 +1329,7 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         return bool(self._pc_is_playing)
 
     def _on_play_pc_clicked(self) -> None:
-        if self._recorder.is_busy():
+        if self._recording_busy():
             QMessageBox.information(
                 self,
                 tr("recorder.msgbox.title"),
@@ -1333,7 +1420,7 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         target = self._folder / name
 
         # Recorder darf nicht auf die Datei zugreifen.
-        if self._recorder.is_busy():
+        if self._recording_busy():
             QMessageBox.information(
                 self,
                 tr("recorder.msgbox.title"),
@@ -1341,6 +1428,8 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
             )
             return
         active_rec = self._recorder.current_path
+        if active_rec is None and self._live_dual_recorder.is_busy():
+            active_rec = self._live_dual_recorder.current_path
         if active_rec is not None and active_rec.resolve() == target.resolve():
             QMessageBox.information(
                 self,
@@ -1431,7 +1520,7 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         self._radio_setup.align_data_mode_to_rx_mode(mode)
         if not self._radio_setup.is_applied or not self._radio_setup.in_data_mode:
             return
-        if self._player.is_busy() or self._recorder.is_busy():
+        if self._player.is_busy() or self._recording_busy():
             self.lbl_status.setText(tr("recorder.status.mode_change_blocked"))
             return
         if self._radio_setup.data_mode == data_mode:
@@ -1471,6 +1560,13 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
                 return
             self._player.play(int(row))
 
+    def _request_engage_plain_if_allowed(self) -> None:
+        from gui.live_window import live_session_holds_data_mode
+
+        if live_session_holds_data_mode():
+            return
+        self._request_engage_plain()
+
     def _request_engage_plain(self) -> None:
         _invoke_worker_slot(self._setup_worker, "run_engage_plain")
 
@@ -1482,7 +1578,7 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         _invoke_worker_slot(self._setup_worker, "run_restore")
 
     def _radio_transmit_activity_busy(self) -> bool:
-        return self._recorder.is_busy() or self._player.is_busy()
+        return self._recording_busy() or self._player.is_busy()
 
     def _request_radio_restore_on_close(self) -> None:
         if self._audio_radio_session is not None:
@@ -1509,8 +1605,12 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         if self._radio_transmit_activity_busy():
             self._pending_radio_restore_on_close = True
             self.lbl_status.setText(tr("recorder.status.close_busy"))
-            if self._recorder.is_busy():
-                self._recorder.stop()
+            if self._recording_busy():
+                self._clear_live_record_tap()
+                if self._live_dual_recorder.is_busy():
+                    self._live_dual_recorder.stop()
+                if self._recorder.is_busy():
+                    self._recorder.stop()
             if self._player.is_busy():
                 self._player.stop()
             return
@@ -1528,6 +1628,8 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
             self._setup_thread.quit()
             self._setup_thread.wait(2000)
         self._recorder.shutdown()
+        self._live_dual_recorder.shutdown()
+        self._clear_live_record_tap()
         self._player.shutdown()
         self.close()
 
@@ -1571,12 +1673,21 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         if not self._radio_setup.is_applied:
             return
         if state == TX_STATE_MIC_PTT:
-            had_activity = self._recorder.is_busy() or self._player.is_busy()
+            had_activity = self._recording_busy() or self._player.is_busy()
             if not had_activity and not self._radio_setup.in_data_mode:
                 return
             self._mic_ptt_interrupted = True
-            if self._recorder.is_busy():
-                self._recorder.stop()
+            if self._recording_busy():
+                from gui.live_window import mic_ptt_should_stop_coexistence_recording
+
+                if mic_ptt_should_stop_coexistence_recording(
+                    live_dual_recording_active=self._live_dual_recorder.is_busy(),
+                ):
+                    self._clear_live_record_tap()
+                    if self._live_dual_recorder.is_busy():
+                        self._live_dual_recorder.stop()
+                    if self._recorder.is_busy():
+                        self._recorder.stop()
             if self._player.is_busy():
                 self._player.stop()
             if self._radio_setup.in_data_mode:
@@ -1607,7 +1718,7 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
     # ------------------------------------------------------------------
 
     def _update_buttons(self) -> None:
-        rec_busy = self._recorder.is_busy()
+        rec_busy = self._recording_busy()
         play_busy = self._player.is_busy()
         pc_busy = self._is_pc_playing()
         any_busy = rec_busy or play_busy or pc_busy
@@ -1676,8 +1787,12 @@ class AudioRecorderWindow(QMainWindow, RetranslatableMixin):
         if self._radio_transmit_activity_busy():
             self._pending_radio_restore_on_close = True
             self._force_close_after_radio_restore = True
-            if self._recorder.is_busy():
-                self._recorder.stop()
+            if self._recording_busy():
+                self._clear_live_record_tap()
+                if self._live_dual_recorder.is_busy():
+                    self._live_dual_recorder.stop()
+                if self._recorder.is_busy():
+                    self._recorder.stop()
             if self._player.is_busy():
                 self._player.stop()
             return

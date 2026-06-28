@@ -779,6 +779,24 @@ class PlayerController(QObject):
         self.status_message.emit(tr("player.status.stopped"))
         self.voice_mode_requested.emit()
 
+    def stop_for_live_handoff(self) -> None:
+        """Wiedergabe stoppen ohne CAT-TX aus — Live übernimmt den Sendepfad."""
+        self.disarm_contest_auto_continue()
+        self._stop_monitor_playback()
+        self._gap_timer.stop()
+        self._contest_pause_timer.stop()
+        self._clear_rx_pause_deadlines()
+        self._tick_timer.stop()
+        self._resume_after_pause = False
+        self._pending_media_play = False
+        self._after_rx = ""
+        self._expect_ptt_on = None
+        if self._player is not None:
+            self._player.stop()
+        self._set_state(PlayerState.IDLE)
+        self._apply_contest_position_reset_if_pending()
+        self.status_message.emit(tr("player.status.live_handoff"))
+
     def _finish_playlist_done_voice(self) -> None:
         self._set_state(PlayerState.IDLE)
         self.status_message.emit(tr("player.status.playlist_done"))
@@ -811,7 +829,9 @@ class PlayerController(QObject):
 
     @Slot(bool)
     def _on_ptt_succeeded(self, on: bool) -> None:
-        if self._expect_ptt_on is not None and on != self._expect_ptt_on:
+        if self._expect_ptt_on is None:
+            return
+        if on != self._expect_ptt_on:
             return
         if on:
             self._on_tx_ready()

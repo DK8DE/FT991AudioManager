@@ -525,6 +525,10 @@ class MainWindow(QMainWindow, RetranslatableMixin):
 
     def _live_transmit_blocked_by_other_windows(self) -> str:
         """Leer wenn Live starten darf — sonst kurzer deutschsprachiger Grund."""
+        from gui.live_window import live_window_accepts_coexistence
+
+        if live_window_accepts_coexistence():
+            return ""
         p = self._audio_player_window
         if p is not None:
             ctl = getattr(p, "_controller", None)
@@ -539,6 +543,33 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             if pl is not None and pl.is_busy():
                 return tr("live.blocked.recorder_replay")
         return ""
+
+    def _interrupt_other_audio_for_live_ptt(self) -> None:
+        """Player/Replay stoppen — Live-PTT bei coexistence (Aufnahme läuft weiter)."""
+        p = self._audio_player_window
+        if p is not None:
+            ctl = getattr(p, "_controller", None)
+            if ctl is not None and ctl.is_busy():
+                cancel = getattr(p, "_cancel_pending_cat_play_defer", None)
+                disarm = getattr(ctl, "disarm_contest_auto_continue", None)
+                if callable(cancel):
+                    cancel()
+                if callable(disarm):
+                    disarm()
+                handoff = getattr(ctl, "stop_for_live_handoff", None)
+                if callable(handoff):
+                    handoff()
+                else:
+                    ctl.stop()
+        r = self._audio_recorder_window
+        if r is not None:
+            pl = getattr(r, "_player", None)
+            if pl is not None and pl.is_busy():
+                handoff = getattr(pl, "stop_for_live_handoff", None)
+                if callable(handoff):
+                    handoff()
+                else:
+                    pl.stop()
 
     def _on_main_operating_mode_changed(self, _text: str) -> None:
         """DSP-Anzeige + Audio-Player/Recorder/Live-DATA-Modus anpassen."""
@@ -3193,6 +3224,7 @@ class MainWindow(QMainWindow, RetranslatableMixin):
             audio_radio_session=self._audio_radio_session,
             operating_mode_provider=self._main_operating_mode,
             other_audio_blocking=self._live_transmit_blocked_by_other_windows,
+            other_audio_interrupt=self._interrupt_other_audio_for_live_ptt,
             request_cat_tx_poll=self.meter_widget.request_immediate_poll,
             profile_widget=self.profile_widget,
         )
