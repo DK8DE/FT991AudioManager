@@ -39,7 +39,7 @@
 
 ![Abb. 1 — GitHub Releases](docs/screenshots/de/01-github-releases.png)
 
-*Abb. 1: GitHub Releases-Seite — aktuelles Release und Download-Asset auswählen. (Screenshot-Platzhalter)*
+*Abb. 1: GitHub Releases-Seite — aktuelles Release und Download-Asset auswählen.*
 
 ### 1.2 Hinweis zu Windows-Sicherheit (SmartScreen & Antivirus)
 
@@ -59,7 +59,7 @@ Nach der Installation starte **FT-991/A Audiomanager** über das Startmenü oder
 
 ![Abb. 2 — Erster Start](docs/screenshots/de/02-main-disconnected.png)
 
-*Abb. 2: Hauptfenster ohne CAT-Verbindung. (Screenshot-Platzhalter)*
+*Abb. 2: Hauptfenster ohne CAT-Verbindung.*
 
 ---
 
@@ -79,7 +79,7 @@ Nach der Installation starte **FT-991/A Audiomanager** über das Startmenü oder
 
 ![Abb. 3 — CAT-Einstellungen](docs/screenshots/de/03-settings-cat.png)
 
-*Abb. 3: Einstellungen → CAT-Verbindung — Port, Baudrate, Verbindung testen. (Screenshot-Platzhalter)*
+*Abb. 3: Einstellungen → CAT-Verbindung — Port, Baudrate, Verbindung testen.*
 
 > **Wichtig — zwei gleich aussehende COM-Ports**  
 > Am FT-991(A) erscheinen unter Windows typischerweise **zwei** COM-Ports:
@@ -106,7 +106,7 @@ In der App (**Datei → Einstellungen… → CAT-Verbindung**) muss die **Baudra
 
 ![Abb. 4 — FT-991 Menü 031](docs/screenshots/de/04-ft991-menu-031.png)
 
-*Abb. 4: Funkgerät — Menü 031 „CAT RATE“ auf 38400. (Screenshot-Platzhalter)*
+*Abb. 4: Funkgerät — Menü 031 „CAT RATE“ auf 38400.*
 
 ### 2.4 Verbindung testen
 
@@ -127,7 +127,7 @@ Wenn alles richtig eingestellt ist, sollte nach **Datei → Verbinden** (`Strg+V
 
 ![Abb. 5 — Verbunden](docs/screenshots/de/05-main-connected.png)
 
-*Abb. 5: Hauptfenster mit aktiver CAT-Verbindung — Frequenz, Mode, Meter, Statusleiste. (Screenshot-Platzhalter)*
+*Abb. 5: Hauptfenster mit aktiver CAT-Verbindung — Frequenz, Mode, Meter, Statusleiste.*
 
 ---
 
@@ -165,7 +165,7 @@ Optional: **Ausgabe Mithören** — während einer CAT-Sendung (Player/Recorder)
 
 ![Abb. 6 — Soundeinstellungen](docs/screenshots/de/06-sound-settings.png)
 
-*Abb. 6: Soundeinstellungen — Geräte & Lautstärke sowie Zuordnung für Live‑PC Funk (ein Fenster). (Screenshot-Platzhalter)*
+*Abb. 6: Soundeinstellungen — Geräte & Lautstärke sowie Zuordnung für Live‑PC Funk (ein Fenster).*
 
 ### 3.3 Grundeinstellung abgeschlossen
 
@@ -193,7 +193,7 @@ Das Hauptfenster ist die zentrale Steuerzentrale — VFO, Pegel, Profile und Sch
 
 ![Abb. 7 — Hauptfenster Übersicht](docs/screenshots/de/07-main-window-overview.png)
 
-*Abb. 7: Hauptfenster — Gesamtansicht mit VFO, Band-Streifen, Meter, Funkleiste, Favoriten. (Screenshot-Platzhalter)*
+*Abb. 7: Hauptfenster — Gesamtansicht mit VFO, Band-Streifen, Meter, Funkleiste, Favoriten.*
 
 ### 5.1 VFO-Anzeige (oben)
 
@@ -317,7 +317,7 @@ Zentrale **TX-Audio-Konfiguration** für das Funkgerät.
 
 ![Abb. 8 — Equalizer](docs/screenshots/de/08-equalizer.png)
 
-*Abb. 8: Equalizer-Fenster — Grundwerte und EQ-Kurve. (Screenshot-Platzhalter)*
+*Abb. 8: Equalizer-Fenster — Grundwerte und EQ-Kurve.*
 
 ---
 
@@ -349,7 +349,7 @@ Beim Start mit CAT-Verbindung stellt die App automatisch **DATA-FM** und die Men
 
 ![Abb. 9 — Audio-Player](docs/screenshots/de/09-audio-player.png)
 
-*Abb. 9: Audio-Player-Fenster. (Screenshot-Platzhalter)*
+*Abb. 9: Audio-Player-Fenster.*
 
 ---
 
@@ -369,7 +369,7 @@ Beim Start mit CAT-Verbindung stellt die App automatisch **DATA-FM** und die Men
 
 ![Abb. 10 — Audio-Recorder](docs/screenshots/de/10-audio-recorder.png)
 
-*Abb. 10: Audio-Recorder-Fenster. (Screenshot-Platzhalter)*
+*Abb. 10: Audio-Recorder-Fenster.*
 
 ---
 
@@ -396,7 +396,7 @@ Sprache vom **PC-Mikrofon** über DSP ins Funkgerät — ideal für Headset-Betr
 
 ![Abb. 11 — Live‑PC Funk](docs/screenshots/de/11-live-window.png)
 
-*Abb. 11: Live‑PC Funk — EQ, Gates, Kompressor, PTT. (Screenshot-Platzhalter)*
+*Abb. 11: Live‑PC Funk — EQ, Gates, Kompressor, PTT.*
 
 ---
 
@@ -417,7 +417,7 @@ CAT-Verbindung erforderlich. Vor Schreibvorgängen wird automatisch eine Sicheru
 
 ![Abb. 12 — Speicherkanäle](docs/screenshots/de/12-memory-editor.png)
 
-*Abb. 12: Speicherkanal-Editor. (Screenshot-Platzhalter)*
+*Abb. 12: Speicherkanal-Editor.*
 
 ---
 
@@ -432,7 +432,7 @@ Die Anwendung verwendet dauerhaft das **Dark Theme**.
 
 ![Abb. 13 — CAT-Log](docs/screenshots/de/13-cat-log.png)
 
-*Abb. 13: CAT-Log-Fenster mit TX/RX-Einträgen. (Screenshot-Platzhalter)*
+*Abb. 13: CAT-Log-Fenster mit TX/RX-Einträgen.*
 
 ---
 
@@ -446,7 +446,7 @@ Die Anwendung verwendet dauerhaft das **Dark Theme**.
 
 ![Abb. 16 — About](docs/screenshots/de/16-about.png)
 
-*Abb. 16: Hilfe → Version (About-Fenster). (Screenshot-Platzhalter)*
+*Abb. 16: Hilfe → Version (About-Fenster).*
 
 ---
 
@@ -478,7 +478,7 @@ Ermöglicht die Nutzung von **WSJT-X**, **FLRig** und anderen CAT-Clients parall
 
 ![Abb. 14 — Rig-Bridge](docs/screenshots/de/14-settings-rig-bridge.png)
 
-*Abb. 14: Einstellungen → Rig-Bridge. (Screenshot-Platzhalter)*
+*Abb. 14: Einstellungen → Rig-Bridge.*
 
 ### 10.3 Tastenkürzel
 
@@ -496,7 +496,7 @@ Die Tasten und Modifikatoren sind frei kombinierbar. Mindestens ein Modifikator 
 
 ![Abb. 14.1 — Tastenkürzel](docs/screenshots/de/14.1-settings-hotkey.png)
 
-*Abb. 14.1: Einstellungen → Tastenkürzel. (Screenshot-Platzhalter)*
+*Abb. 14.1: Einstellungen → Tastenkürzel.*
 
 ### 10.4 Kalibrierung
 
@@ -506,7 +506,7 @@ Die Tasten und Modifikatoren sind frei kombinierbar. Mindestens ein Modifikator 
 
 ![Abb. 15 — Kalibrierung](docs/screenshots/de/15-settings-calibration.png)
 
-*Abb. 15: Einstellungen → Kalibrierung (S-Meter / PO). (Screenshot-Platzhalter)*
+*Abb. 15: Einstellungen → Kalibrierung (S-Meter / PO).*
 
 ---
 

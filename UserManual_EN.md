@@ -39,7 +39,7 @@
 
 ![Fig. 1 — GitHub Releases](docs/screenshots/en/01-github-releases.png)
 
-*Fig. 1: GitHub Releases page — select the current release and download asset. (Screenshot placeholder)*
+*Fig. 1: GitHub Releases page — select the current release and download asset.*
 
 ### 1.2 Windows security (SmartScreen & antivirus)
 
@@ -59,7 +59,7 @@ After installation, launch **FT-991/A Audio Manager** from the Start menu or des
 
 ![Fig. 2 — First start](docs/screenshots/en/02-main-disconnected.png)
 
-*Fig. 2: Main window without CAT connection. (Screenshot placeholder)*
+*Fig. 2: Main window without CAT connection.*
 
 ---
 
@@ -79,7 +79,7 @@ After installation, launch **FT-991/A Audio Manager** from the Start menu or des
 
 ![Fig. 3 — CAT settings](docs/screenshots/en/03-settings-cat.png)
 
-*Fig. 3: Settings → CAT connection — port, baud rate, test connection. (Screenshot placeholder)*
+*Fig. 3: Settings → CAT connection — port, baud rate, test connection.*
 
 > **Important — two identical-looking COM ports**  
 > On the FT-991(A), Windows typically shows **two** COM ports:
@@ -106,7 +106,7 @@ In the app (**File → Settings… → CAT connection**), the **baud rate must m
 
 ![Fig. 4 — FT-991 menu 031](docs/screenshots/en/04-ft991-menu-031.png)
 
-*Fig. 4: Radio — menu 031 “CAT RATE” set to 38400. (Screenshot placeholder)*
+*Fig. 4: Radio — menu 031 “CAT RATE” set to 38400.*
 
 ### 2.4 Test connection
 
@@ -127,7 +127,7 @@ When everything is configured correctly, after **File → Connect** (`Ctrl+V`):
 
 ![Fig. 5 — Connected](docs/screenshots/en/05-main-connected.png)
 
-*Fig. 5: Main window with active CAT connection — frequency, mode, meters, status bar. (Screenshot placeholder)*
+*Fig. 5: Main window with active CAT connection — frequency, mode, meters, status bar.*
 
 ---
 
@@ -165,7 +165,7 @@ Optional: **TX monitor** — during CAT transmission (Player/Recorder), audio is
 
 ![Fig. 6 — Sound settings](docs/screenshots/en/06-sound-settings.png)
 
-*Fig. 6: Sound settings — devices & volume and Live PC Radio mapping (single window). (Screenshot placeholder)*
+*Fig. 6: Sound settings — devices & volume and Live PC Radio mapping (single window).*
 
 ### 3.3 Basic setup complete
 
@@ -193,7 +193,7 @@ The main window is the central control panel — VFO, meters, profiles, and quic
 
 ![Fig. 7 — Main window overview](docs/screenshots/en/07-main-window-overview.png)
 
-*Fig. 7: Main window — full view with VFO, band strip, meters, control bar, favorites. (Screenshot placeholder)*
+*Fig. 7: Main window — full view with VFO, band strip, meters, control bar, favorites.*
 
 ### 5.1 VFO display (top)
 
@@ -317,7 +317,7 @@ Central **TX audio configuration** for the radio.
 
 ![Fig. 8 — Equalizer](docs/screenshots/en/08-equalizer.png)
 
-*Fig. 8: Equalizer window — basic values and EQ curve. (Screenshot placeholder)*
+*Fig. 8: Equalizer window — basic values and EQ curve.*
 
 ---
 
@@ -349,7 +349,7 @@ With CAT connected, the app automatically sets **DATA-FM** and menus **048 / 070
 
 ![Fig. 9 — Audio player](docs/screenshots/en/09-audio-player.png)
 
-*Fig. 9: Audio player window. (Screenshot placeholder)*
+*Fig. 9: Audio player window.*
 
 ---
 
@@ -369,7 +369,7 @@ With CAT connected, the app automatically sets **DATA-FM** and menus **048 / 070
 
 ![Fig. 10 — Audio recorder](docs/screenshots/en/10-audio-recorder.png)
 
-*Fig. 10: Audio recorder window. (Screenshot placeholder)*
+*Fig. 10: Audio recorder window.*
 
 ---
 
@@ -396,7 +396,7 @@ Voice from **PC microphone** through DSP to the radio — ideal for headset oper
 
 ![Fig. 11 — Live PC Radio](docs/screenshots/en/11-live-window.png)
 
-*Fig. 11: Live PC Radio — EQ, gates, compressor, PTT. (Screenshot placeholder)*
+*Fig. 11: Live PC Radio — EQ, gates, compressor, PTT.*
 
 ---
 
@@ -417,7 +417,7 @@ CAT connection required. A backup is created automatically before write operatio
 
 ![Fig. 12 — Memory channels](docs/screenshots/en/12-memory-editor.png)
 
-*Fig. 12: Memory channel editor. (Screenshot placeholder)*
+*Fig. 12: Memory channel editor.*
 
 ---
 
@@ -432,7 +432,7 @@ The application always uses the **dark theme**.
 
 ![Fig. 13 — CAT log](docs/screenshots/en/13-cat-log.png)
 
-*Fig. 13: CAT log window with TX/RX entries. (Screenshot placeholder)*
+*Fig. 13: CAT log window with TX/RX entries.*
 
 ---
 
@@ -446,7 +446,7 @@ The application always uses the **dark theme**.
 
 ![Fig. 16 — About](docs/screenshots/en/16-about.png)
 
-*Fig. 16: Help → Version (About window). (Screenshot placeholder)*
+*Fig. 16: Help → Version (About window).*
 
 ---
 
@@ -478,7 +478,7 @@ Enables **WSJT-X**, **FLRig**, and other CAT clients alongside the app.
 
 ![Fig. 14 — Rig bridge](docs/screenshots/en/14-settings-rig-bridge.png)
 
-*Fig. 14: Settings → Rig bridge. (Screenshot placeholder)*
+*Fig. 14: Settings → Rig bridge.*
 
 ### 10.3 Keyboard shortcuts
 
@@ -496,7 +496,7 @@ Keys and modifiers can be customized. At least one modifier should be set so nor
 
 ![Fig. 14.1 — Shortcuts](docs/screenshots/en/14.1-settings-hotkey.png)
 
-*Fig. 14.1: Settings → Shortcuts. (Screenshot placeholder)*
+*Fig. 14.1: Settings → Shortcuts.*
 
 ### 10.4 Calibration
 
@@ -506,7 +506,7 @@ Keys and modifiers can be customized. At least one modifier should be set so nor
 
 ![Fig. 15 — Calibration](docs/screenshots/en/15-settings-calibration.png)
 
-*Fig. 15: Settings → Calibration (S-meter / PO). (Screenshot placeholder)*
+*Fig. 15: Settings → Calibration (S-meter / PO).*
 
 ---
 
